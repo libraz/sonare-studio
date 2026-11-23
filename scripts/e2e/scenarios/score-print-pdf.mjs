@@ -1,10 +1,17 @@
+import { inspectPdfDrawing, inspectPdfFonts } from '../pdf-inspection.mjs';
 import { downloadBytes } from '../wav-inspection.mjs';
 
 /**
  * Score print and PDF: Print hands the browser one engraved SVG per page, and
- * PDF downloads a document with the same number of pages.
+ * PDF downloads a document with the same number of pages. An all-Latin score
+ * embeds no font: its text stays on the PDF core fonts, and the SMuFL note of
+ * the opening tempo mark is drawn as a filled path just before its "=" text
+ * rather than shown as core-font text.
  */
 export const name = 'score-print-pdf';
+
+/** UTF-16BE bytes of the SMuFL text code points, as they would leak into a core-font string. */
+const SMUFL_TEXT_BYTES = /\xE5[\x50-\x5F]|\xEA[\x50-\x6F]|\xEC[\xA0-\xBF]/;
 
 const action = (page, label) =>
   page.locator('button.tb-action').filter({ hasText: new RegExp(`^\\s*${label}\\s*$`) });
@@ -99,5 +106,35 @@ export async function run(ctx) {
     );
   } else {
     console.info(`PDF ${pdf.filename}: ${pdf.byteLength} bytes, ${pdf.pageObjects} page(s)`);
+  }
+  const fonts = inspectPdfFonts(bytes);
+  if (fonts.type0Fonts > 0 || fonts.fontFiles > 0) {
+    fail(`an all-Latin score PDF embeds a font: ${JSON.stringify(fonts.baseFonts)}`);
+  }
+  const drawing = inspectPdfDrawing(bytes);
+  const leaked = drawing.texts.filter((entry) => SMUFL_TEXT_BYTES.test(entry.text));
+  // The tempo's "= " and its number are separate text runs; the glyph sits just before "=".
+  const tempo = drawing.texts.find((entry) => /^\s*=/.test(entry.text));
+  const glyphStarts = tempo
+    ? drawing.fills.filter(
+        (point) =>
+          point.x < tempo.x &&
+          point.x > tempo.x - 2 * tempo.size &&
+          point.y > tempo.y - 0.5 * tempo.size &&
+          point.y < tempo.y + 2 * tempo.size,
+      )
+    : [];
+  if (leaked.length > 0) {
+    fail(`the PDF shows SMuFL glyphs as core-font text: ${JSON.stringify(leaked)}`);
+  } else if (!tempo) {
+    fail(`the PDF has no "=" tempo text: ${JSON.stringify(drawing.texts.map((e) => e.text))}`);
+  } else if (glyphStarts.length === 0) {
+    fail(
+      `no filled glyph paths precede the tempo text at ${JSON.stringify(tempo)}: ${JSON.stringify(glyphStarts)}`,
+    );
+  } else {
+    console.info(
+      `tempo mark glyphs drawn as ${glyphStarts.length} subpath(s) before "${tempo.text}"`,
+    );
   }
 }

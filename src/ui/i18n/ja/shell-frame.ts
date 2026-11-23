@@ -125,6 +125,15 @@ export const shellFrame = {
         tempoRamps: '{count}件のテンポランプ',
       },
     },
+    pdfExportLoss: {
+      title: 'PDF書き出しの制限',
+      message:
+        'このPDFでは譜面の一部の文字を描けないため、以下を省略します:\n{items}\n\n印刷ならすべての文字を残せます。書き出しを続行しますか?',
+      confirm: 'PDFを書き出し',
+      items: {
+        undrawableCharacters: '{count}文字: {details}',
+      },
+    },
     midiExportLoss: {
       smf: {
         title: 'SMF書き出しの制限',

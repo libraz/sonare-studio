@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openFreshPage } from '../fresh-page.mjs';
@@ -7,8 +7,9 @@ import { createPagesServer } from '../pages-server.mjs';
 const E2E_DIST = fileURLToPath(new URL('../../../.e2e-dist', import.meta.url));
 
 /**
- * PWA: the build registers its service worker, precaches the whole release,
- * advertises an installable web app manifest, and — once the worker controls
+ * PWA: the build registers its service worker, precaches the release (all but
+ * the on-demand PDF text font), advertises an installable web app manifest,
+ * and — once the worker controls
  * the page — boots from its cache and opens the demo with the network cut.
  * Runs in its own browser context, which is the only way to start with no
  * worker installed, against the build served with the static host's headers:
@@ -88,10 +89,18 @@ export async function run(ctx) {
         keys,
         listed: manifest.assets.length,
         missing: manifest.assets.filter((asset) => !cached.includes(asset)),
+        fonts: manifest.assets.filter((asset) => asset.endsWith('.ttf')),
       };
     });
     if (precache.keys.length !== 1 || precache.listed < 5 || precache.missing.length > 0) {
       fail(`the release was not fully precached: ${JSON.stringify(precache)}`);
+    }
+    const builtFonts = (await readdir(join(E2E_DIST, 'assets'))).filter((file) =>
+      file.endsWith('.ttf'),
+    );
+    if (builtFonts.length === 0) fail('the build emits no PDF text font asset');
+    if (precache.fonts.length > 0) {
+      fail(`the precache pulls in the on-demand PDF font: ${JSON.stringify(precache.fonts)}`);
     }
 
     // Installability: a manifest the browser can act on.

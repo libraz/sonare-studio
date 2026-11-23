@@ -35,7 +35,15 @@ function hashBuildValue(hash: number, value: string | Uint8Array): number {
   return next;
 }
 
-/** Emits a complete content-addressed precache manifest and stamps the SW cache name. */
+/**
+ * Assets left out of the precache: TrueType files are the PDF text font, which
+ * only an export of non-Latin text fetches; the worker caches it on first use.
+ */
+function isOnDemandAsset(fileName: string): boolean {
+  return fileName.endsWith('.ttf');
+}
+
+/** Emits a content-addressed precache manifest and stamps the SW cache name. */
 function pwaPrecacheManifest(): Plugin {
   let generatedServiceWorker = '';
   return {
@@ -62,7 +70,7 @@ function pwaPrecacheManifest(): Plugin {
         // Cloudflare Pages canonicalizes `/index.html` to `/`; keep the shell
         // under the canonical key while still hashing the emitted document
         // below so a document change creates a new release cache.
-        if (fileName !== 'index.html') assets.add(`/${fileName}`);
+        if (fileName !== 'index.html' && !isOnDemandAsset(fileName)) assets.add(`/${fileName}`);
         hash = hashBuildValue(hash, fileName);
         hash = hashBuildValue(hash, output.type === 'chunk' ? output.code : output.source);
       }

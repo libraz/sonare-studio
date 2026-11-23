@@ -120,6 +120,15 @@ export const shellFrame = {
         tempoRamps: '{count} tempo ramp(s)',
       },
     },
+    pdfExportLoss: {
+      title: 'PDF export limitations',
+      message:
+        'The PDF cannot draw some characters of this score and will leave them out:\n{items}\n\nPrint keeps every character. Continue export?',
+      confirm: 'Export PDF',
+      items: {
+        undrawableCharacters: '{count} character(s): {details}',
+      },
+    },
     midiExportLoss: {
       smf: {
         title: 'SMF export limitations',

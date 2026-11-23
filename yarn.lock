@@ -212,6 +212,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@expo-google-fonts/noto-sans-jp@npm:^0.4.4":
+  version: 0.4.4
+  resolution: "@expo-google-fonts/noto-sans-jp@npm:0.4.4"
+  checksum: 10c0/981e3ec37b69259d1598eb4ff9166471a205bb9af700886d79c009b9d0ce7eb25dbaba1a0b40f08603ba9ead16bcdf30781a9dfa148efdf91fe1771706983c3f
+  languageName: node
+  linkType: hard
+
 "@fontsource-variable/bricolage-grotesque@npm:^5.3.0":
   version: 5.3.0
   resolution: "@fontsource-variable/bricolage-grotesque@npm:5.3.0"
@@ -1780,6 +1787,7 @@ __metadata:
   dependencies:
     "@biomejs/biome": "npm:^2.6"
     "@breezystack/lamejs": "npm:^1.2.7"
+    "@expo-google-fonts/noto-sans-jp": "npm:^0.4.4"
     "@fontsource-variable/bricolage-grotesque": "npm:^5.3.0"
     "@libraz/libcantus": "npm:1.4.3"
     "@types/node": "npm:^26"

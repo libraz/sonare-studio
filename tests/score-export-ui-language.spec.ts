@@ -9,7 +9,7 @@ import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import type { ScoreLayoutSettings } from '@/ui/score/layout';
 import { buildFullScore } from '@/ui/score/score-projection';
-import { buildProjectScore, useScoreNotation } from '@/ui/score/use-score-notation';
+import { buildProjectScore, characterLabel, useScoreNotation } from '@/ui/score/use-score-notation';
 
 const pdfMetadata = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
@@ -22,9 +22,14 @@ vi.mock('@/lib/wasm', async () => {
 vi.mock('@/notation/print', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/notation/print')>()),
   downloadBlob: vi.fn(),
+  planPdfText: vi.fn(async () => ({ font: null, undrawable: [] })),
   createPdfPageWriter: vi.fn(async (_count: number, _layout: unknown, metadata: object) => {
     pdfMetadata.push({ ...metadata });
-    return { addPage: vi.fn(async () => undefined), finish: vi.fn(async () => new Blob()) };
+    return {
+      addPage: vi.fn(async () => undefined),
+      close: vi.fn(() => new Blob()),
+      undrawable: vi.fn(() => []),
+    };
   }),
 }));
 
@@ -160,5 +165,11 @@ describe('score and stem exports in the UI language', () => {
     expect(pdfMetadata.map((metadata) => metadata.subject)).toEqual(['譜面']);
     expect(pdfMetadata.map((metadata) => metadata.title)).toEqual(['譜面']);
     store.dispose();
+  });
+});
+
+describe('PDF loss notice character labels', () => {
+  it('names a private-use glyph by its code point and any other character as itself', () => {
+    expect(['\uECA5', '한', 'é'].map(characterLabel)).toEqual(['U+ECA5', '한', 'é']);
   });
 });

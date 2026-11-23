@@ -61,6 +61,7 @@ export const shellScore = {
       maxZoom: 'Already at the largest zoom.',
     },
     engravedScore: 'Engraved score',
+    pdfPageLabel: 'Page {page} / {count}',
     accessibility: {
       navigator: 'Score note navigator',
       empty: 'No score notes',

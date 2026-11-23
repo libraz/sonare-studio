@@ -61,6 +61,7 @@ export const shellScore = {
       maxZoom: 'これ以上拡大できません。',
     },
     engravedScore: '譜面',
+    pdfPageLabel: '{page} / {count} ページ',
     accessibility: {
       navigator: '譜面ノートナビゲーター',
       empty: '譜面ノートはありません',

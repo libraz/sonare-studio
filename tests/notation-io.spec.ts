@@ -108,6 +108,8 @@ async function exportPdf(
   const writer = await createPdfPageWriter(svgPages.length, layout, {
     title: '',
     subject: '',
+    pageLabel: 'Page {page} / {count}',
+    text: { font: null, undrawable: [] },
     ...metadata,
   });
   for (let i = 0; i < svgPages.length; i++) await writer.addPage(svgPages[i], i + 1);
@@ -293,24 +295,16 @@ describe('exportPdf', () => {
     });
   });
 
-  it('draws a PDF header title and can suppress page numbers', async () => {
+  it('draws a PDF header title and no page label when none is given', async () => {
     await exportPdf([SVG_PAGE], A4, {
       title: 'Etude',
       headerTitle: 'Etude - Violin',
-      pageNumbers: false,
+      pageLabel: undefined,
     });
     expect(pdfState.instances[0].fontSizeCalls).toEqual([8]);
     expect(pdfState.instances[0].textColorCalls).toEqual([80]);
     expect(pdfState.instances[0].textCalls).toEqual([
       { text: 'Etude - Violin', x: 7, y: 7, options: { align: 'left' } },
-    ]);
-  });
-
-  it('suppresses an unrepresentable core-font header while retaining ASCII page numbers', async () => {
-    await exportPdf(['<svg/>'], A4, { title: '譜面', pageNumbers: true });
-
-    expect(pdfState.instances[0].textCalls).toEqual([
-      { text: 'Page 1 / 1', x: 105, y: 290, options: { align: 'center' } },
     ]);
   });
 

@@ -16,6 +16,7 @@
 
 import { computed, type Ref, ref, type ShallowRef, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
+import type { LossReport } from '@/export/loss-descriptor';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { downloadBlob } from '@/lib/download';
 import { errorMessage, isAbortError } from '@/lib/errors';
@@ -39,7 +40,7 @@ import {
   inspectMusicXmlExportLoss,
   serializeMusicXml,
 } from '@/notation/musicxml';
-import { createPdfPageWriter, createPrintPageWriter } from '@/notation/print';
+import { createPdfPageWriter, createPrintPageWriter, planPdfText } from '@/notation/print';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
@@ -802,11 +803,17 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function onExportPdf(): void {
-    if (loading.value || !artifactForCurrentState()) return;
+    if (loading.value) return;
+    const artifact = artifactForCurrentState();
+    if (!artifact) return;
     void runExport(async () => {
       const settings = structuredClone(options.getLayoutSettings());
       const title = store.projectName.trim() || t.value.shell.score.engravedScore;
+      const subject = t.value.shell.score.engravedScore;
+      const pageLabel = t.value.shell.score.pdfPageLabel;
       const layout = scorePageDimsMm(settings);
+      const text = await planPdfText([musicXmlText(artifact.xml), title, subject, pageLabel]);
+      if (!(await confirmPdfTextLoss(text.undrawable))) return;
       const pdf: { writer: Awaited<ReturnType<typeof createPdfPageWriter>> | null } = {
         writer: null,
       };
@@ -814,17 +821,36 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         pdf.writer ??= await createPdfPageWriter(pageCount, layout, {
           title,
           author: 'sonare studio',
-          subject: t.value.shell.score.engravedScore,
+          subject,
           headerTitle: title,
-          pageNumbers: true,
+          pageLabel,
+          text,
           signal: activeExportSignal,
         });
         await pdf.writer.addPage(svg, page);
       });
       if (!pdf.writer) return;
       const blob = pdf.writer.close();
+      if (!(await confirmPdfTextLoss(pdf.writer.undrawable()))) return;
       downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
     });
+  }
+
+  /** Asks before a PDF leaves out characters its font cannot draw. */
+  function confirmPdfTextLoss(characters: readonly string[]): Promise<boolean> {
+    const report: LossReport<'undrawableCharacters'> = {
+      entries:
+        characters.length === 0
+          ? []
+          : [
+              {
+                kind: 'undrawableCharacters',
+                count: characters.length,
+                details: characters.map(characterLabel),
+              },
+            ],
+    };
+    return confirmLossReport(report, t.value.shell.project.pdfExportLoss);
   }
 
   /** Asks before a MusicXML file drops content the engraved score cannot carry. */
@@ -906,4 +932,19 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     onExportMusicXml,
     onExportPartMusicXml,
   };
+}
+
+/** Every text node of a MusicXML document, the text an engraving of it can carry. */
+function musicXmlText(xml: string): string {
+  return new DOMParser().parseFromString(xml, 'application/xml').documentElement.textContent ?? '';
+}
+
+/**
+ * How a character the PDF cannot draw is named to the user: itself, or its code
+ * point when it is a private-use character no text font shows (a SMuFL glyph).
+ */
+export function characterLabel(character: string): string {
+  const codePoint = character.codePointAt(0) ?? 0;
+  const privateUse = (codePoint >= 0xe000 && codePoint <= 0xf8ff) || codePoint >= 0xf0000;
+  return privateUse ? `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}` : character;
 }

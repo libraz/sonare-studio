@@ -49,6 +49,16 @@ Bricolage Grotesque (UI typeface)
   https://openfontlicense.org
 
 ================================================================================
+Noto Sans JP (score PDF text font, embedded when a score carries Japanese text)
+================================================================================
+
+  Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name
+  'Source'. Distributed through @expo-google-fonts/noto-sans-jp.
+
+  Licensed under the SIL Open Font License, Version 1.1 (SPDX: OFL-1.1).
+  https://openfontlicense.org
+
+================================================================================
 DOMPurify
 ================================================================================
 

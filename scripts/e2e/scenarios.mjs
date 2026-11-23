@@ -86,6 +86,7 @@ import * as sample_editor_flow from './scenarios/sample-editor-flow.mjs';
 import * as score from './scenarios/score.mjs';
 import * as score_annotations from './scenarios/score-annotations.mjs';
 import * as score_chord_symbols from './scenarios/score-chord-symbols.mjs';
+import * as score_pdf_cjk from './scenarios/score-pdf-cjk.mjs';
 import * as score_print_pdf from './scenarios/score-print-pdf.mjs';
 import * as secondary_dominant_guidance from './scenarios/secondary-dominant-guidance.mjs';
 import * as shortcut_help from './scenarios/shortcut-help.mjs';
@@ -114,6 +115,7 @@ export const scenarios = [
   score,
   score_annotations,
   score_print_pdf,
+  score_pdf_cjk,
   shortcut_help,
   shortcut_remap,
   layouts,
