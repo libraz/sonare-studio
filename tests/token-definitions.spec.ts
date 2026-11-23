@@ -1,7 +1,5 @@
-import { readdirSync } from 'node:fs';
-import { extname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readSource } from './helpers/source-text';
+import { listSourceFiles, readSource } from './helpers/source-text';
 
 /**
  * Guards against referencing a CSS custom property that is defined nowhere.
@@ -17,20 +15,7 @@ import { readSource } from './helpers/source-text';
  * an undefined token harmless, so they are skipped.
  */
 
-const SRC = resolve(process.cwd(), 'src');
-
-/** Recursively collects files under `dir` whose extension is in `exts`. */
-function collectFiles(dir: string, exts: ReadonlySet<string>): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...collectFiles(full, exts));
-    else if (exts.has(extname(entry.name))) out.push(full);
-  }
-  return out;
-}
-
-const FILES = collectFiles(SRC, new Set(['.css', '.vue', '.ts']));
+const FILES = listSourceFiles('src', ['.css', '.vue', '.ts']);
 
 /** Custom properties defined anywhere: `--x:` declarations and JS/template sets. */
 const defined = new Set<string>();
@@ -42,8 +27,8 @@ const JS_SET_RE = /(?:setProperty\(\s*|["'])(--[a-z0-9-]+)["']\s*(?:,|:)/gi;
 const VAR_RE = /var\(\s*(--[a-z0-9-]+)\s*([,)])/gi;
 
 for (const file of FILES) {
-  const rel = relative(SRC, file);
-  const text = readSource(`src/${rel}`);
+  const rel = file.slice('src/'.length);
+  const text = readSource(file);
   for (const m of text.matchAll(DEFINE_RE)) defined.add(m[1]);
   for (const m of text.matchAll(JS_SET_RE)) defined.add(m[1]);
   for (const m of text.matchAll(VAR_RE)) {

@@ -1,8 +1,6 @@
-import { readdirSync } from 'node:fs';
-import { extname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CANVAS_FONT_SIZE_PX, CANVAS_FONT_STACK, canvasFont } from '@/ui/theme/tokens';
-import { readSource, sourceWindow } from './helpers/source-text';
+import { listSourceFiles, readSource, sourceWindow } from './helpers/source-text';
 
 /**
  * The type scale has one source of truth, tokens.css, and two consumers that
@@ -12,19 +10,7 @@ import { readSource, sourceWindow } from './helpers/source-text';
  * so they are pinned mechanically here rather than by review.
  */
 
-const SRC = resolve(process.cwd(), 'src');
 const css = readSource('src/ui/theme/tokens.css');
-
-/** Recursively collects source files under `src` with one of the extensions. */
-function collectFiles(dir: string, exts: ReadonlySet<string>): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...collectFiles(full, exts));
-    else if (exts.has(extname(entry.name))) out.push(full);
-  }
-  return out;
-}
 
 /** Reads a `--name: value;` declaration from the first (`:root`) block. */
 function rootVar(name: string): string | null {
@@ -48,10 +34,10 @@ describe('type scale', () => {
   it('leaves no stylesheet naming its own font size', () => {
     const offenders: string[] = [];
 
-    for (const file of collectFiles(SRC, new Set(['.css', '.vue']))) {
-      const rel = relative(SRC, file);
+    for (const file of listSourceFiles('src', ['.css', '.vue'])) {
+      const rel = file.slice('src/'.length);
       if (RAW_SIZE_EXEMPT.includes(rel)) continue;
-      const text = readSource(`src/${rel}`);
+      const text = readSource(file);
       for (const match of text.matchAll(FONT_DECLARATION)) {
         // A literal inside var(--x, 13px) is a fallback, not a chosen size.
         const outsideVars = match[1].replace(/var\([^)]*\)/g, '');
@@ -90,10 +76,10 @@ describe('type scale', () => {
   it('leaves no canvas renderer naming its own typeface', () => {
     const offenders: string[] = [];
 
-    for (const file of collectFiles(SRC, new Set(['.ts', '.vue']))) {
-      const rel = relative(SRC, file);
+    for (const file of listSourceFiles('src', ['.ts', '.vue'])) {
+      const rel = file.slice('src/'.length);
       if (rel.startsWith('wasm/')) continue;
-      const text = readSource(`src/${rel}`);
+      const text = readSource(file);
       for (const [index, line] of text.split('\n').entries()) {
         if (/\bctx\.font\s*=/.test(line) && !line.includes('canvasFont')) {
           offenders.push(`${rel}:${index + 1}`);

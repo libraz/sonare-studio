@@ -1,7 +1,5 @@
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readSource } from './helpers/source-text';
+import { listSourceFiles, readSource } from './helpers/source-text';
 
 const ROOT = 'src/components';
 
@@ -18,19 +16,9 @@ const NOT_TEXT_ENTRY = new Set([
   'step-sequencer/StepGrid.vue',
 ]);
 
-function vueFiles(dir: string): string[] {
-  return readdirSync(join(import.meta.dirname, '..', dir), { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory()
-      ? vueFiles(`${dir}/${e.name}`)
-      : e.name.endsWith('.vue')
-        ? [`${dir}/${e.name}`]
-        : [],
-  );
-}
-
 describe('IME-safe Enter handling', () => {
   it('routes every text-entry Enter handler through isImeComposing', () => {
-    const files = vueFiles(ROOT);
+    const files = listSourceFiles(ROOT, ['.vue']);
     expect(files.length).toBeGreaterThan(0);
     const offenders = files.filter((file) => {
       if (NOT_TEXT_ENTRY.has(file.slice(ROOT.length + 1))) return false;

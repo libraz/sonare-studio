@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
@@ -13,6 +13,19 @@ const ROOT = resolve(import.meta.dirname, '../..');
 /** Reads a repository file as UTF-8 text; `path` is relative to the repo root. */
 export function readSource(path: string): string {
   return readFileSync(resolve(ROOT, path), 'utf8');
+}
+
+/** Repo-relative paths of files under `dir` ending in one of `extensions` (e.g. `.ts`), recursively, sorted. */
+export function listSourceFiles(dir: string, extensions: readonly string[]): string[] {
+  return readdirSync(resolve(ROOT, dir), { withFileTypes: true })
+    .flatMap((e) =>
+      e.isDirectory()
+        ? listSourceFiles(`${dir}/${e.name}`, extensions)
+        : extensions.some((ext) => e.name.endsWith(ext))
+          ? [`${dir}/${e.name}`]
+          : [],
+    )
+    .sort();
 }
 
 /**

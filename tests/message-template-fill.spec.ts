@@ -1,10 +1,8 @@
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { AudioExportBlocker } from '@/export/audio-preflight';
 import { type ExportIssueStrings, formatPreflightBlocker } from '@/export/export-issue-format';
 import { formatMessage } from '@/ui/i18n/format';
-import { readSource } from './helpers/source-text';
+import { listSourceFiles, readSource } from './helpers/source-text';
 
 const STRINGS = {
   blocker: {
@@ -55,19 +53,9 @@ describe('message templates take user text literally', () => {
   });
 });
 
-function sourceFiles(dir: string): string[] {
-  return readdirSync(join(import.meta.dirname, '..', dir), { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory()
-      ? sourceFiles(`${dir}/${e.name}`)
-      : e.name.endsWith('.ts') || e.name.endsWith('.vue')
-        ? [`${dir}/${e.name}`]
-        : [],
-  );
-}
-
 describe('message template fill guard', () => {
   it('fills {placeholder} templates only through formatMessage', () => {
-    const offenders = sourceFiles('src').filter((f) =>
+    const offenders = listSourceFiles('src', ['.ts', '.vue']).filter((f) =>
       /\.replace\(\s*['"`]\{\w+\}['"`]/.test(readSource(f)),
     );
     expect(offenders).toEqual([]);

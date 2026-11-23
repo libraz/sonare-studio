@@ -1,20 +1,8 @@
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readSource } from './helpers/source-text';
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(join(import.meta.dirname, '..', dir), { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory()
-      ? sourceFiles(`${dir}/${e.name}`)
-      : e.name.endsWith('.ts') || e.name.endsWith('.vue')
-        ? [`${dir}/${e.name}`]
-        : [],
-  );
-}
+import { listSourceFiles, readSource } from './helpers/source-text';
 
 describe('Math.min/max spread guard', () => {
-  const files = sourceFiles('src');
+  const files = listSourceFiles('src', ['.ts', '.vue']);
 
   it('scans source files', () => {
     expect(files.length).toBeGreaterThan(0);
