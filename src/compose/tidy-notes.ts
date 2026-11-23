@@ -282,9 +282,13 @@ export function tidyNotes<T extends TidyNote>(notes: readonly T[], options: Tidy
     const end = Math.max(start + grid, snap(note.startPpq + note.durationPpq));
     const key = `${note.pitch}@${start}`;
     const existing = byOnset.get(key);
-    if (!existing || note.velocity > existing.note.velocity) {
-      byOnset.set(key, { note, start, end: Math.max(end, existing?.end ?? end) });
+    if (!existing) {
+      byOnset.set(key, { note, start, end });
+      continue;
     }
+    // The louder strike wins the identity; the merged note always spans the longer of the two.
+    if (note.velocity > existing.note.velocity) existing.note = note;
+    existing.end = Math.max(existing.end, end);
   }
   let items = [...byOnset.values()];
 
