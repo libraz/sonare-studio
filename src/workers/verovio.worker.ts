@@ -119,11 +119,12 @@ async function handle(request: VerovioRequest): Promise<void> {
   const toolkit = await toolkitPromise;
   switch (request.type) {
     case 'load': {
+      // A load that fails at any step must not leave the previous score renderable.
+      loaded = false;
       // inputFrom is pinned to MusicXML; auto-detection is only reliable on a
       // brand-new toolkit and resetOptions() would silently flip it back to MEI.
       toolkit.setOptions({ ...(request.options ?? {}), inputFrom: 'xml' });
       if (toolkit.loadData(request.musicXml) !== 1) {
-        loaded = false;
         throw new Error(`Verovio failed to load MusicXML: ${toolkit.getLog()}`);
       }
       loaded = true;
