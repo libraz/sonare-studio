@@ -316,6 +316,7 @@ export function useArrangementProcessing(
     trackName: string,
     policy: NoteTargetUnmatchedPolicy,
   ): void {
+    if (isTuningToMidi.value) return;
     error.value = '';
     notice.value = '';
     isTuningToMidi.value = true;
