@@ -35,6 +35,8 @@ const emit = defineEmits<{
 const lane = ref<HTMLDivElement | null>(null);
 const stepControls = ref<HTMLElement[]>([]);
 const activeStep = ref(0);
+/** The lane's single tab stop: the last focused step, held inside a row that may have shrunk. */
+const tabStop = computed(() => Math.min(activeStep.value, props.steps.length - 1));
 
 const bipolar = computed(() => isBipolarParam(props.param));
 
@@ -183,7 +185,7 @@ function onPointerUp(): void {
         :class="{ 'bar-inactive': !step.active }"
         role="slider"
         aria-orientation="vertical"
-        :tabindex="index === activeStep ? 0 : -1"
+        :tabindex="index === tabStop ? 0 : -1"
         :aria-label="`${paramLabel}, ${stepLabel} ${index + 1}`"
         :aria-valuemin="parameterBounds().min"
         :aria-valuemax="parameterBounds().max"
