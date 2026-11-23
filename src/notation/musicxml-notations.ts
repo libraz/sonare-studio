@@ -88,8 +88,9 @@ export function notationsXml(
       inner += ornamentXml(ornament);
     }
   }
-  if (!percussion) {
-    // Fingering is per-note: each chord pitch carries its own finger number.
+  if (!percussion && !event.tieStop) {
+    // Fingering is per-note and per key press: each chord pitch carries its own
+    // finger number, written on the attack and not on a tied continuation.
     const fingering = event.fingering?.[pitchIndex];
     if (fingering !== undefined) {
       inner += `<technical><fingering>${fingering}</fingering></technical>`;
