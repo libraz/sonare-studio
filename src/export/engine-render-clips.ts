@@ -246,24 +246,10 @@ export async function buildAudioClips(
     // start instead of their own clips.
     if (track.frozen !== undefined) {
       if (isStreamed(frozenTrackStreamKey(index))) continue;
+      checkCancel();
+      let asset: LoadedAudioAsset;
       try {
-        checkCancel();
-        const asset = await loadAudio(track.frozen.assetId);
-        checkCancel();
-        const channels = await resampleChannels(
-          asset.channels.map((channel) => channel.slice()),
-          asset.meta.sampleRate,
-        );
-        checkCancel();
-        if (channels.length > 0 && channels[0].length > 0) {
-          audioClips.push({
-            trackId: trackIds[index],
-            channels,
-            startPpq: 0,
-            lengthSamples: channels[0].length,
-            gain: 1,
-          });
-        }
+        asset = await loadAudio(track.frozen.assetId);
       } catch (error) {
         if (!context.mediaIssues?.some((issue) => issue.id === track.frozen?.assetId)) {
           context.mediaIssues?.push({
@@ -274,6 +260,22 @@ export async function buildAudioClips(
           });
         }
         // Missing or unreadable frozen asset: the track stays silent.
+        continue;
+      }
+      checkCancel();
+      const channels = await resampleChannels(
+        asset.channels.map((channel) => channel.slice()),
+        asset.meta.sampleRate,
+      );
+      checkCancel();
+      if (channels.length > 0 && channels[0].length > 0) {
+        audioClips.push({
+          trackId: trackIds[index],
+          channels,
+          startPpq: 0,
+          lengthSamples: channels[0].length,
+          gain: 1,
+        });
       }
       continue;
     }
