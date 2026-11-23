@@ -121,6 +121,10 @@ export class SwCacheStorage {
     return cache;
   }
 
+  async has(name: string): Promise<boolean> {
+    return this.stores.has(name);
+  }
+
   async keys(): Promise<string[]> {
     return [...this.stores.keys()];
   }

@@ -165,6 +165,8 @@ const precacheAsset = async (cache, asset) => {
 };
 
 const precacheAppShell = async () => {
+  // A cache that already exists belongs to a complete install this call is repairing.
+  const existed = await caches.has(CACHE_VERSION);
   try {
     const assets = await loadPrecacheManifest();
     const cache = await caches.open(CACHE_VERSION);
@@ -184,9 +186,10 @@ const precacheAppShell = async () => {
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
   } catch (error) {
-    // A failed update must not leave a partially populated release cache that
-    // a retry could mistake for a complete install.
-    await caches.delete(CACHE_VERSION);
+    // A failed install must not leave a partially populated release cache that
+    // a retry could mistake for a complete install. A failed repair keeps the
+    // cache the open page is still loading chunks from.
+    if (!existed) await caches.delete(CACHE_VERSION);
     throw error;
   }
 };
