@@ -7,6 +7,7 @@ import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repair-analysis';
 import {
   type AcousticAnalysisSummary,
+  formatMeasure,
   type RoomEstimateSummary,
   roomEstimateHasGeometry,
 } from '@/ui/sample-editor/room-acoustics';
@@ -160,15 +161,11 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
       </dd>
       <dd v-else>—</dd>
       <dt>{{ se.roomEstimateVolume }}</dt>
-      <dd>
-        {{ Number.isFinite(roomEstimate.volume) ? roomEstimate.volume.toFixed(0) : '—' }} m³
-      </dd>
+      <dd>{{ formatMeasure(roomEstimate.volume, 0, ' m³') }}</dd>
       <dt>{{ se.roomEstimateRt60 }}</dt>
-      <dd>
-        {{ Number.isFinite(roomEstimate.rt60Mid) ? roomEstimate.rt60Mid.toFixed(2) : '—' }} s
-      </dd>
+      <dd>{{ formatMeasure(roomEstimate.rt60Mid, 2, ' s') }}</dd>
       <dt>{{ se.roomEstimateDrr }}</dt>
-      <dd>{{ roomEstimate.drrDb.toFixed(1) }} dB</dd>
+      <dd>{{ formatMeasure(roomEstimate.drrDb, 1, ' dB') }}</dd>
     </dl>
   </div>
   <div v-if="acousticAnalysis" class="match-eq-analysis room-estimate" role="status">
@@ -187,23 +184,16 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
     </div>
     <dl class="room-estimate-grid">
       <dt>{{ se.roomEstimateRt60 }}</dt>
-      <dd>
-        {{ Number.isFinite(acousticAnalysis.rt60) ? acousticAnalysis.rt60.toFixed(2) : '—' }} s
-      </dd>
+      <dd>{{ formatMeasure(acousticAnalysis.rt60, 2, ' s') }}</dd>
       <dt>{{ se.acousticEdt }}</dt>
-      <dd>
-        {{ Number.isFinite(acousticAnalysis.edt) ? acousticAnalysis.edt.toFixed(2) : '—' }} s
-      </dd>
+      <dd>{{ formatMeasure(acousticAnalysis.edt, 2, ' s') }}</dd>
       <dt>{{ se.acousticClarity }}</dt>
       <dd>
-        C50 {{ Number.isFinite(acousticAnalysis.c50) ? acousticAnalysis.c50.toFixed(1) : '—' }}
-        dB / C80
-        {{ Number.isFinite(acousticAnalysis.c80) ? acousticAnalysis.c80.toFixed(1) : '—' }} dB
+        C50 {{ formatMeasure(acousticAnalysis.c50, 1, ' dB') }} / C80
+        {{ formatMeasure(acousticAnalysis.c80, 1, ' dB') }}
       </dd>
       <dt>{{ se.acousticDefinition }}</dt>
-      <dd>
-        {{ Number.isFinite(acousticAnalysis.d50) ? Math.round(acousticAnalysis.d50 * 100) : '—' }}%
-      </dd>
+      <dd>{{ formatMeasure(Math.round(acousticAnalysis.d50 * 100), 0, '%') }}</dd>
     </dl>
   </div>
 </template>

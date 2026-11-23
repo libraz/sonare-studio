@@ -205,6 +205,11 @@ function acousticSummary(
   };
 }
 
+/** Formats a measured value with its unit suffix, or a bare dash when it was not measured. */
+export function formatMeasure(value: number, digits: number, suffix: string): string {
+  return Number.isFinite(value) ? `${value.toFixed(digits)}${suffix}` : '—';
+}
+
 /**
  * True when the estimate measured a room shape. The estimator reports NaN
  * dimensions when no decay is measurable.
