@@ -116,7 +116,7 @@ export function isDrumTrack(
  * Picks the MIDI channel new notes should use for a track.
  *
  * Percussion always uses the GM percussion channel. For melodic tracks, retain
- * the modal channel already present in the clip so edits to imported
+ * the modal non-percussion channel already present in the clip so edits to imported
  * multi-channel material do not silently move notes to channel 1. Ties prefer
  * the lower channel number, making the result independent of note ordering.
  */
@@ -134,6 +134,7 @@ export function preferredNoteChannel(
   }
   let preferred = 0;
   for (let channel = 1; channel < counts.length; channel += 1) {
+    if (channel === GM_PERCUSSION_CHANNEL) continue;
     if (counts[channel] > counts[preferred]) preferred = channel;
   }
   return preferred;
