@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useAnimationLoop } from '@/composables/useAnimationLoop';
 import type { MeterBridge } from '@/engine/meters';
 import { clamp } from '@/lib/math';
 import { useI18n } from '@/ui/i18n';
@@ -42,8 +43,6 @@ const cssClipLedH = `${CLIP_LED_H}px`;
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D | null = null;
-let rafId = 0;
-let lastTs = 0;
 /** True once the floor state was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
 const channels: MeterChannelModel[] = [
@@ -72,14 +71,10 @@ function dbToY(db: number, h: number): number {
 }
 
 /** Renders one frame: applies decay then draws bars and the dB scale. */
-function draw(ts: number): void {
-  rafId = requestAnimationFrame(draw);
+function draw(ts: number, dt: number): void {
   const canvas = canvasRef.value;
   const ctx = canvasCtx;
   if (!canvas || !ctx) return;
-
-  const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.1) : 0;
-  lastTs = ts;
 
   const levels = props.bridge?.latest;
   advanceMeterChannel(
@@ -155,13 +150,14 @@ function onClick(): void {
   idleFrameDrawn = false;
 }
 
+const animation = useAnimationLoop(draw);
+
 onMounted(() => {
   resizeCanvas();
-  rafId = requestAnimationFrame(draw);
+  animation.start();
 });
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
   canvasCtx = null;
 });
 

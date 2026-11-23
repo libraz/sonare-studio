@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useAnimationLoop } from '@/composables/useAnimationLoop';
 import type { MeterSource } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
 import { FADER_HEIGHT, formatDb, SILENCE_TEXT } from '@/ui/mixer/db-scale';
@@ -53,8 +54,6 @@ const PLACEHOLDER_GROOVE = colorWithAlpha(TOKENS.text4, 0.12);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D | null = null;
-let rafId = 0;
-let lastTs = 0;
 /** True once the floor state was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
 const channels: MeterChannelModel[] = [
@@ -132,28 +131,12 @@ function drawPlaceholder(): void {
   ctx.fillRect(barW + gap, CLIP_LED_H, barW, props.height - CLIP_LED_H - 1);
 }
 
-function stopAnimation(): void {
-  if (rafId !== 0) cancelAnimationFrame(rafId);
-  rafId = 0;
-  lastTs = 0;
-}
+const animation = useAnimationLoop(draw, () => props.visible);
 
-function startAnimation(): void {
-  if (!props.visible || rafId !== 0) return;
-  rafId = requestAnimationFrame(draw);
-}
-
-function draw(ts: number): void {
-  if (!props.visible) {
-    rafId = 0;
-    return;
-  }
-  rafId = requestAnimationFrame(draw);
+function draw(ts: number, dt: number): void {
   const canvas = canvasRef.value;
   const ctx = canvasCtx;
   if (!canvas || !ctx) return;
-  const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.1) : 0;
-  lastTs = ts;
   const levels = props.bridge?.latest;
   advanceMeterChannel(
     channels[0],
@@ -200,11 +183,10 @@ onMounted(() => {
   showPeakHold(props.minDb);
   resizeCanvas();
   if (props.placeholder) drawPlaceholder();
-  else startAnimation();
+  else animation.start();
 });
 
 onBeforeUnmount(() => {
-  stopAnimation();
   canvasCtx = null;
 });
 
@@ -212,11 +194,11 @@ watch(
   () => props.placeholder,
   (placeholder) => {
     if (placeholder) {
-      stopAnimation();
+      animation.stop();
       drawPlaceholder();
     } else {
       idleFrameDrawn = false;
-      startAnimation();
+      animation.start();
     }
   },
 );
@@ -225,12 +207,12 @@ watch(
   () => props.visible,
   (visible) => {
     if (!visible) {
-      stopAnimation();
+      animation.stop();
       return;
     }
     idleFrameDrawn = false;
     if (props.placeholder) drawPlaceholder();
-    else startAnimation();
+    else animation.start();
   },
 );
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
+import { useAnimationLoop } from '@/composables/useAnimationLoop';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { ScopeSource } from '@/engine/scope';
 import { useI18n } from '@/ui/i18n';
@@ -37,7 +38,6 @@ const props = withDefaults(
 const { t } = useI18n();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-let rafId = 0;
 /** Reused time-domain scratch, sized to the analyser's scope window. */
 let left: Float32Array | null = null;
 let right: Float32Array | null = null;
@@ -57,15 +57,7 @@ function invalidate(): void {
   paintedScope = null;
 }
 
-function stopAnimation(): void {
-  if (rafId !== 0) cancelAnimationFrame(rafId);
-  rafId = 0;
-}
-
-function startAnimation(): void {
-  if (!props.visible || rafId !== 0) return;
-  rafId = requestAnimationFrame(draw);
-}
+const animation = useAnimationLoop(draw, () => props.visible);
 
 function resizeCanvas(): void {
   const canvas = canvasRef.value;
@@ -115,11 +107,6 @@ function plotInterleaved(ctx: CanvasRenderingContext2D, points: Float32Array): b
 }
 
 function draw(): void {
-  if (!props.visible) {
-    rafId = 0;
-    return;
-  }
-  rafId = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
   const ctx = canvas?.getContext('2d');
   if (!canvas || !ctx) return;
@@ -164,11 +151,7 @@ function draw(): void {
 
 onMounted(() => {
   resizeCanvas();
-  startAnimation();
-});
-
-onBeforeUnmount(() => {
-  stopAnimation();
+  animation.start();
 });
 
 watch(
@@ -176,9 +159,9 @@ watch(
   (visible) => {
     if (visible) {
       invalidate();
-      startAnimation();
+      animation.start();
     } else {
-      stopAnimation();
+      animation.stop();
     }
   },
 );
