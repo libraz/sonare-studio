@@ -133,7 +133,7 @@ describe('useActionGuards', () => {
       title: undefined,
       message: 'Explain a lossy export',
       danger: false,
-      confirmLabel: 'Continue',
+      confirmLabel: undefined,
     });
   });
 

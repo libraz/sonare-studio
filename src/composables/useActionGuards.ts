@@ -20,7 +20,7 @@ export function useActionGuards(options: ActionGuardsOptions) {
       title: opts?.title,
       message,
       danger: opts?.danger,
-      confirmLabel: opts?.confirmLabel ?? 'Continue',
+      confirmLabel: opts?.confirmLabel,
     });
   }
 
@@ -33,7 +33,7 @@ export function useActionGuards(options: ActionGuardsOptions) {
       title: opts?.title,
       message,
       danger: opts?.danger ?? false,
-      confirmLabel: opts?.confirmLabel ?? 'Continue',
+      confirmLabel: opts?.confirmLabel,
     });
   }
 
