@@ -218,6 +218,18 @@ describe('worklet-entry dispatch', () => {
     expect(voiceReceiveMessage).toHaveBeenNthCalledWith(3, destroy);
   });
 
+  it('forwards every voice changer message to the bridge, which validates it', async () => {
+    const instance = await createReadyProcessor('sonare-realtime-voice-changer-processor');
+    const messages = [
+      { type: 'noteOn', note: 60, velocity: 0.8 },
+      { type: 'noteOff', note: 60 },
+      { type: 'allNotesOff' },
+      { type: 'status', requestId: 1 },
+    ];
+    for (const data of messages) instance.port.onmessage?.({ data });
+    expect(voiceReceiveMessage.mock.calls.map(([message]) => message)).toEqual(messages);
+  });
+
   it('initializes embind with supplied wasm bytes and the package module factory', async () => {
     const wasmBinary = new ArrayBuffer(8);
     const { default: moduleFactory } = await import('@libraz/libsonare/module');

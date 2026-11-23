@@ -213,11 +213,8 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
   }
 
   private dispatch(data: unknown): void {
-    if (!this.bridge || data === null || typeof data !== 'object') return;
-    const type = (data as { type?: unknown }).type;
-    if (type === 'setConfig' || type === 'reset' || type === 'destroy') {
-      this.bridge.receiveMessage(data);
-    }
+    // The bridge validates the message type, and replies to `status` itself.
+    if (this.bridge && data !== null && typeof data === 'object') this.bridge.receiveMessage(data);
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
