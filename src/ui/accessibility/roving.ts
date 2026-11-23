@@ -76,6 +76,8 @@ export function createRovingDirective(group: RovingGroup): Directive<HTMLElement
   };
 
   const onKeydown = (event: KeyboardEvent): void => {
+    // Modified arrows belong to the app and browser shortcuts, not to option navigation.
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const el = event.currentTarget as HTMLElement;
     const options = optionsOf(el);
     if (options.length === 0) return;
