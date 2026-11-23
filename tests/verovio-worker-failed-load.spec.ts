@@ -27,13 +27,9 @@ describe('Verovio worker after a failed load', () => {
       getLog: () => '',
     };
     workerMocks.createModule.mockResolvedValue({});
-    workerMocks.VerovioToolkit.mockImplementation(
-      class {
-        constructor() {
-          Object.assign(this, toolkit);
-        }
-      },
-    );
+    workerMocks.VerovioToolkit.mockImplementation(function (this: object) {
+      Object.assign(this, toolkit);
+    });
     const scope = {
       onmessage: null as ((event: MessageEvent<VerovioRequest>) => void) | null,
       postMessage: vi.fn(),

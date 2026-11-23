@@ -75,7 +75,8 @@ describe('transient slicing reads the audible clip', () => {
     uninstallMockOpfs();
   });
 
-  function sliceStarts(ids: number[]): number[] {
+  function sliceStarts(ids: number[] | null): number[] {
+    if (ids === null) throw new Error('the clip was not sliced');
     return ids
       .map((id) => store.clips.find((clip) => clip.id === id)?.startPpq ?? Number.NaN)
       .sort((a, b) => a - b);

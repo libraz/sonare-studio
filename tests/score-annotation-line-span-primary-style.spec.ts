@@ -57,7 +57,7 @@ describe('setNoteAnnotation addLineSpan primary style', () => {
     const c = addNote({ pitch: 67, startPpq: 2, durationPpq: 1 });
 
     setNoteAnnotation(store.clipId, a, {
-      addLineSpan: { lineSpan: 'pedal', lineSpanToNoteId: b, pedalStyle: 'bracket' },
+      addLineSpan: { lineSpan: 'pedal', lineSpanToNoteId: b, pedalStyle: 'sign' },
     });
     setNoteAnnotation(store.clipId, a, {
       addLineSpan: { lineSpan: 'glissando', lineSpanToNoteId: c, glissandoText: 'gliss.' },
@@ -66,7 +66,7 @@ describe('setNoteAnnotation addLineSpan primary style', () => {
     expect(store.scoreAnnotations[store.clipId]?.[a]).toEqual({
       lineSpan: 'pedal',
       lineSpanToNoteId: b,
-      pedalStyle: 'bracket',
+      pedalStyle: 'sign',
       lineSpans: [{ lineSpan: 'glissando', lineSpanToNoteId: c, glissandoText: 'gliss.' }],
     });
   });

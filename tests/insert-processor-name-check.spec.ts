@@ -24,6 +24,7 @@ describe('every command that places a processor refuses an unknown one', () => {
     expect(() => addInsert(trackId, 'eq.nonexistent')).toThrow(/Unknown insert processor/);
     const index = addInsert(trackId, 'eq.tilt');
     expect(() =>
+      // @ts-expect-error an id outside the registry, as untyped callers can pass
       replaceInsert(trackId, index, { processor: 'eq.nonexistent', params: {}, enabled: true }),
     ).toThrow(/Unknown insert processor/);
   });

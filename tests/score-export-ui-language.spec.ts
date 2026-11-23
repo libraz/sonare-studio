@@ -88,6 +88,7 @@ describe('score and stem exports in the UI language', () => {
       keyFifths: 0,
       clipStartPpq: 0,
       clipLengthPpq: 4,
+      displayTransposeSemitones: 0,
     });
     expect(score.parts.map((part) => part.name)).toEqual(['トラック 1']);
   });

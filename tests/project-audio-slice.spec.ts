@@ -141,6 +141,7 @@ describe('sliceAudioClipAtTransients', () => {
       detectOnsets: () => [1, 2, 3],
     });
 
+    if (ids === null) throw new Error('the clip was not sliced');
     expect(ids).toHaveLength(4);
     const starts = ids
       .map((id) => store.clips.find((clip) => clip.id === id)?.startPpq)
@@ -164,6 +165,7 @@ describe('sliceAudioClipAtTransients', () => {
       detectOnsets: () => [1.1, 2.6],
     });
 
+    if (ids === null) throw new Error('the clip was not sliced');
     const slices = ids.map((id) => store.clips.find((clip) => clip.id === id));
     expect(slices.map((clip) => clip?.startPpq)).toEqual([0, 2, 5]);
     // The first two slices close up to the next slice; the tail keeps its own.
