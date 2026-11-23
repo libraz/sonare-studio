@@ -34,7 +34,7 @@ export interface ExportIssueStrings {
     masteringAutomationAtStart: string;
     /** Variant naming the parameters; falls back to the whole-rack wording. */
     masteringAutomationAtStartParams?: string;
-    streamingMeteringUnavailable?: string;
+    streamingMeteringUnavailable: string;
     masteringLoudnessTargetLimited: string;
     warpVoicesExceeded: string;
   };
@@ -119,11 +119,9 @@ export function formatExportLimitation(
     case 'warp-voices-exceeded':
       return strings.limitation.warpVoicesExceeded;
     case 'streaming-metering-unavailable':
-      return formatMessage(
-        strings.limitation.streamingMeteringUnavailable ??
-          'Streaming export could not measure: {measurements}',
-        { measurements: limitation.measurements.join(', ') },
-      );
+      return formatMessage(strings.limitation.streamingMeteringUnavailable, {
+        measurements: limitation.measurements.join(', '),
+      });
   }
 }
 

@@ -28,6 +28,7 @@ const STRINGS: ExportIssueStrings = {
   },
   limitation: {
     masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
+    streamingMeteringUnavailable: 'Streaming export could not measure: {measurements}.',
     masteringLoudnessTargetLimited: 'Preset stopped short: {lufs} LUFS',
     warpVoicesExceeded: 'More than {limit} warped clips played at once',
   },
@@ -93,5 +94,11 @@ describe('export issue formatter', () => {
         STRINGS,
       ),
     ).toBe('Preset stopped short: -10.3 LUFS');
+    expect(
+      formatExportLimitation(
+        { kind: 'streaming-metering-unavailable', measurements: ['lufs', 'true-peak'] },
+        STRINGS,
+      ),
+    ).toBe('Streaming export could not measure: lufs, true-peak.');
   });
 });
