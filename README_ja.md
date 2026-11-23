@@ -22,12 +22,12 @@
 - **アレンジ** — トラック、MIDI クリップとオーディオクリップ、セクション、マーカー、ノートから推定するコードトラック、テンポマップと拍子マップ、ワープ、フリーズとバウンス。[アレンジ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/arranging.md)
 - **ノートを編集する** — ピアノロール、奏法マークとエクスプレッションマップ、グルーヴ、コントローラーレーン、MIDI FX、ミュージックタイピングとステップ入力、ステップシーケンサー。[ノートの編集](https://github.com/libraz/sonare-studio/blob/main/docs/ja/editing-notes.md)
 - **音を鳴らす** — 内蔵シンセのプリセット、GM 音色とドラムキット、GS インサートエフェクト付きの SoundFont（SF2）、マルチティンバーのチャンネルマップ。[音源](https://github.com/libraz/sonare-studio/blob/main/docs/ja/instruments.md)
-- **ミックスとマスタリング** — ゲイン、ミュート、スナップショット、VCA グループ、インサート、フェーダーのオートメーション、ミックスの提案、プリセットと A/B プレビュー付きのマスタリングチェイン。[ミックスとマスタリング](https://github.com/libraz/sonare-studio/blob/main/docs/ja/mixing-and-mastering.md)
-- **譜面を読む** — アクティブクリップの Verovio による浄書、注釈、印刷、PDF、MusicXML と `.mxl` の書き出しと読み込み。[譜面](https://github.com/libraz/sonare-studio/blob/main/docs/ja/score.md)
-- **作曲する** — libcantus によるコード進行とパートの生成、振り直し、理論カード、配置ガイド、セカンダリードミナントによるリハーモナイズ。[作曲](https://github.com/libraz/sonare-studio/blob/main/docs/ja/composing.md)
-- **録音してオーディオを解析する** — 読み込み、マイク録音、テイクの位置合わせ、オーディオから MIDI への採譜、ステム分離、サンプルエディター。[オーディオの録音と解析](https://github.com/libraz/sonare-studio/blob/main/docs/ja/audio-recording-and-analysis.md)
-- **ファイルを出し入れする** — `.szd`、Standard MIDI File と MIDI 2.0 クリップの書き出し、DAWproject、MusicXML、WAV のミックスダウンとステム。[ファイルと形式](https://github.com/libraz/sonare-studio/blob/main/docs/ja/files-and-formats.md)
-- **オフラインで使う** — インストール可能な PWA、英語と日本語の UI、再割り当て可能なショートカット、保存して続行、名前付きリビジョン。[オフライン利用と設定](https://github.com/libraz/sonare-studio/blob/main/docs/ja/offline-and-settings.md)
+- **ミックスとマスタリング** — ゲイン、ミュート、バスとセンド、スナップショット、VCA グループ、インサート、フェーダーのオートメーション、マスターメーター、ミックスの提案、プリセットと A/B プレビュー付きのマスタリングチェイン。[ミックスとマスタリング](https://github.com/libraz/sonare-studio/blob/main/docs/ja/mixing-and-mastering.md)
+- **譜面を読む** — アクティブクリップの Verovio による浄書、コードシンボル、注釈、印刷、PDF、MusicXML と `.mxl` の書き出しと読み込み。[譜面](https://github.com/libraz/sonare-studio/blob/main/docs/ja/score.md)
+- **作曲する** — libcantus によるコード進行とパートの生成、振り直し、プロジェクトのシード、理論カード、配置ガイド、セカンダリードミナントによるリハーモナイズ。[作曲](https://github.com/libraz/sonare-studio/blob/main/docs/ja/composing.md)
+- **録音してオーディオを解析する** — 読み込み、マイク録音、テイクの選択とコンピング、テイクの位置合わせ、テンポ・コード・セクションの検出、オーディオから MIDI への採譜、ステム分離、サンプルエディター。[オーディオの録音と解析](https://github.com/libraz/sonare-studio/blob/main/docs/ja/audio-recording-and-analysis.md)
+- **ファイルを出し入れする** — `.szd`、Standard MIDI File と MIDI 2.0 クリップの書き出し、DAWproject、MusicXML、WAV・FLAC・MP3 のミックスダウン、WAV のステム。[ファイルと形式](https://github.com/libraz/sonare-studio/blob/main/docs/ja/files-and-formats.md)
+- **オフラインで使う** — インストール可能な PWA、英語と日本語の UI、再割り当て可能なショートカット、保存して続行、自動保存、名前付きリビジョン。[オフライン利用と設定](https://github.com/libraz/sonare-studio/blob/main/docs/ja/offline-and-settings.md)
 
 ## 検証しているもの
 

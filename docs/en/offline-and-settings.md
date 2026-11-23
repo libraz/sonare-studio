@@ -12,6 +12,8 @@ The app ships a web app manifest that declares a standalone window with 192 and 
 
 **File** > **Save** writes the project to the browser's storage, and the project header shows the time of the save. After a reload, **Continue last session** on the start screen restores the saved project with all its tracks.
 
+The project also autosaves. Once an edit has gone unsaved for the **Autosave interval (seconds)** set in **Options** > **Settings…** > **General**, it is written to the browser, the header shows the time of the autosave, and the unsaved marker stays until **File** > **Save**. **Continue last session** after a reload restores the autosaved edit as well.
+
 ## Named revisions
 
 1. Give the project a name with **File** > **Save As…**.

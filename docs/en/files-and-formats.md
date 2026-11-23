@@ -48,9 +48,10 @@ An imported file brings its notes back with the same pitches, positions and leng
 - **Bit depth** for WAV includes **32-bit float**.
 - **Apply master inserts, EQ and mastering chain** includes the master bus in the render. With the chain on, the output differs from the dry mix, and its peak stays at or below the ceiling set in the **Mastering** tab. The chain output is identical after the project is saved and reopened.
 - **Release tail** adds seconds after the last clip. With the tail at 0 and the whole project selected, the file's duration matches the project length.
+- **Format** is WAV, **FLAC (lossless)** or **MP3 (CBR)**. A FLAC file decodes to the same samples as the WAV of the same render. An MP3 file has the WAV's duration, within the codec's start delay and end padding, and its peak and loudness.
 - **Mode** is **Mixdown** or **Stems**.
 
-Press **Export**. When the render finishes, the dialog shows a loudness report with the peak level, and the file downloads as a WAV.
+Press **Export**. When the render finishes, the dialog shows a loudness report with the peak level, and the file downloads in the chosen format.
 
 In **Stems** mode the download is a ZIP with one WAV for each track, named after the track. The stems share the mixdown's sample rate and length, carry each strip's fader and pan, and sum to the mixdown. **Include final master stem** and **Include bus / return stems** are separate toggles; with both off, the archive holds one WAV for each track and nothing else.
 

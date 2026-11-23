@@ -26,6 +26,24 @@ The [shortcuts page](shortcuts.md) lists the Record key.
 
 The take clip is warped to follow the reference's timing. Undo turns the warp off again. The menu item is unavailable when no other audio clip covers the whole clip.
 
+## Choose and comp takes
+
+An audio clip can carry several takes of the same part.
+
+1. In the track header, press the **More actions** button, then **Take lanes**. One row for each take opens under the track.
+2. Click a take's row to play that take for the whole clip.
+3. Drag across part of another take's row to comp that take in for the dragged range.
+
+Playback and export follow the choice: after a click, the clip renders at the clicked take's level, and after a drag the dragged range renders from the dragged take.
+
+## Detect tempo, chords and sections
+
+Select an audio clip first; each detection reads the active clip.
+
+- **Tempo**: open the **Lists** tab, choose **Tempo** and press **Detect from clip**. The first tempo entry takes the detected BPM. A 100 BPM click track reads 100 BPM.
+- **Chords**: in the **Lists** tab, choose **Chords** and press **Detect from clip**. A clip of C, F, G and Am block chords, two seconds each, lists those four chords at their onsets.
+- **Sections**: in the arrangement toolbar's **Sections** group, press **Detect**. The section lane shows one band for each part; two ten-second parts of different material give two sections that meet at ten seconds.
+
 ## Transcribe audio to MIDI
 
 1. Select an audio clip. In the **Audio clip** group of the arrangement toolbar, press **To MIDI**.
