@@ -45,9 +45,9 @@ describe('picker options', () => {
     expect(rootOptions()[0]).toEqual({ value: '0', label: 'C' });
     expect(rootOptions()[9]).toEqual({ value: '9', label: 'A' });
     expect(rootOptions('japanese')[9]).toEqual({ value: '9', label: 'イ' });
-    expect(MODE_OPTIONS).toHaveLength(7);
-    expect(MODE_OPTIONS[0]).toEqual({ value: '0', label: 'Major' });
-    expect(MODE_OPTIONS[1]).toEqual({ value: '1', label: 'Minor' });
+    expect(MODE_OPTIONS.value).toHaveLength(7);
+    expect(MODE_OPTIONS.value[0]).toEqual({ value: '0', label: 'Major' });
+    expect(MODE_OPTIONS.value[1]).toEqual({ value: '1', label: 'Minor' });
   });
 });
 
@@ -56,7 +56,7 @@ describe('keyModeFor / modeOrdinalOf', () => {
     expect(keyModeFor(0)).toBe('major');
     expect(keyModeFor(1)).toBe('minor');
     expect(keyModeFor(6)).toBe('locrian');
-    for (let ordinal = 0; ordinal < MODE_OPTIONS.length; ordinal++) {
+    for (let ordinal = 0; ordinal < MODE_OPTIONS.value.length; ordinal++) {
       expect(modeOrdinalOf(keyModeFor(ordinal))).toBe(ordinal);
     }
   });

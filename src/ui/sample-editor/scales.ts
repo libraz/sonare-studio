@@ -10,7 +10,9 @@
 
 import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
 import type { KeyMode } from '@libraz/libsonare';
+import { computed } from 'vue';
 import { pitchClassOf } from '@/lib/pitch';
+import { useI18n } from '@/ui/i18n';
 import { pitchClassNames } from './note-names';
 
 /**
@@ -18,14 +20,14 @@ import { pitchClassNames } from './note-names';
  * name in the shared scale vocabulary rather than by intervals written out
  * here, so this picker and the key editor cannot drift on what a mode is.
  */
-const MODES: ReadonlyArray<{ name: string; scale: ScaleName; key: KeyMode }> = [
-  { name: 'Major', scale: 'major', key: 'major' },
-  { name: 'Minor', scale: 'naturalMinor', key: 'minor' },
-  { name: 'Dorian', scale: 'dorian', key: 'dorian' },
-  { name: 'Phrygian', scale: 'phrygian', key: 'phrygian' },
-  { name: 'Lydian', scale: 'lydian', key: 'lydian' },
-  { name: 'Mixolydian', scale: 'mixolydian', key: 'mixolydian' },
-  { name: 'Locrian', scale: 'locrian', key: 'locrian' },
+const MODES: ReadonlyArray<{ scale: ScaleName; key: KeyMode }> = [
+  { scale: 'major', key: 'major' },
+  { scale: 'naturalMinor', key: 'minor' },
+  { scale: 'dorian', key: 'dorian' },
+  { scale: 'phrygian', key: 'phrygian' },
+  { scale: 'lydian', key: 'lydian' },
+  { scale: 'mixolydian', key: 'mixolydian' },
+  { scale: 'locrian', key: 'locrian' },
 ];
 
 /**
@@ -75,9 +77,16 @@ export function rootOptions(
   return pitchClassNames(system).map((name, pc) => ({ value: String(pc), label: name }));
 }
 
-/** Mode options keyed by `Mode` ordinal for the scale picker. */
-export const MODE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = MODES.map(
-  (mode, ordinal) => ({ value: String(ordinal), label: mode.name }),
+const { t } = useI18n();
+
+/** Localized display name of a `Mode` ordinal; unknown ordinals read as major. */
+function modeLabel(mode: number): string {
+  return t.value.shell.sampleEditor.scaleModes[(MODES[mode] ?? MODES[0]).key];
+}
+
+/** Mode options keyed by `Mode` ordinal for the scale picker, in the active language. */
+export const MODE_OPTIONS = computed<ReadonlyArray<{ value: string; label: string }>>(() =>
+  MODES.map((_mode, ordinal) => ({ value: String(ordinal), label: modeLabel(ordinal) })),
 );
 
 /**
@@ -89,5 +98,5 @@ export const MODE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = MOD
  */
 export function scaleName(root: number, mode: number, system: NoteNameSystem = 'english'): string {
   const pc = pitchClassOf(root);
-  return `${pitchClassNames(system)[pc]} ${(MODES[mode] ?? MODES[0]).name}`;
+  return `${pitchClassNames(system)[pc]} ${modeLabel(mode)}`;
 }

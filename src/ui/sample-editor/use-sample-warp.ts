@@ -15,6 +15,7 @@ import { type DetectedBeats, detectBeatsInWorker } from '@/project/audio-analysi
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
 import {
   type NumericInputValue,
   parseNumber,
@@ -56,6 +57,7 @@ export interface UseSampleWarpOptions {
  */
 export function useSampleWarp(options: UseSampleWarpOptions) {
   const { project, assetId, setError } = options;
+  const { t } = useI18n();
   let disposed = false;
   const autoWarpOperations = new OperationGeneration();
   let autoWarpAbort: AbortController | null = null;
@@ -185,11 +187,11 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
       const asset = await loadAudioAsset(clip.assetId);
       if (!isCurrent()) return;
       const source = clipSourceWindowMono(clip, asset, project.tempoBpm, project.tempoSegments);
-      if (source.mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
+      if (source.mono.length === 0) throw new Error(t.value.shell.sampleEditor.autoWarpEmptyWindow);
       const { mono, sampleRate } = source;
       const { beats, downbeats } = await resolveBeatDetector()(mono, sampleRate, abort.signal);
       const warp = autoWarpFromBeatTimes(beats, downbeats, clip.lengthPpq);
-      if (!warp) throw new Error('Auto-Warp could not detect enough beats');
+      if (!warp) throw new Error(t.value.shell.sampleEditor.autoWarpNoBeats);
       if (!isCurrent()) return;
       // Beat times are seconds into the analysed window; the warp starts on its first beat.
       const windowStartSeconds = source.start / sampleRate;

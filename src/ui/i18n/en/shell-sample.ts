@@ -45,6 +45,15 @@ export const shellSample = {
     tuneScaleTitle: 'Snap the selection to the nearest in-scale note (auto-detects the pitch)',
     scaleRoot: 'Scale root',
     scaleMode: 'Scale mode',
+    scaleModes: {
+      major: 'Major',
+      minor: 'Minor',
+      dorian: 'Dorian',
+      phrygian: 'Phrygian',
+      lydian: 'Lydian',
+      mixolydian: 'Mixolydian',
+      locrian: 'Locrian',
+    },
     autoTune: 'Auto-tune',
     autoTuneTitle:
       'Snap the pitch of a monophonic recording (one voice or instrument) to a key, following its contour',
@@ -242,6 +251,8 @@ export const shellSample = {
     tuneNoteTitle: 'Target note: a name such as A4 or C#3, or a MIDI number',
     silenceThresholdTitle: 'Level below the peak, in dB, that Split treats as silence',
     autoWarpTitle: 'Detect the beats and place anchors automatically (turns on Follow tempo)',
+    autoWarpEmptyWindow: 'Auto-Warp requires a non-empty audio window',
+    autoWarpNoBeats: 'Auto-Warp could not detect enough beats',
     addAnchorTitle: 'Add an anchor in the widest gap between existing anchors',
     sourceBpmTitle: 'Tempo the audio was recorded at',
     reasons: {
