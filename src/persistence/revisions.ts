@@ -59,7 +59,9 @@ export class InvalidRevisionLabelError extends Error {
 
 /** Trims and bounds a user label. */
 export function sanitizeRevisionLabel(label: string): string {
-  const cleaned = label.trim().replace(/\s+/g, ' ').slice(0, MAX_REVISION_LABEL_LENGTH);
+  const cleaned = [...label.trim().replace(/\s+/g, ' ')]
+    .slice(0, MAX_REVISION_LABEL_LENGTH)
+    .join('');
   if (cleaned.length === 0) throw new InvalidRevisionLabelError(label);
   return cleaned;
 }
@@ -306,10 +308,11 @@ async function saveProjectRevisionUnlocked(
   };
   const next = [...entries, revision];
   // Prune this project's oldest generations; other projects are untouched.
-  const mine = next
+  // The new revision always survives, whatever its caller-supplied timestamp.
+  const older = entries
     .filter((entry) => entry.projectName === project)
     .sort((a, b) => b.savedAt - a.savedAt);
-  const dropped = mine.slice(MAX_REVISIONS_PER_PROJECT);
+  const dropped = older.slice(MAX_REVISIONS_PER_PROJECT - 1);
   const droppedSlots = new Set(dropped.map((entry) => entry.slot));
   const published = next.filter((entry) => !droppedSlots.has(entry.slot));
   const droppedImages = await Promise.all(
