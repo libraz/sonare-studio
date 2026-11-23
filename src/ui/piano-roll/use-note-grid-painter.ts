@@ -7,7 +7,7 @@
  */
 
 import { NoteSafety } from '@libraz/libcantus';
-import { onBeforeUnmount, onMounted, type Ref, watch } from 'vue';
+import { type Ref, watch } from 'vue';
 import {
   drawPlacementColumn,
   drawResolutionArrows,
@@ -34,9 +34,10 @@ import { meterGridLines } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { MIN_NOTE_WIDTH_PX } from '@/ui/canvas/hit-test';
 import type { Painter } from '@/ui/canvas/painter';
-import { playheadX } from '@/ui/canvas/playhead-x';
+import { drawPlayheadLine, playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
+import { usePlayheadPoll } from '@/ui/canvas/use-playhead-poll';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import type { InteractionPoint, NoteInteractions } from './use-note-interactions';
 
@@ -483,28 +484,15 @@ export function useNoteGridPainter(options: UseNoteGridPainterOptions): NoteGrid
       // the cap pins it there and the notes scroll under it, keeping it aligned
       // with the arrangement's playhead.
       const x = playheadX(props.range, props.positionPpq(), props.anchoredLocalX?.() ?? null);
-      if (x >= 0 && x <= w) {
-        ctx.fillStyle = COLORS.playhead;
-        ctx.fillRect(Math.round(x), 0, 1.5, h);
-      }
+      drawPlayheadLine(ctx, x, w, h, COLORS.playhead);
     }
   }
 
   // Playhead polling: redraw the overlay only when the playhead px moved.
-  let playheadRaf: number | null = null;
-  let lastPlayheadX = Number.NaN;
-
-  function playheadTick(): void {
+  const playheadPoll = usePlayheadPoll(() => {
     const getter = props.positionPpq;
-    if (getter) {
-      const x = playheadX(props.range, getter(), props.anchoredLocalX?.() ?? null);
-      if (x !== lastPlayheadX) {
-        lastPlayheadX = x;
-        scheduleOverlay();
-      }
-    }
-    playheadRaf = requestAnimationFrame(playheadTick);
-  }
+    return getter ? playheadX(props.range, getter(), props.anchoredLocalX?.() ?? null) : undefined;
+  }, scheduleOverlay);
 
   useCanvasSurface({
     container: wrapper,
@@ -514,14 +502,6 @@ export function useNoteGridPainter(options: UseNoteGridPainterOptions): NoteGrid
       emit('view-resize', w, h);
     },
     redraw: scheduleAll,
-  });
-
-  onMounted(() => {
-    playheadRaf = requestAnimationFrame(playheadTick);
-  });
-
-  onBeforeUnmount(() => {
-    if (playheadRaf !== null) cancelAnimationFrame(playheadRaf);
   });
 
   watch(
@@ -535,7 +515,7 @@ export function useNoteGridPainter(options: UseNoteGridPainterOptions): NoteGrid
       props.guidanceSegments,
     ],
     () => {
-      lastPlayheadX = Number.NaN;
+      playheadPoll.invalidate();
       scheduleBackground();
       scheduleNotes();
       scheduleOverlay();

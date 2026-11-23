@@ -19,3 +19,16 @@ export function playheadX(
   const raw = view.ppqToX(ppq);
   return anchorX === null ? raw : Math.min(raw, anchorX);
 }
+
+/** Draws the 1.5 px playhead line at local `x` when it lies inside the `widthPx` × `heightPx` canvas. */
+export function drawPlayheadLine(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  widthPx: number,
+  heightPx: number,
+  color: string,
+): void {
+  if (x < 0 || x > widthPx) return;
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), 0, 1.5, heightPx);
+}

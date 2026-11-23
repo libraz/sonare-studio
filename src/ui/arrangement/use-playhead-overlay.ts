@@ -8,12 +8,13 @@
  * unmount) so there is exactly one frame loop and no leak.
  */
 
-import { onBeforeUnmount, onMounted, type Ref } from 'vue';
+import type { Ref } from 'vue';
 import type { ARRANGEMENT_COLORS } from '@/components/arrangement/theme';
 import { getCanvasContext } from '@/components/piano-roll/theme';
 import type { Painter } from '@/ui/canvas/painter';
-import { playheadX } from '@/ui/canvas/playhead-x';
+import { drawPlayheadLine, playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { usePlayheadPoll } from '@/ui/canvas/use-playhead-poll';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
 
@@ -67,13 +68,14 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
     const h = view.heightPx;
     ctx.clearRect(0, 0, w, h);
     const getter = positionPpq();
-    if (getter) {
-      const x = playheadX(view, getter(), anchoredLocalX?.() ?? null);
-      if (x >= 0 && x <= w) {
-        ctx.fillStyle = colors.playhead;
-        ctx.fillRect(Math.round(x), 0, 1.5, h);
-      }
-    }
+    if (getter)
+      drawPlayheadLine(
+        ctx,
+        playheadX(view, getter(), anchoredLocalX?.() ?? null),
+        w,
+        h,
+        colors.playhead,
+      );
   }
 
   function scheduleOverlay(): void {
@@ -81,31 +83,10 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
   }
 
   // Playhead polling: redraw the overlay only when the playhead px moved.
-  let playheadRaf: number | null = null;
-  let lastPlayheadX = Number.NaN;
-
-  function playheadTick(): void {
+  usePlayheadPoll(() => {
     const getter = positionPpq();
-    if (getter) {
-      // Redraw only when the line's column actually moved; once pinned at the
-      // anchor this stays put until the position or anchor state changes.
-      const x = playheadX(range(), getter(), anchoredLocalX?.() ?? null);
-      if (x !== lastPlayheadX) {
-        lastPlayheadX = x;
-        scheduleOverlay();
-      }
-    }
-    playheadRaf = requestAnimationFrame(playheadTick);
-  }
-
-  onMounted(() => {
-    playheadRaf = requestAnimationFrame(playheadTick);
-  });
-
-  onBeforeUnmount(() => {
-    if (playheadRaf !== null) cancelAnimationFrame(playheadRaf);
-    playheadRaf = null;
-  });
+    return getter ? playheadX(range(), getter(), anchoredLocalX?.() ?? null) : undefined;
+  }, scheduleOverlay);
 
   return { drawOverlay, scheduleOverlay };
 }
