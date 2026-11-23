@@ -619,6 +619,8 @@ export const useProjectStore = defineStore('project', () => {
         clipStartPpq: clipStartPpq.value,
         clipLengthPpq: clipLengthPpq.value,
         notes: notes.value,
+        trackSelection: trackSelection.value,
+        clipSelection: clipSelection.value,
         selection: selection.value,
         sampleRate: sampleRate.value,
         tempoBpm: tempoBpm.value,
@@ -656,6 +658,8 @@ export const useProjectStore = defineStore('project', () => {
         clipStartPpq.value = previousState.clipStartPpq;
         clipLengthPpq.value = previousState.clipLengthPpq;
         notes.value = previousState.notes;
+        trackSelection.value = previousState.trackSelection;
+        clipSelection.value = previousState.clipSelection;
         selection.value = previousState.selection;
         sampleRate.value = previousState.sampleRate;
         tempoBpm.value = previousState.tempoBpm;
@@ -797,6 +801,8 @@ export const useProjectStore = defineStore('project', () => {
       };
       activeTrackId.value = trackMirror[0]?.id ?? -1;
       clipId.value = firstClipId;
+      trackSelection.value = new Set();
+      clipSelection.value = new Set();
       selection.value = new Set();
       // The native Project does not serialize additive groups. Seed its
       // read-back with the document's app-side meter metadata.

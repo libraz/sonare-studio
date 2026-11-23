@@ -256,7 +256,6 @@ export function crossfadeClips(
 export function setActiveClip(clipId: number): void {
   const store = useProjectStore();
   const clip = requireClip(store, clipId);
-  if (store.clipId === clipId) return;
   store.clipId = clipId;
   store.clipSelection = new Set([clipId]);
   store.activeTrackId = clip.trackId;

@@ -138,6 +138,14 @@ function applyMidiTakeMetadata(next: EditorClip, meta: DocumentClip, lengthPpq: 
 }
 
 /**
+ * An audio clip needs an asset to play. One without it loads as an (empty)
+ * MIDI clip in the Project and the mirror alike.
+ */
+function isAudioDocumentClip(clip: DocumentClip): boolean {
+  return clip.kind === 'audio' && typeof clip.assetId === 'string';
+}
+
+/**
  * Applies document-only clip metadata onto the refreshed clip mirror.
  *
  * Clip names, kinds and asset references are app metadata the Project does not
@@ -157,7 +165,7 @@ export function applyDocumentClipMetadata(
     const meta = clipMeta.get(clip.id);
     if (!meta) return clip;
     const next: EditorClip = { ...clip, name: meta.name };
-    const kind: ClipKind = meta.kind === 'audio' ? 'audio' : 'midi';
+    const kind: ClipKind = isAudioDocumentClip(meta) ? 'audio' : 'midi';
     if (kind === 'audio') {
       next.kind = 'audio';
       if (meta.assetId !== undefined) next.assetId = meta.assetId;
@@ -336,6 +344,7 @@ export function hydrateProjectFromDocument(
         .sort((a, b) => a.startPpq - b.startPpq);
       let latestEnd = -Infinity;
       for (const clip of ordered) {
+        // Strict, unlike the lane epsilon: the native addClip rejects any overlap under 'disallow'.
         if (clip.startPpq < latestEnd) return true;
         latestEnd = Math.max(latestEnd, clip.startPpq + clip.lengthPpq);
       }
@@ -348,7 +357,12 @@ export function hydrateProjectFromDocument(
     doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
   const normalizedTempo = normalizeTempoMap(tempo, DEFAULT_TEMPO_BPM);
   created.setTempoSegments(
-    tempo.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
+    tempo.map((s) => ({
+      startPpq: s.startPpq,
+      bpm: s.bpm,
+      // An unusable ramp target means no ramp (0), as in normalizeTempoMap.
+      endBpm: s.endBpm !== undefined && Number.isFinite(s.endBpm) && s.endBpm > 0 ? s.endBpm : 0,
+    })),
   );
   if (doc.timeSignatures.length > 0) {
     created.setTimeSignatures(doc.timeSignatures.map((s) => ({ ...s })));
@@ -491,7 +505,7 @@ export function hydrateProjectFromDocument(
         sourceOffsetPpq,
         gain,
       };
-      const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
+      const isAudio = isAudioDocumentClip(clip);
       let newClipId: number;
       if (isAudio) {
         const assetId = clip.assetId as string;

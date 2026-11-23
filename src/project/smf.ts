@@ -103,11 +103,15 @@ function markerKind(marker: DocumentMarker): {
   return { kind: 'marker', name };
 }
 
-function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
-  const lengthPpq = Math.max(
+function exportClipLengthPpq(clip: DocumentClip): number {
+  return Math.max(
     DEFAULT_CLIP_LENGTH_PPQ,
     finiteNonNegative(clip.lengthPpq, DEFAULT_CLIP_LENGTH_PPQ),
   );
+}
+
+function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
+  const lengthPpq = exportClipLengthPpq(clip);
   const exportClip = {
     ...clip,
     lengthPpq,
@@ -523,6 +527,21 @@ async function projectFromDocument(
 ): Promise<InstanceType<WasmModule['Project']>> {
   const wasm = await ensureWasm();
   const project = new wasm.Project();
+  try {
+    populateExportProject(project, wasm, doc, loss);
+  } catch (error) {
+    project.destroy();
+    throw error;
+  }
+  return project;
+}
+
+function populateExportProject(
+  project: InstanceType<WasmModule['Project']>,
+  wasm: WasmModule,
+  doc: ProjectDocument,
+  loss: LossTally<MidiExportLossKind>,
+): void {
   project.setSampleRate(doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE);
   project.setTempoSegments(
     sampleTempoRampsForSmf(doc).map((segment) => ({
@@ -616,7 +635,6 @@ async function projectFromDocument(
     ordered.sort((a, b) => a.ppq - b.ppq);
     project.setMidiEvents(clipId, ordered);
   }
-  return project;
 }
 
 function writeSmfVlq(value: number): number[] {
@@ -650,6 +668,7 @@ function documentSysExPackets(doc: ProjectDocument): TimelineSysExPacket[] {
     if (track.kind !== 'midi') continue;
     for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'midi') continue;
+      const lengthPpq = exportClipLengthPpq(clip);
       for (const packet of clip.smfSysEx ?? []) {
         if (
           !Number.isFinite(packet.ppq) ||
@@ -660,6 +679,8 @@ function documentSysExPackets(doc: ProjectDocument): TimelineSysExPacket[] {
         ) {
           throw new RangeError('Project contains an invalid SMF SysEx packet');
         }
+        // Same window the clip owns elsewhere (glue keeps 0 <= ppq < length).
+        if (packet.ppq >= lengthPpq) continue;
         totalBytes += packet.data.length;
         if (packets.length >= MAX_SMF_SYSEX_PACKETS || totalBytes > MAX_SMF_SYSEX_BYTES) {
           throw new RangeError(

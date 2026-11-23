@@ -520,13 +520,21 @@ export function setTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
   executeAtomic((edit) => applyTempoSegments(edit, segments));
 }
 
-/** Throws RangeError unless the map is non-empty, finite and strictly ascending. */
+/** Throws RangeError unless the map is non-empty, finite (endBpm included) and strictly ascending. */
 export function validateTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
   if (segments.length === 0) throw new RangeError('Tempo map must contain at least one segment');
   segments.forEach((segment, index) => {
     validatePpq(segment.startPpq, 'Tempo segment startPpq');
     if (!Number.isFinite(segment.bpm) || segment.bpm <= 0) {
       throw new RangeError(`Tempo bpm must be finite and > 0, got ${segment.bpm}`);
+    }
+    // 0 is the engine's "no ramp" value; anything else must be a real tempo.
+    if (
+      segment.endBpm !== undefined &&
+      segment.endBpm !== 0 &&
+      (!Number.isFinite(segment.endBpm) || segment.endBpm < 0)
+    ) {
+      throw new RangeError(`Tempo endBpm must be finite and >= 0, got ${segment.endBpm}`);
     }
     if (index > 0 && segment.startPpq <= segments[index - 1].startPpq) {
       throw new RangeError('Tempo segments must have strictly ascending startPpq');

@@ -1,7 +1,12 @@
 import { linearToDb } from '@/lib/db';
 import type { ChordFollowMode } from '../chord-follow';
 import { sanitizeExpressionMap, type TrackExpressionMap } from '../expression-map';
-import { assertCanAddEngineBus, assertCanAddTracks, createDefaultStrip } from '../mixer';
+import {
+  assertCanAddEngineBus,
+  assertCanAddTracks,
+  createDefaultStrip,
+  type ProjectMixerState,
+} from '../mixer';
 import { isValidPitchRange, type PitchRange } from '../pitch-range';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
@@ -296,16 +301,26 @@ export function setTrackSolo(trackId: number, solo: boolean): void {
   setTrackFlag(trackId, 'solo', solo);
 }
 
-/** Makes one track the only soloed source, clearing track and VCA solos atomically. */
+/** Returns the mixer with every VCA and return-bus solo cleared. */
+function mixerWithoutSolo(mixer: ProjectMixerState): ProjectMixerState {
+  return {
+    ...mixer,
+    vcaGroups: (mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
+    buses: mixer.buses.map((bus) => {
+      if (bus.solo !== true) return bus;
+      const { solo: _solo, ...cleared } = bus;
+      return cleared;
+    }),
+  };
+}
+
+/** Makes one track the only soloed source, clearing track, VCA and return-bus solos atomically. */
 export function setExclusiveTrackSolo(trackId: number): void {
   const store = useProjectStore();
   requireTrack(store, trackId);
   execute(0, () => {
     store.tracks = store.tracks.map((track) => ({ ...track, solo: track.id === trackId }));
-    store.mixer = {
-      ...store.mixer,
-      vcaGroups: (store.mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
-    };
+    store.mixer = mixerWithoutSolo(store.mixer);
     store.refresh();
   });
 }
@@ -321,15 +336,7 @@ export function clearAllSolo(): void {
     return;
   execute(0, () => {
     store.tracks = store.tracks.map((track) => ({ ...track, solo: false }));
-    store.mixer = {
-      ...store.mixer,
-      vcaGroups: (store.mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
-      buses: store.mixer.buses.map((bus) => {
-        if (bus.solo !== true) return bus;
-        const { solo: _solo, ...cleared } = bus;
-        return cleared;
-      }),
-    };
+    store.mixer = mixerWithoutSolo(store.mixer);
     store.refresh();
   });
 }
