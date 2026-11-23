@@ -179,7 +179,8 @@ export function useArrangementClipMenu(
         quantize,
         snap: snapArrangementPpq,
       });
-      if (ids.length < 2) error.value = t.value.shell.arrangement.clipActions.sliceNoTransients;
+      if (ids !== null && ids.length < 2)
+        error.value = t.value.shell.arrangement.clipActions.sliceNoTransients;
     } catch (cause) {
       error.value = describeError(cause, t.value.notices.errors);
     }

@@ -30,6 +30,7 @@ import {
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
+  isProjectOperationCurrent,
   StaleProjectOperationError,
 } from '../operation';
 import {
@@ -476,7 +477,7 @@ export interface ConsolidateAudioClipsOptions {
   renderWarp?: WarpRenderFn;
 }
 
-function consolidateClipToken(clip: EditorClip): string {
+function audioClipSourceToken(clip: EditorClip): string {
   return JSON.stringify({
     id: clip.id,
     trackId: clip.trackId,
@@ -497,7 +498,7 @@ function consolidateClipToken(clip: EditorClip): string {
 }
 
 function consolidateSourceTokens(clips: ReadonlyArray<EditorClip>): Map<number, string> {
-  return new Map(clips.map((clip) => [clip.id, consolidateClipToken(clip)]));
+  return new Map(clips.map((clip) => [clip.id, audioClipSourceToken(clip)]));
 }
 
 function areConsolidateSourcesCurrent(
@@ -506,12 +507,13 @@ function areConsolidateSourcesCurrent(
 ): boolean {
   for (const [id, token] of tokens) {
     const current = store.clips.find((clip) => clip.id === id);
-    if (current === undefined || consolidateClipToken(current) !== token) return false;
+    if (current === undefined || audioClipSourceToken(current) !== token) return false;
   }
   return true;
 }
 
 const consolidateOperations = new OperationGeneration();
+const sliceOperations = new OperationGeneration();
 
 function applyLinearGain(channels: Float32Array[], gain: number): Float32Array[] {
   if (gain === 1) return channels;
@@ -832,18 +834,29 @@ export interface SliceAudioClipOptions {
  * @param clipId Editor id of a non-looping audio clip.
  * @param options Quantize behaviour and injectable dependencies.
  * @returns Ids of the resulting slices in timeline order (the original clip
- * first); a single-element array when no usable transient was found.
+ * first); a single-element array when no usable transient was found; null
+ * when the clip, the tempo map or the project changed during the analysis.
  */
 export async function sliceAudioClipAtTransients(
   clipId: number,
   options: SliceAudioClipOptions = {},
-): Promise<number[]> {
+): Promise<number[] | null> {
   const store = useProjectStore();
   const clip = requireEditableClip(store, clipId);
   if (!isAudioClip(clip) || clip.assetId === undefined) {
     throw new RangeError(`Clip ${clipId} is not an audio clip with an asset`);
   }
   if (clip.loopEnabled) throw new Error(LOOP_CLIP_SPLIT_ERROR);
+  const sourceToken = audioClipSourceToken(clip);
+  const targetId = `slice:${clipId}`;
+  const currentRevision = (): string | null => {
+    const live = store.clips.find((entry) => entry.id === clipId);
+    if (live === undefined || audioClipSourceToken(live) !== sourceToken) return null;
+    return JSON.stringify({ source: sourceToken, tempo: [store.tempoBpm, store.tempoSegments] });
+  };
+  const operation = beginProjectOperation(sliceOperations, store, targetId, currentRevision());
+  const isCurrent = (): boolean =>
+    isProjectOperationCurrent(sliceOperations, operation, store, targetId, currentRevision());
   const detect = options.detectOnsets ?? (await ensureWasm()).detectOnsets;
   const loadAudioAsset = options.loadAudioAsset ?? loadAsset;
   // Detect on what plays, so warp and comp takes place the onsets where they are heard.
@@ -854,6 +867,7 @@ export async function sliceAudioClipAtTransients(
     loadAudioAsset,
     { renderWarp: options.renderWarp },
   );
+  if (!isCurrent()) return null;
   if (audible === null) return [clipId];
   const current = requireEditableClip(store, clipId);
   const tempo = audible.map;
@@ -873,6 +887,7 @@ export async function sliceAudioClipAtTransients(
     const sourceStartPpq = current.startPpq - current.sourceOffsetPpq;
     const assetSeconds = asset.meta.numFrames / asset.meta.sampleRate;
     sourceEndPpq = secondsToPpq(tempo, ppqToSeconds(tempo, sourceStartPpq) + assetSeconds);
+    if (!isCurrent()) return null;
   }
 
   return executeAtomic((edit) => {
