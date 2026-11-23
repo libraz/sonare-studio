@@ -55,6 +55,49 @@ export function midiPortInfos(
     : [];
 }
 
+interface HandlerSlot {
+  original: unknown;
+  listeners: Set<(event: never) => void>;
+}
+
+const handlerSlots = new WeakMap<object, Map<string, HandlerSlot>>();
+
+/**
+ * Multiplexes any number of listeners over one `on<event>` property: a single
+ * dispatcher is installed, a pre-existing handler keeps running, and the
+ * property is restored when the last listener detaches.
+ */
+function listenViaProperty<T extends object, E>(
+  target: T,
+  property: keyof T & string,
+  listener: (event: E) => void,
+): () => void {
+  let slots = handlerSlots.get(target);
+  if (!slots) {
+    slots = new Map();
+    handlerSlots.set(target, slots);
+  }
+  let slot = slots.get(property);
+  if (!slot) {
+    const created: HandlerSlot = { original: target[property], listeners: new Set() };
+    slot = created;
+    slots.set(property, created);
+    const original = created.original as ((event: E) => void) | null;
+    Reflect.set(target, property, (event: E) => {
+      original?.(event);
+      for (const fn of [...created.listeners]) (fn as (event: E) => void)(event);
+    });
+  }
+  const active = slot;
+  active.listeners.add(listener as (event: never) => void);
+  return () => {
+    if (!active.listeners.delete(listener as (event: never) => void)) return;
+    if (active.listeners.size > 0) return;
+    slots.delete(property);
+    Reflect.set(target, property, active.original);
+  };
+}
+
 /**
  * Listens for messages on an input, through `addEventListener` when the port
  * has the EventTarget API and by chaining `onmidimessage` otherwise.
@@ -74,14 +117,7 @@ export function listenMidiMessages<E>(
     addEventListener.call(input, 'midimessage', listener);
     return () => removeEventListener.call(input, 'midimessage', listener);
   }
-  const previous = input.onmidimessage;
-  input.onmidimessage = (event) => {
-    previous?.(event);
-    listener(event);
-  };
-  return () => {
-    input.onmidimessage = previous;
-  };
+  return listenViaProperty(input, 'onmidimessage', listener);
 }
 
 /**
@@ -99,12 +135,5 @@ export function listenStateChange(
     addEventListener.call(access, 'statechange', listener);
     return () => removeEventListener.call(access, 'statechange', listener);
   }
-  const previous = access.onstatechange;
-  access.onstatechange = (event) => {
-    previous?.(event);
-    listener(event);
-  };
-  return () => {
-    access.onstatechange = previous;
-  };
+  return listenViaProperty(access, 'onstatechange', listener);
 }
