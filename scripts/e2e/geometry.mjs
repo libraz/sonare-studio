@@ -34,7 +34,7 @@ export async function notePoint(page, note, pitch = note.pitch) {
 
 /**
  * Viewport point inside a track's arrangement lane at a timeline position,
- * scrolling the lane into view first.
+ * scrolling the lane into view, sideways or down, first.
  *
  * @param page The page under test.
  * @param trackId Track owning the lane.
@@ -68,10 +68,69 @@ export async function arrangementPoint(page, trackId, ppq) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const point = await read();
     if (!point) throw new Error(`arrangement lane missing for track ${trackId}`);
-    if (point.y >= point.top + 32 && point.y <= point.bottom - 2) return { x: point.x, y: point.y };
+    const xVisible = point.x >= point.left + 8 && point.x <= point.left + point.width - 8;
+    const yVisible = point.y >= point.top + 32 && point.y <= point.bottom - 2;
+    if (xVisible && yVisible) return { x: point.x, y: point.y };
     await page.mouse.move(point.left + Math.min(160, point.width / 2), point.top + 120);
-    await page.mouse.wheel(0, (point.y > point.bottom ? 1 : -1) * 280);
+    // Playback may have scrolled the view sideways; bring the position back first.
+    if (!xVisible) await page.mouse.wheel(point.x - (point.left + point.width / 2), 0);
+    else await page.mouse.wheel(0, (point.y > point.bottom ? 1 : -1) * 280);
     await page.waitForTimeout(80);
   }
   throw new Error(`arrangement lane for track ${trackId} never scrolled into view`);
+}
+
+/**
+ * Viewport point on the arrangement ruler at a timeline position, scrolling the
+ * timeline sideways first when playback has moved the view away from it.
+ *
+ * @param page The page under test.
+ * @param ppq Timeline position.
+ * @returns Viewport coordinates over the ruler strip.
+ */
+export async function rulerPoint(page, ppq) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const point = await page.evaluate((target) => {
+      const canvas = document.querySelector('.arrangement-canvas');
+      const range = canvas?.__vueParentComponent?.props?.range;
+      if (!canvas || !range) throw new Error('arrangement range is unavailable');
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + range.ppqToX(target),
+        y: rect.top + 14,
+        left: rect.left,
+        width: rect.width,
+      };
+    }, ppq);
+    if (point.x >= point.left + 8 && point.x <= point.left + point.width - 8) {
+      return { x: point.x, y: point.y };
+    }
+    await page.mouse.move(point.left + point.width / 2, point.y + 100);
+    await page.mouse.wheel(point.x - (point.left + point.width / 2), 0);
+    await page.waitForTimeout(80);
+  }
+  throw new Error(`arrangement ruler never scrolled to ppq ${ppq}`);
+}
+
+/**
+ * Viewport point inside the piano roll's controller lane at a timeline
+ * position and a value fraction (0 = bottom, 1 = top of the lane).
+ *
+ * @param page The page under test.
+ * @param ppq Position inside the active clip.
+ * @param fraction Height within the lane.
+ * @returns Viewport coordinates inside the lane canvas.
+ */
+export async function lanePoint(page, ppq, fraction) {
+  return page.evaluate(
+    ({ ppq: target, fraction: height }) => {
+      const grid = document.querySelector('.note-grid');
+      const lane = document.querySelector('.cell-velocity canvas');
+      const range = grid?.__vueParentComponent?.props?.range;
+      if (!lane || !range) throw new Error('piano-roll lane is unavailable');
+      const rect = lane.getBoundingClientRect();
+      return { x: rect.left + range.ppqToX(target), y: rect.top + (1 - height) * rect.height };
+    },
+    { ppq, fraction },
+  );
 }

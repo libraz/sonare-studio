@@ -438,7 +438,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       name: string,
       startPpq: number,
       lengthPpq: number,
-      notes: { pitch: number; startPpq: number; durationPpq: number }[],
+      notes: { pitch: number; startPpq: number; durationPpq: number; channel?: number }[],
     ) => {
       const trackId = addTrack({ kind: 'midi', name });
       const clipId = addMidiClip({ trackId, startPpq, lengthPpq, name });

@@ -21,15 +21,19 @@ import * as baroque_organ_compose from './scenarios/baroque-organ-compose.mjs';
 import * as boot from './scenarios/boot.mjs';
 import * as bus_master_sidechain from './scenarios/bus-master-sidechain.mjs';
 import * as bus_routing from './scenarios/bus-routing.mjs';
+import * as cc_lane from './scenarios/cc-lane.mjs';
 import * as composition_flow from './scenarios/composition-flow.mjs';
 import * as cycle_recording from './scenarios/cycle-recording.mjs';
 import * as dawproject_roundtrip from './scenarios/dawproject-roundtrip.mjs';
+import * as drum_kit from './scenarios/drum-kit.mjs';
 import * as export_dawproject from './scenarios/export-dawproject.mjs';
 import * as export_dialog from './scenarios/export-dialog.mjs';
 import * as export_equivalence from './scenarios/export-equivalence.mjs';
 import * as export_midi from './scenarios/export-midi.mjs';
 import * as expression_maps from './scenarios/expression-maps.mjs';
 import * as freeze_bounce from './scenarios/freeze-bounce.mjs';
+import * as freeze_bounce_ui from './scenarios/freeze-bounce-ui.mjs';
+import * as gm_voice from './scenarios/gm-voice.mjs';
 import * as groove from './scenarios/groove.mjs';
 import * as gs_efx_sf2 from './scenarios/gs-efx-sf2.mjs';
 import * as guitar_amp_di from './scenarios/guitar-amp-di.mjs';
@@ -43,10 +47,13 @@ import * as layouts from './scenarios/layouts.mjs';
 import * as long_master_export_preflight from './scenarios/long-master-export-preflight.mjs';
 import * as master_limiter from './scenarios/master-limiter.mjs';
 import * as mastering_chain from './scenarios/mastering-chain.mjs';
+import * as meter_map from './scenarios/meter-map.mjs';
 import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
+import * as midi_fx from './scenarios/midi-fx.mjs';
 import * as mix_suggestion from './scenarios/mix-suggestion.mjs';
 import * as mixer_snapshots from './scenarios/mixer-snapshots.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
+import * as multi_timbral from './scenarios/multi-timbral.mjs';
 import * as multitrack_stems_handoff from './scenarios/multitrack-stems-handoff.mjs';
 import * as musicxml_roundtrip from './scenarios/musicxml-roundtrip.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
@@ -77,10 +84,13 @@ import * as stem_separation from './scenarios/stem-separation.mjs';
 import * as step_input from './scenarios/step-input.mjs';
 import * as step_sequencer from './scenarios/step-sequencer.mjs';
 import * as tempo_map from './scenarios/tempo-map.mjs';
+import * as tempo_map_edit from './scenarios/tempo-map-edit.mjs';
 import * as theory_hover from './scenarios/theory-hover.mjs';
+import * as timeline_markers from './scenarios/timeline-markers.mjs';
 import * as track_and_clip from './scenarios/track-and-clip.mjs';
 import * as vca_strips from './scenarios/vca-strips.mjs';
 import * as warp from './scenarios/warp.mjs';
+import * as warp_toggle from './scenarios/warp-toggle.mjs';
 
 export const scenarios = [
   boot,
@@ -109,6 +119,9 @@ export const scenarios = [
   realtime_midi,
   lane_meters,
   tempo_map,
+  tempo_map_edit,
+  meter_map,
+  timeline_markers,
   automation_ramp,
   automation_write,
   export_equivalence,
@@ -117,6 +130,7 @@ export const scenarios = [
   bus_routing,
   bus_master_sidechain,
   warp,
+  warp_toggle,
   freeze_bounce,
   mastering_chain,
   long_master_export_preflight,
@@ -125,6 +139,10 @@ export const scenarios = [
   export_dawproject,
   // Each adds tracks of its own and removes them again.
   ornaments,
+  midi_fx,
+  cc_lane,
+  gm_voice,
+  drum_kit,
   expression_maps,
   groove,
   step_input,
@@ -159,6 +177,8 @@ export const scenarios = [
   audio_edit_to_master,
   // Each opens its own browser context: they replace the project, install a
   // service worker or change the stored language.
+  multi_timbral,
+  freeze_bounce_ui,
   musicxml_roundtrip,
   stem_separation,
   pwa_offline,
