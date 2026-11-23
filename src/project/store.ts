@@ -26,6 +26,7 @@ import {
   defaultControlSurfaceSettings,
   sanitizeControlSurfaceSettings,
 } from './control-surface';
+import { defaultName } from './default-names';
 import type { DocumentInsertSlot } from './document-mixer-references';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './document-schema';
 import { normalizeGenerationSeed } from './generation';
@@ -59,10 +60,8 @@ import {
   currentProject,
   currentWasmModule,
   DEFAULT_CLIP_LENGTH_PPQ,
-  DEFAULT_PROJECT_NAME,
   DEFAULT_SAMPLE_RATE,
   DEFAULT_SNAP_DIVISION,
-  DEFAULT_TRACK_NAME,
   getAudioSourceId,
   getProject,
   getWasmModule,
@@ -197,7 +196,7 @@ export {
  */
 export const useProjectStore = defineStore('project', () => {
   /** Project display name (app-level metadata, used by persistence). */
-  const projectName = ref(DEFAULT_PROJECT_NAME);
+  const projectName = ref(defaultName('project'));
   /** Track mirror in display order. */
   const tracks = shallowRef<EditorTrack[]>([]);
   /** Clip mirror, ordered by (track order, startPpq, id). */
@@ -515,7 +514,7 @@ export const useProjectStore = defineStore('project', () => {
     created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
     created.setSampleRate(DEFAULT_SAMPLE_RATE);
     created.setTempoSegments([{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }]);
-    const trackId = created.addTrack({ kind: 'midi', name: DEFAULT_TRACK_NAME });
+    const trackId = created.addTrack({ kind: 'midi', name: defaultName('instrumentPiano') });
     const newClipId = created.addClip({
       trackId,
       isMidi: true,
@@ -523,13 +522,13 @@ export const useProjectStore = defineStore('project', () => {
       lengthPpq: DEFAULT_CLIP_LENGTH_PPQ,
     });
     adoptProject(created, new Map());
-    projectName.value = DEFAULT_PROJECT_NAME;
+    projectName.value = defaultName('project');
     mixer.value = createDefaultMixerState();
     projectExternalMidi.value = null;
     tracks.value = [
       {
         id: trackId,
-        name: DEFAULT_TRACK_NAME,
+        name: defaultName('instrumentPiano'),
         color: TRACK_COLOR_PALETTE[0],
         kind: 'midi',
         mute: false,
@@ -690,7 +689,7 @@ export const useProjectStore = defineStore('project', () => {
         }
       };
       adoptProject(created, loadedSourceIds);
-      projectName.value = doc.name || DEFAULT_PROJECT_NAME;
+      projectName.value = doc.name || defaultName('project');
       mixer.value = doc.mixer
         ? cloneMixerState({
             ...doc.mixer,
@@ -908,7 +907,7 @@ export const useProjectStore = defineStore('project', () => {
     currentProject()?.destroy();
     resetProjectRuntime();
     initialized.value = false;
-    projectName.value = DEFAULT_PROJECT_NAME;
+    projectName.value = defaultName('project');
     tracks.value = [];
     clips.value = [];
     markers.value = [];

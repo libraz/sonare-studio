@@ -2,6 +2,7 @@ import { harmonicTracksOnly, percussionNoteTest } from '@/compose/tracks';
 import { DEFAULT_DIVISIONS, type NotatedScore } from '@/notation/model';
 import { quantizeToScore, type ScoreInputNote } from '@/notation/quantize';
 import type { ScoreAnnotations, ScoreNoteAnnotation } from '@/project/annotations';
+import { defaultName } from '@/project/default-names';
 import {
   type MidiSourceIdentity,
   midiSourceIdentityKey,
@@ -14,7 +15,6 @@ import {
   type EditorTrack,
   type TimeSignatureSegment,
 } from '@/project/types';
-import { formatMessage, useI18n } from '@/ui/i18n';
 
 export type ProjectStore = ReturnType<typeof useProjectStore>;
 
@@ -202,7 +202,6 @@ export function buildFullScore(
   options: FullScoreBuildOptions,
   projection = buildFullScoreProjection(store, options.clipStartPpq, options.clipLengthPpq),
 ): NotatedScore {
-  const { t } = useI18n();
   const usedPartIds = new Set<string>();
   const parts = store.tracks
     .filter((track) => track.kind === 'midi')
@@ -219,8 +218,7 @@ export function buildFullScore(
         timeSignatures: options.timeSignatures,
         pickupLengthPpq: options.pickupLengthPpq,
         partId,
-        partName:
-          track.name || formatMessage(t.value.common.trackDefaultName, { number: index + 1 }),
+        partName: track.name || defaultName('track', { number: index + 1 }),
         track,
         displayTransposeSemitones: options.displayTransposeSemitones,
         grandStaffSplitPitch: options.grandStaffSplitPitch,
@@ -245,7 +243,7 @@ export function buildFullScore(
       clipLengthPpq: options.clipLengthPpq,
       timeSignatures: options.timeSignatures,
       pickupLengthPpq: options.pickupLengthPpq,
-      partName: 'Score',
+      partName: defaultName('scorePart'),
       displayTransposeSemitones: options.displayTransposeSemitones,
       estimateFingering: options.estimateFingering,
     });

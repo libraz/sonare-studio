@@ -496,7 +496,7 @@ describe('mixer commands', () => {
     it('adds buses with generated unique ids', () => {
       expect(addMixerBus({ name: 'Reverb' })).toBe('bus-1');
       expect(addMixerBus()).toBe('bus-2');
-      expect(store.mixer.buses.map((b) => b.name)).toEqual(['Reverb', 'bus-2']);
+      expect(store.mixer.buses.map((b) => b.name)).toEqual(['Reverb', 'Bus 2']);
       expect(() => addMixerBus({ id: 'bus-1' })).toThrow(RangeError);
     });
 

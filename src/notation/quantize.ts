@@ -1,3 +1,4 @@
+import { defaultName } from '@/project/default-names';
 /**
  * Display quantizer: editor notes -> notated score.
  *
@@ -667,7 +668,10 @@ export function quantizeToScore(
     const percussion = quantizeToScore(percussionNotes, {
       ...options,
       partId: `${basePartId}-percussion`,
-      partName: basePartName === '' ? 'Percussion' : `${basePartName} Percussion`,
+      partName:
+        basePartName === ''
+          ? defaultName('percussionPart')
+          : defaultName('namedPercussionPart', { name: basePartName }),
       clef: 'treble',
       isPercussionNote: () => true,
     });

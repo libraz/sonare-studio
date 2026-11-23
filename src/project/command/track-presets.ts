@@ -1,3 +1,4 @@
+import { defaultName } from '../default-names';
 /** Commands for copying and applying one track's reusable channel settings. */
 
 import { cloneInstrument } from '../instrument';
@@ -19,7 +20,7 @@ let copiedTrackChannelPreset: TrackChannelPreset | null = null;
 export function copyTrackChannelPreset(trackId: number): void {
   const store = useProjectStore();
   const track = requireTrack(store, trackId);
-  copiedTrackChannelPreset = trackChannelPresetFromTrack(track, 'Clipboard');
+  copiedTrackChannelPreset = trackChannelPresetFromTrack(track, defaultName('clipboardPreset'));
 }
 
 /** True when this session has a copied channel setting ready to paste. */

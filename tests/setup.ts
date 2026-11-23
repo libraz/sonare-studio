@@ -41,6 +41,14 @@ if (typeof window.localStorage?.getItem !== 'function') {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
 }
 
+// Default names read the UI language, as in the app. The UI modules load after
+// the storage polyfill above, which the settings state reads on first import.
+const [{ registerDefaultNames }, { uiDefaultNameSource }] = await Promise.all([
+  import('@/project/default-names'),
+  import('@/ui/i18n/default-name-source'),
+]);
+registerDefaultNames(uiDefaultNameSource());
+
 // jsdom does not define crossOriginIsolated; provide a minimal mock.
 Object.defineProperty(globalThis, 'crossOriginIsolated', { value: false, writable: true });
 

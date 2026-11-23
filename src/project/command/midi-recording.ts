@@ -1,4 +1,5 @@
 import { activeTakeIndex, sanitizeCompSegments } from '../comping';
+import { defaultName } from '../default-names';
 import type { RawNote } from '../midi-events';
 import {
   assignMidiLaneFields,
@@ -132,7 +133,7 @@ export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
         {
           id: newClipId,
           trackId: input.trackId,
-          name: input.name ?? `Clip ${newClipId}`,
+          name: input.name ?? defaultName('clip', { number: newClipId }),
           startPpq: input.startPpq,
           lengthPpq: input.lengthPpq,
           sourceOffsetPpq: 0,

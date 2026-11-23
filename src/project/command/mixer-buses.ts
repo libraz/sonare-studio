@@ -1,5 +1,6 @@
 import { busAutomationTarget } from '../automation';
 import { assertKnownBusDestination, assertValidMixerBusId } from '../bus-topology';
+import { defaultName } from '../default-names';
 import {
   assertCanAddEngineBus,
   canRouteReturnSolo,
@@ -43,15 +44,17 @@ export function addMixerBus(input: AddMixerBusInput = {}): string {
   assertCanAddEngineBus(store.mixer.buses, store.tracks);
   const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
   let id = input.id;
+  let busNumber = knownBusIds.size + 1;
   if (id !== undefined) {
     assertValidMixerBusId(id, knownBusIds);
   } else {
     let n = 1;
     while (knownBusIds.has(`bus-${n}`)) n++;
     id = `bus-${n}`;
+    busNumber = n;
   }
   const busId = id;
-  const name = input.name ?? busId;
+  const name = input.name ?? defaultName('bus', { number: busNumber });
   if (input.channelLayout !== undefined && !isMixerChannelLayout(input.channelLayout)) {
     throw new RangeError(`Unknown mixer bus channel layout: ${String(input.channelLayout)}`);
   }

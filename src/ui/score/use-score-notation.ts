@@ -1,3 +1,4 @@
+import { defaultName } from '@/project/default-names';
 /**
  * Non-destructive notation pipeline for the engraved score.
  *
@@ -51,7 +52,7 @@ import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
 import { clipKind, type TimeSignatureSegment } from '@/project/types';
-import { formatMessage, useI18n } from '@/ui/i18n';
+import { useI18n } from '@/ui/i18n';
 import {
   type ScoreLayoutSettings,
   scorePageDimsMm,
@@ -341,9 +342,7 @@ export async function buildProjectScore(
   const activeTrackIndex = midiTracks.findIndex((track) => track.id === store.activeClip?.trackId);
   const activePartName =
     midiTracks[activeTrackIndex]?.name ||
-    formatMessage(useI18n().t.value.common.trackDefaultName, {
-      number: Math.max(activeTrackIndex, 0) + 1,
-    });
+    defaultName('track', { number: Math.max(activeTrackIndex, 0) + 1 });
   const score = fullScore
     ? buildFullScore(
         store,

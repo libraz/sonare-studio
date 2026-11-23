@@ -1,3 +1,4 @@
+import { defaultName } from '@/project/default-names';
 /**
  * Reactive recording workflow: glues the engine recorder, the project store
  * and the transport into the arm -> record -> stop -> clip flow.
@@ -872,7 +873,7 @@ export function useRecording(
     };
     try {
       const nextRecordingCounter = recordingCounter + 1;
-      const name = `Recording ${nextRecordingCounter}`;
+      const name = defaultName('recording', { number: nextRecordingCounter });
       // Cycle recording: every pass captures [punch, loop end); split the
       // capture there and register every completed pass as one take of a single clip.
       if (loop) {
@@ -895,7 +896,7 @@ export function useRecording(
             const sourceChannels =
               route.channelIndex === null ? result.channels : [result.channels[route.channelIndex]];
             for (const takeSlice of loopRecordingTakeSlices(sourceChannels, splits)) {
-              const takeName = `${name} — Take ${takeSlice.index + 1}`;
+              const takeName = defaultName('recordingTake', { name, number: takeSlice.index + 1 });
               const takeMeta = await stageAsset(takeSlice.channels, result.sampleRate, takeName);
               if (!current()) return cancelIngest();
               takes.push({ assetId: takeMeta.id, name: takeName });
@@ -944,7 +945,7 @@ export function useRecording(
           (await stageAsset(
             [result.channels[route.channelIndex as number]],
             result.sampleRate,
-            `${name} — Ch ${(route.channelIndex as number) + 1}`,
+            defaultName('recordingChannel', { name, number: (route.channelIndex as number) + 1 }),
           ));
         if (!current()) return cancelIngest();
         clipInputs.push({

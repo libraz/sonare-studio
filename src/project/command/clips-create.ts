@@ -1,5 +1,6 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import { validateClipFadePair } from '../clip-fades';
+import { defaultName } from '../default-names';
 import { assertCanAddTracks } from '../mixer';
 import { StaleProjectOperationError } from '../operation';
 import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
@@ -255,7 +256,7 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
       {
         id: newClipId,
         trackId: input.trackId,
-        name: input.name ?? `Clip ${newClipId}`,
+        name: input.name ?? defaultName('clip', { number: newClipId }),
         startPpq,
         lengthPpq: finalLengthPpq,
         sourceOffsetPpq,

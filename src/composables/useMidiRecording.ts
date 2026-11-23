@@ -1,3 +1,4 @@
+import { defaultName } from '@/project/default-names';
 /**
  * Reactive MIDI recording: captures live Web MIDI input against the transport
  * timeline and turns a take into a MIDI clip on the armed track.
@@ -625,7 +626,7 @@ export function useMidiRecording(
             passStart,
           );
           midiTakes.push({
-            name: `Take ${takeIndex + 1}`,
+            name: defaultName('take', { number: takeIndex + 1 }),
             notes: takeNotes,
             ...buildRecordedExpressionLanes(takeExpression, originPpq, 0, loopLengthPpq),
           });
@@ -657,7 +658,7 @@ export function useMidiRecording(
         ...(cycleRecordMode.value === 'takes' && midiTakes.length > 1
           ? { midiTakes, activeMidiTakeIndex: midiTakes.length - 1 }
           : {}),
-        name: `MIDI Recording ${nextRecordingCounter}`,
+        name: defaultName('midiRecording', { number: nextRecordingCounter }),
       };
       const clipId = addClip(input);
       recordingCounter = nextRecordingCounter;

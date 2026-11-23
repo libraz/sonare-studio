@@ -1,7 +1,9 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
+import { registerDefaultNames } from '@/project/default-names';
 import { vRadioGroup } from '@/ui/accessibility/radiogroup';
 import { vTabList } from '@/ui/accessibility/tablist';
+import { uiDefaultNameSource } from '@/ui/i18n/default-name-source';
 import { vTooltip } from '@/ui/tooltip';
 import App from './App.vue';
 import { markAppShellLoaded, observeMissingChunks, registerServiceWorker } from './pwa';
@@ -25,6 +27,8 @@ import '@/ui/theme/tooltip.css';
 // Reaching this line proves the document and its entry module belong to the
 // same release, so the inline recovery guard's marker can be released.
 markAppShellLoaded();
+
+registerDefaultNames(uiDefaultNameSource());
 
 createApp(App)
   .use(createPinia())

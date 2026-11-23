@@ -1,5 +1,6 @@
 import { linearToDb } from '@/lib/db';
 import type { ChordFollowMode } from '../chord-follow';
+import { defaultName } from '../default-names';
 import { sanitizeExpressionMap, type TrackExpressionMap } from '../expression-map';
 import {
   assertCanAddEngineBus,
@@ -58,7 +59,7 @@ export function addTrack(input: AddTrackInput = {}): number {
   const store = useProjectStore();
   const project = getProject();
   assertCanAddTracks(store.tracks.length);
-  const name = input.name ?? `Track ${store.tracks.length + 1}`;
+  const name = input.name ?? defaultName('track', { number: store.tracks.length + 1 });
   const color =
     input.color ?? TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const kind = input.kind ?? 'midi';

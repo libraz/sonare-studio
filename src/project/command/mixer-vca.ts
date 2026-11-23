@@ -1,3 +1,4 @@
+import { defaultName } from '../default-names';
 import type { VcaGroup } from '../mixer';
 import { isMixerGainDb, MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
@@ -32,7 +33,7 @@ export function addVcaGroup(input: { id?: string; name?: string } = {}): string 
     id = `vca-${n}`;
   }
   const groupId = id;
-  const name = input.name ?? `VCA ${groups.length + 1}`;
+  const name = input.name ?? defaultName('vca', { number: groups.length + 1 });
   return executeApp(() => {
     store.mixer = {
       ...store.mixer,

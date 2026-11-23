@@ -1,5 +1,6 @@
 import { isFiniteNumber } from '@/lib/math';
 import { activeTakeIndex } from './comping';
+import { defaultName } from './default-names';
 import {
   noteKey,
   pairEventsIntoNotes,
@@ -32,7 +33,7 @@ function serializedFadePpq(fade: NativeClipFade | undefined): number | null {
 function defaultTrackMirror(serialized: NativeTrack, index: number): EditorTrack {
   return {
     id: serialized.id,
-    name: serialized.name ?? `Track ${index + 1}`,
+    name: serialized.name ?? defaultName('track', { number: index + 1 }),
     color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
     kind: serialized.kind,
     mute: false,
@@ -256,7 +257,7 @@ export function buildClipMirror(
       const entry: EditorClip = {
         id: serialized.id,
         trackId: serialized.trackId,
-        name: previous?.name ?? `Clip ${serialized.id}`,
+        name: previous?.name ?? defaultName('clip', { number: serialized.id }),
         startPpq: serialized.startPpq,
         lengthPpq: serialized.lengthPpq,
         sourceOffsetPpq: serialized.sourceOffsetPpq ?? 0,

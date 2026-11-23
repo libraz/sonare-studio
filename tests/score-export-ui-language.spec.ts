@@ -120,9 +120,9 @@ describe('score and stem exports in the UI language', () => {
     expect(score.parts.map((part) => part.name)).toEqual(['トラック 1']);
   });
 
-  it('names a stem whose track name leaves nothing in the UI language', () => {
-    expect(stemEntryName('', 1, 2, '.wav', 'トラック 2')).toBe('02 トラック 2.wav');
-    expect(stemEntryName('Bass', 0, 2, '.wav', 'トラック 1')).toBe('01 Bass.wav');
+  it('names a stem whose track name leaves nothing with a fixed ASCII name', () => {
+    expect(stemEntryName('', 1, 2, '.wav')).toBe('02 Track 2.wav');
+    expect(stemEntryName('Bass', 0, 2, '.wav')).toBe('01 Bass.wav');
   });
 
   it('writes the PDF subject, and the title of an unnamed project, in the UI language', async () => {
