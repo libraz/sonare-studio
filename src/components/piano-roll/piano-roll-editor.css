@@ -122,26 +122,6 @@
   background: var(--border);
 }
 
-/* Keep the channel picker from stretching as a flex item in the lane column;
- * the frosted trigger carries its own surface, padding and typography. */
-.lane-channel,
-.lane-curve {
-  flex: none;
-  min-height: 0;
-}
-
-.lane-mode-select {
-  flex: none;
-  min-width: 0;
-}
-
-.mpe-unsupported-note {
-  margin: 2px 3px;
-  color: var(--text-3);
-  font: var(--fs-2xs) var(--font-sans);
-  line-height: 1.25;
-}
-
 .cell-velocity {
   grid-area: 5 / 2;
   border-top: 1px solid var(--border-strong);

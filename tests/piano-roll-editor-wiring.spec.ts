@@ -12,7 +12,12 @@ describe('piano-roll editor wiring', () => {
   });
 
   it('nudges only audible selected notes', () => {
-    expect(editor).toContain(
+    const handler = sourceWindow(
+      readSource('src/ui/piano-roll/use-note-keyboard-edits.ts'),
+      'function handleKeyboardEdit',
+      'const step =',
+    );
+    expect(handler).toContain(
       'const selected = audibleSourceNotes.value.filter((note) => store.selection.has(note.id));',
     );
   });

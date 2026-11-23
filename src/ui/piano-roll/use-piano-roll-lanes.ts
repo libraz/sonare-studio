@@ -8,7 +8,7 @@
  * use-piano-roll-cc-lanes. State is plain Vue refs so callers keep reactivity.
  */
 
-import { type ComputedRef, computed, type Ref, ref } from 'vue';
+import { type ComputedRef, computed, type Ref, ref, type WritableComputedRef } from 'vue';
 import type { LaneParamId } from '@/components/piano-roll/lane-params';
 import type { ClipExpressionCurve } from '@/project/types';
 
@@ -38,6 +38,11 @@ export interface PianoRollLanes {
   lanePolyPressure: Ref<boolean>;
   /** True when a note-parameter lane (not an expression lane) is shown. */
   noteLaneActive: ComputedRef<boolean>;
+  /**
+   * Single-select value for the lane mode picker: `note:<param>`, `cc:<controller>`,
+   * `expr:bend`, `expr:pressure` or `expr:poly-pressure`. Writing it switches the lane.
+   */
+  laneMode: WritableComputedRef<string>;
   /** Clears every non-note lane mode so a single mode owns the bottom lane. */
   clearExpressionLanes(): void;
   /** Switches the bottom lane to a note-parameter view. */
@@ -106,6 +111,29 @@ export function usePianoRollLanes(): PianoRollLanes {
       !lanePolyPressure.value,
   );
 
+  const laneMode = computed({
+    get: () => {
+      if (noteLaneActive.value) return `note:${laneParam.value}`;
+      if (laneCc.value !== null) return `cc:${laneCc.value}`;
+      if (lanePitchBend.value) return 'expr:bend';
+      if (laneChannelPressure.value) return 'expr:pressure';
+      return 'expr:poly-pressure';
+    },
+    set: (value: string) => {
+      if (value.startsWith('note:')) {
+        selectNoteLane(value.slice(5) as LaneParamId);
+        return;
+      }
+      if (value.startsWith('cc:')) {
+        selectCcLane(Number(value.slice(3)));
+        return;
+      }
+      if (value === 'expr:bend') selectPitchBendLane();
+      else if (value === 'expr:pressure') selectChannelPressureLane();
+      else selectPolyPressureLane();
+    },
+  });
+
   return {
     laneParam,
     laneChannel,
@@ -115,6 +143,7 @@ export function usePianoRollLanes(): PianoRollLanes {
     laneChannelPressure,
     lanePolyPressure,
     noteLaneActive,
+    laneMode,
     clearExpressionLanes,
     selectNoteLane,
     selectCcLane,

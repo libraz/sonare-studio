@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
-import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -12,7 +11,6 @@ import { useReactiveReharmonization } from '@/composables/useReactiveReharmoniza
 import { buildKeyMap } from '@/compose/key-map';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
-import { clamp, maxOf, minOf } from '@/lib/math';
 import { pitchClassOf } from '@/lib/pitch';
 import {
   addNotes,
@@ -25,39 +23,29 @@ import {
   updateNotes,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
-import {
-  CLIP_EXPRESSION_CURVES,
-  MIDI_PITCH_BEND_CENTER,
-  MIDI_PITCH_BEND_MAX,
-  PIANO_ROLL_CC_LANES,
-} from '@/project/midi-cc';
+import { MIDI_PITCH_BEND_CENTER, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
-import { adjacentBarDelta, type MeasureRange } from '@/project/time-signature';
+import type { MeasureRange } from '@/project/time-signature';
 import type { NewEditorNote } from '@/project/types';
-import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useNoteInteractions } from '@/ui/piano-roll/use-note-interactions';
+import { useNoteKeyboardEdits } from '@/ui/piano-roll/use-note-keyboard-edits';
 import { usePianoRollCcLanes } from '@/ui/piano-roll/use-piano-roll-cc-lanes';
+import { usePianoRollFit } from '@/ui/piano-roll/use-piano-roll-fit';
 import { usePianoRollLanes } from '@/ui/piano-roll/use-piano-roll-lanes';
 import { usePianoRollNoteMenu } from '@/ui/piano-roll/use-piano-roll-note-menu';
 import { usePianoRollScrollbar } from '@/ui/piano-roll/use-piano-roll-scrollbar';
-import { centerRangeOnPitch, usePianoRollViewport } from '@/ui/piano-roll/use-piano-roll-viewport';
-import {
-  MAX_ROW_HEIGHT,
-  MIN_ROW_HEIGHT,
-  usePianoRollZoom,
-} from '@/ui/piano-roll/use-piano-roll-zoom';
+import { usePianoRollViewport } from '@/ui/piano-roll/use-piano-roll-viewport';
+import { usePianoRollZoom } from '@/ui/piano-roll/use-piano-roll-zoom';
 import { describePlacementVerdict, usePlacementCell } from '@/ui/piano-roll/use-placement-cell';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
-import { changedNoteUpdates } from './keyboard-note-updates';
-import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
-import { clampMoveDelta, clampResizedDuration } from './nudge-bounds';
 import { buildGhostNotes, type GhostNote } from './overlay';
+import PianoRollLaneHeader from './PianoRollLaneHeader.vue';
 import PianoRollMinimap from './PianoRollMinimap.vue';
 import PianoRollRuler from './PianoRollRuler.vue';
 import PianoRollToolbar from './PianoRollToolbar.vue';
@@ -151,21 +139,6 @@ const laneVisible = computed({
   },
 });
 
-/** The scrollable lane-parameter tab column on the left of the lane. */
-const laneLabelColumn = ref<HTMLElement | null>(null);
-
-/**
- * The editor root swallows wheel events for zoom/pan (it preventDefaults them),
- * which also blocks native scrolling of this overflowing tab column. When the
- * column can scroll, stop the event before it reaches the root so the browser
- * scrolls the column normally; otherwise let it bubble up to zoom as usual.
- */
-function onLabelWheel(event: WheelEvent): void {
-  const column = laneLabelColumn.value;
-  if (!column || column.scrollHeight <= column.clientHeight) return;
-  event.stopPropagation();
-}
-
 const lanes = usePianoRollLanes();
 const {
   laneParam,
@@ -174,28 +147,9 @@ const {
   laneCc,
   lanePitchBend,
   laneChannelPressure,
+  laneMode,
   noteLaneActive,
-  selectNoteLane,
-  selectCcLane,
-  selectPitchBendLane,
-  selectChannelPressureLane,
-  selectPolyPressureLane,
 } = lanes;
-
-/** The 16 MIDI channel options for the CC-lane channel picker (0-based value). */
-const laneChannelOptions = computed(() =>
-  Array.from({ length: 16 }, (_, i) => ({
-    value: i,
-    label: `${t.value.shell.pianoRoll.laneChannelPrefix}${i + 1}`,
-  })),
-);
-
-const laneCurveOptions = computed(() =>
-  CLIP_EXPRESSION_CURVES.map((curve) => ({
-    value: curve,
-    label: t.value.shell.pianoRoll.expressionCurve[curve],
-  })),
-);
 
 const snapToScaleEnabled = computed({
   get: () => appSettings.settings.pianoRollSnapToScale,
@@ -225,52 +179,6 @@ const placementGuide = computed({
 const guidanceTint = computed({
   get: () => appSettings.settings.pianoRollGuidanceTint,
   set: (value: boolean) => appSettings.set('pianoRollGuidanceTint', value),
-});
-
-const laneModeOptions = computed(() => [
-  ...LANE_PARAMS.map((laneSpec) => ({
-    value: `note:${laneSpec.id}`,
-    label: `${t.value.shell.pianoRoll.laneGroupNote} · ${laneSpec.label}`,
-  })),
-  ...PIANO_ROLL_CC_LANES.map((cc) => ({
-    value: `cc:${cc.controller}`,
-    label: `${t.value.shell.pianoRoll.laneGroupCc} · ${cc.label}`,
-  })),
-  {
-    value: 'expr:bend',
-    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.bendLaneTab}`,
-  },
-  {
-    value: 'expr:pressure',
-    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.pressureLaneTab}`,
-  },
-  {
-    value: 'expr:poly-pressure',
-    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.polyPressureLaneTab}`,
-  },
-]);
-
-const laneMode = computed({
-  get: () => {
-    if (noteLaneActive.value) return `note:${laneParam.value}`;
-    if (laneCc.value !== null) return `cc:${laneCc.value}`;
-    if (lanePitchBend.value) return 'expr:bend';
-    if (laneChannelPressure.value) return 'expr:pressure';
-    return 'expr:poly-pressure';
-  },
-  set: (value: string) => {
-    if (value.startsWith('note:')) {
-      selectNoteLane(value.slice(5) as LaneParamId);
-      return;
-    }
-    if (value.startsWith('cc:')) {
-      selectCcLane(Number(value.slice(3)));
-      return;
-    }
-    if (value === 'expr:bend') selectPitchBendLane();
-    else if (value === 'expr:pressure') selectChannelPressureLane();
-    else selectPolyPressureLane();
-  },
 });
 
 const ccLanes = usePianoRollCcLanes({ lanes, gridPpq, snapPpq: (ppq) => snapPianoRollPpq(ppq) });
@@ -417,63 +325,7 @@ const noteColor = computed<NoteColorFn>(() => {
   return () => color;
 });
 
-function fitTimeToSpan(startPpq: number, endPpq: number): void {
-  const width = Math.max(1, range.widthPx);
-  const paddedStart = Math.max(0, startPpq - 0.5);
-  const paddedEnd = Math.max(paddedStart + 0.25, endPpq + 0.5);
-  const targetPxPerPpq = width / (paddedEnd - paddedStart);
-  range.zoomAt(0, targetPxPerPpq / range.pxPerPpq);
-  range.setStartPpq(paddedStart);
-  bump();
-}
-
-function fitPitchToNotes(notes: ReadonlyArray<{ pitch: number }>): void {
-  if (notes.length === 0 || range.heightPx <= 0) return;
-  let minPitch = MAX_PITCH;
-  let maxPitch = MIN_PITCH;
-  for (const note of notes) {
-    minPitch = Math.min(minPitch, note.pitch);
-    maxPitch = Math.max(maxPitch, note.pitch);
-  }
-  const span = Math.max(1, maxPitch - minPitch + 1);
-  const rowHeight = Math.min(
-    MAX_ROW_HEIGHT,
-    Math.max(MIN_ROW_HEIGHT, (range.heightPx - 16) / (span + 2)),
-  );
-  range.setRowHeight(rowHeight);
-  centerRangeOnPitch(range, (minPitch + maxPitch) / 2);
-}
-
-function fitClip(): void {
-  const clip = store.activeClip;
-  const window = clip ? audibleMidiSourceWindow(clip) : null;
-  fitTimeToSpan(window?.startPpq ?? 0, window?.endPpq ?? store.clipLengthPpq);
-}
-
-function fitNotes(): void {
-  if (audibleSourceNotes.value.length === 0) {
-    fitClip();
-    return;
-  }
-  const endPpq = maxOf(audibleSourceNotes.value.map((note) => note.startPpq + note.durationPpq));
-  const startPpq = minOf(audibleSourceNotes.value.map((note) => note.startPpq));
-  fitTimeToSpan(startPpq, endPpq);
-  fitPitchToNotes(audibleSourceNotes.value);
-  bump();
-}
-
-function fitSelection(): void {
-  const selected = audibleSourceNotes.value.filter((note) => store.selection.has(note.id));
-  if (selected.length === 0) {
-    fitNotes();
-    return;
-  }
-  const endPpq = maxOf(selected.map((note) => note.startPpq + note.durationPpq));
-  const startPpq = minOf(selected.map((note) => note.startPpq));
-  fitTimeToSpan(startPpq, endPpq);
-  fitPitchToNotes(selected);
-  bump();
-}
+const { fitClip, fitNotes, fitSelection } = usePianoRollFit({ range, bump, audibleSourceNotes });
 
 defineExpose({ fitSelection, zoomHorizontal });
 
@@ -483,73 +335,6 @@ const { onNoteContext } = usePianoRollNoteMenu({
   snapPpq: (ppq) => snapPianoRollPpq(ppq),
   barLengthPpq: (ppq) => pianoRollMeasureAt(ppq).lengthPpq,
 });
-
-/** Commits keyboard note updates, skipping those that change nothing. */
-function applyKeyboardUpdates(updates: Parameters<typeof updateNotes>[0]): void {
-  const changed = changedNoteUpdates(audibleSourceNotes.value, updates);
-  if (changed.length > 0) updateNotes(changed);
-}
-
-type NoteKeyboardAction =
-  | { noteId: number; kind: 'select' }
-  | { noteId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
-  | { noteId: number; kind: 'set'; controlId: string; value: number };
-
-/** Applies virtual-list note actions through the same selection and undo commands as pointer edits. */
-function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
-  const note = audibleSourceNotes.value.find((item) => item.id === payload.noteId);
-  if (!note) return;
-  setSelection([note.id]);
-  if (payload.kind === 'select' || contentReadOnly.value) return;
-  const minimum = sourceWindowStartPpq.value;
-  const maximum = sourceWindowEndPpq.value;
-  if (payload.kind === 'set') {
-    if (payload.controlId === 'pitch') {
-      applyKeyboardUpdates([
-        { id: note.id, pitch: clamp(Math.round(payload.value), MIN_PITCH, MAX_PITCH) },
-      ]);
-    } else if (payload.controlId === 'start') {
-      applyKeyboardUpdates([
-        {
-          id: note.id,
-          startPpq: clamp(payload.value, minimum, maximum - note.durationPpq),
-        },
-      ]);
-    } else if (payload.controlId === 'duration') {
-      applyKeyboardUpdates([
-        {
-          id: note.id,
-          durationPpq: Math.min(maximum - note.startPpq, Math.max(0.0625, payload.value)),
-        },
-      ]);
-    } else if (payload.controlId === 'velocity') {
-      applyKeyboardUpdates([{ id: note.id, velocity: clamp(Math.round(payload.value), 1, 127) }]);
-    }
-    return;
-  }
-  const { direction, resize, coarse } = payload.adjustment;
-  const step = Math.max(0.0625, store.snapEnabled ? gridPpq.value : 0.0625) * (coarse ? 4 : 1);
-  if (direction === 'up' || direction === 'down') {
-    const delta = direction === 'up' ? (coarse ? 12 : 1) : coarse ? -12 : -1;
-    applyKeyboardUpdates([{ id: note.id, pitch: clamp(note.pitch + delta, MIN_PITCH, MAX_PITCH) }]);
-    return;
-  }
-  const delta =
-    store.snapEnabled && store.snapBar
-      ? adjacentBarDelta(pianoRollMeasureAt, note.startPpq, direction, coarse)
-      : direction === 'left'
-        ? -step
-        : step;
-  if (resize) {
-    applyKeyboardUpdates([
-      { id: note.id, durationPpq: clampResizedDuration(note, delta, maximum) },
-    ]);
-  } else {
-    applyKeyboardUpdates([
-      { id: note.id, startPpq: note.startPpq + clampMoveDelta(delta, [note], minimum, maximum) },
-    ]);
-  }
-}
 
 /** Activates a ghost note's track + clip and selects that note. */
 function onGhostActivate(ghost: GhostNote): void {
@@ -663,6 +448,17 @@ const interactions = useNoteInteractions({
   ...(props.audition ? { onAudition: props.audition } : {}),
 });
 
+const { onNoteKeyboardAction, onKeyDown } = useNoteKeyboardEdits({
+  audibleSourceNotes,
+  contentReadOnly,
+  sourceWindowStartPpq,
+  sourceWindowEndPpq,
+  noteEndLimit,
+  gridPpq,
+  pianoRollMeasureAt,
+  interactions,
+});
+
 /** The cell the pencil would write and its per-pitch placement verdicts. */
 const placementCell = usePlacementCell({
   hoverPpq: computed(() => hoverStatus.value?.ppq ?? null),
@@ -684,79 +480,6 @@ const placementStatus = computed(() => {
       : (store.tracks.find((track) => track.id === trackId)?.name ?? strings.thisClip),
   );
 });
-
-function onKeyDown(event: KeyboardEvent): void {
-  const target = event.target;
-  if (
-    target instanceof HTMLElement &&
-    target !== event.currentTarget &&
-    target.closest(
-      'input, textarea, select, button, [contenteditable="true"], [contenteditable=""]',
-    )
-  ) {
-    return;
-  }
-  // Undo, redo and delete bubble to the global handler, which resolves them through the registry.
-  if (contentReadOnly.value) return;
-  if (handleKeyboardEdit(event)) return;
-  if (event.key === 'Escape' && interactions.onKeyDown(event.key)) event.preventDefault();
-}
-
-function handleKeyboardEdit(event: KeyboardEvent): boolean {
-  const selected = audibleSourceNotes.value.filter((note) => store.selection.has(note.id));
-  if (selected.length === 0) return false;
-  const step = store.snapEnabled ? gridPpq.value : 0.0625;
-  let updates: Parameters<typeof updateNotes>[0] = [];
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    const direction = event.key === 'ArrowLeft' ? 'left' : 'right';
-    const minStart = minOf(selected.map((note) => note.startPpq));
-    const requestedDelta =
-      store.snapEnabled && store.snapBar
-        ? adjacentBarDelta(pianoRollMeasureAt, minStart, direction, event.shiftKey)
-        : direction === 'left'
-          ? -step
-          : step;
-    const delta = clampMoveDelta(
-      requestedDelta,
-      selected,
-      sourceWindowStartPpq.value,
-      noteEndLimit.value,
-    );
-    if (event.altKey) {
-      if (delta === 0) {
-        event.preventDefault();
-        return true;
-      }
-      const ids = addNotes(
-        selected.map((note) => ({
-          pitch: note.pitch,
-          startPpq: note.startPpq + delta,
-          durationPpq: note.durationPpq,
-          velocity: note.velocity,
-          channel: note.channel,
-          ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-        })),
-      );
-      setSelection(ids);
-    } else {
-      updates = selected.map((note) => ({
-        id: note.id,
-        startPpq: note.startPpq + delta,
-      }));
-    }
-  } else if (event.key === '[' || event.key === ']') {
-    const delta = event.key === '[' ? -step : step;
-    updates = selected.map((note) => ({
-      id: note.id,
-      durationPpq: clampResizedDuration(note, delta, noteEndLimit.value),
-    }));
-  } else {
-    return false;
-  }
-  event.preventDefault();
-  if (updates.length > 0) applyKeyboardUpdates(updates);
-  return true;
-}
 
 function scrollMinimapTo(centerPpq: number): void {
   range.setStartPpq(centerPpq - (range.endPpq - range.startPpq) / 2);
@@ -948,42 +671,12 @@ const { followAnchorLocalX } = playheadFollow;
       >
         <div class="scroll-thumb scroll-thumb-v" :style="vThumbStyle" />
       </div>
-      <div
-        ref="laneLabelColumn"
-        class="cell-velocity-label"
-        role="group"
-        :aria-label="t.shell.pianoRoll.noteLaneParameter"
-        @wheel="onLabelWheel"
-      >
-        <SelectMenu
-          v-model="laneMode"
-          class="lane-mode-select"
-          size="sm"
-          :options="laneModeOptions"
-          :aria-label="t.shell.pianoRoll.noteLaneParameter"
-        />
-        <SelectMenu
-          v-if="!noteLaneActive"
-          v-model="laneChannel"
-          class="lane-channel"
-          size="sm"
-          :options="laneChannelOptions"
-          :aria-label="t.shell.pianoRoll.laneChannelTitle"
-          :title="t.shell.pianoRoll.laneChannelTitle"
-        />
-        <SelectMenu
-          v-if="!noteLaneActive"
-          v-model="laneCurve"
-          class="lane-curve"
-          size="sm"
-          :options="laneCurveOptions"
-          :aria-label="t.shell.pianoRoll.expressionCurveTitle"
-          :title="t.shell.pianoRoll.expressionCurveTitle"
-        />
-        <p v-if="!noteLaneActive" class="mpe-unsupported-note" role="note">
-          {{ t.shell.pianoRoll.mpeUnsupported }}
-        </p>
-      </div>
+      <PianoRollLaneHeader
+        v-model:lane-mode="laneMode"
+        v-model:lane-channel="laneChannel"
+        v-model:lane-curve="laneCurve"
+        :note-lane-active="noteLaneActive"
+      />
       <VelocityLane
         v-if="noteLaneActive"
         class="cell-velocity"

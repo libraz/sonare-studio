@@ -214,7 +214,7 @@ describe('registry-owned editing keys', () => {
 
   it('keeps undo, redo and delete out of the piano roll key handler', () => {
     const handler = sourceWindow(
-      readSource('src/components/piano-roll/PianoRollEditor.vue'),
+      readSource('src/ui/piano-roll/use-note-keyboard-edits.ts'),
       'function onKeyDown',
       'function handleKeyboardEdit',
     );

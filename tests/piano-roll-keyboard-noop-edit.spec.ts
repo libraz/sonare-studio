@@ -46,9 +46,9 @@ describe('keyboard note updates that change nothing', () => {
 
   it('routes every keyboard note edit through the no-op filter and skips zero-delta duplicates', () => {
     const body = sourceWindow(
-      readSource('src/components/piano-roll/PianoRollEditor.vue'),
+      readSource('src/ui/piano-roll/use-note-keyboard-edits.ts'),
       'function onNoteKeyboardAction',
-      'function scrollMinimapTo',
+      '\n  return { onNoteKeyboardAction',
     );
     expect(body.replace('const changed', '')).not.toMatch(/[^.]\bupdateNotes\(/);
     expect(body).toMatch(/if \(delta === 0\) \{\s+event\.preventDefault\(\);\s+return true;/);
