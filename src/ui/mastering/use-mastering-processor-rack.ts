@@ -110,11 +110,12 @@ export function useMasteringProcessorRack(
   }
 
   function onRemove(index: number): void {
-    runCommand(() => removeMasteringProcessor(index));
-    if (expandedIndex.value !== null) {
+    runCommand(() => {
+      removeMasteringProcessor(index);
+      if (expandedIndex.value === null) return;
       if (expandedIndex.value === index) expandedIndex.value = null;
       else if (expandedIndex.value > index) expandedIndex.value -= 1;
-    }
+    });
   }
 
   /** In-flight knob gestures keyed by `${slot index}:${param}`. */
