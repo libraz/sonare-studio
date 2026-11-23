@@ -4,10 +4,16 @@ import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   type AudioChromaAnalyzer,
   analyzeAudioClipSections,
-  SECTION_TYPE_NAMES,
+  SECTION_TYPE_NAME_KEYS,
 } from '@/project/audio-sections';
+import { defaultName } from '@/project/default-names';
 import { groupSectionRepeats, sectionChromaVector } from '@/project/section-repeats';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
+
+/** The current-language display name of the section type at `index`. */
+function sectionName(index: number): string {
+  return defaultName(SECTION_TYPE_NAME_KEYS[index]);
+}
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
@@ -65,9 +71,9 @@ describe('analyzeAudioClipSections', () => {
       analyzeSections: an.fn,
     });
     expect(sections).toEqual([
-      { name: SECTION_TYPE_NAMES[0], color: TRACK_COLOR_PALETTE[0], startPpq: 8, endPpq: 12 },
+      { name: sectionName(0), color: TRACK_COLOR_PALETTE[0], startPpq: 8, endPpq: 12 },
       {
-        name: SECTION_TYPE_NAMES[3],
+        name: sectionName(3),
         color: TRACK_COLOR_PALETTE[3 % TRACK_COLOR_PALETTE.length],
         startPpq: 12,
         endPpq: 16,
@@ -93,9 +99,9 @@ describe('analyzeAudioClipSections', () => {
       ],
     );
     expect(sections).toEqual([
-      { name: SECTION_TYPE_NAMES[0], color: TRACK_COLOR_PALETTE[0], startPpq: 0, endPpq: 4 },
+      { name: sectionName(0), color: TRACK_COLOR_PALETTE[0], startPpq: 0, endPpq: 4 },
       {
-        name: SECTION_TYPE_NAMES[3],
+        name: sectionName(3),
         color: TRACK_COLOR_PALETTE[3 % TRACK_COLOR_PALETTE.length],
         startPpq: 4,
         endPpq: 8,
@@ -109,7 +115,7 @@ describe('analyzeAudioClipSections', () => {
       loadAudioAsset: async () => asset(48000),
       analyzeSections: an.fn,
     });
-    expect(section.name).toBe(SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1]);
+    expect(section.name).toBe(sectionName(SECTION_TYPE_NAME_KEYS.length - 1));
   });
 
   it('clamps ends to the clip region and drops empty regions', async () => {
@@ -122,7 +128,7 @@ describe('analyzeAudioClipSections', () => {
       analyzeSections: an.fn,
     });
     expect(sections).toEqual([
-      { name: SECTION_TYPE_NAMES[1], color: TRACK_COLOR_PALETTE[1], startPpq: 0, endPpq: 16 },
+      { name: sectionName(1), color: TRACK_COLOR_PALETTE[1], startPpq: 0, endPpq: 16 },
     ]);
   });
 
@@ -232,10 +238,10 @@ describe('analyzeAudioClipSections repeat coloring', () => {
     expect(colors[0]).toBe(colors[2]);
     expect(new Set(colors).size).toBe(3);
     expect(sections.map((section) => section.name)).toEqual([
-      `${SECTION_TYPE_NAMES[3]} 1`,
-      `${SECTION_TYPE_NAMES[4]} 1`,
-      `${SECTION_TYPE_NAMES[3]} 2`,
-      `${SECTION_TYPE_NAMES[4]} 2`,
+      `${sectionName(3)} 1`,
+      `${sectionName(4)} 1`,
+      `${sectionName(3)} 2`,
+      `${sectionName(4)} 2`,
     ]);
     expect(chroma.calls).toEqual([{ sampleRate: 48000, nFft: 4096, hopLength: 2048 }]);
   });
@@ -249,10 +255,7 @@ describe('analyzeAudioClipSections repeat coloring', () => {
       loadAudioAsset: async () => asset(48000 * 2),
       analyzeSections: an.fn,
     });
-    expect(sections.map((section) => section.name)).toEqual([
-      SECTION_TYPE_NAMES[3],
-      SECTION_TYPE_NAMES[4],
-    ]);
+    expect(sections.map((section) => section.name)).toEqual([sectionName(3), sectionName(4)]);
     expect(sections[0].color).not.toBe(sections[1].color);
   });
 

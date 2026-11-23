@@ -5,6 +5,7 @@
 
 import { namedScaleMask } from '@libraz/libcantus';
 import { makeDemoNotes } from '@/engine/instruments';
+import { type DefaultNameKey, defaultName } from './default-names';
 import { PITCH_RANGE_PRESETS, type PitchRange } from './pitch-range';
 import type {
   DocumentClip,
@@ -145,7 +146,7 @@ function baseDocument(
 }
 
 interface SectionSpec {
-  name: string;
+  name: DefaultNameKey;
   bars: number;
 }
 
@@ -154,7 +155,7 @@ function makeSections(specs: ReadonlyArray<SectionSpec>): DocumentSection[] {
   let startPpq = 0;
   return specs.map((spec, index) => {
     const section = {
-      name: spec.name,
+      name: defaultName(spec.name),
       color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
       startPpq,
       endPpq: startPpq + spec.bars * 4,
@@ -165,28 +166,30 @@ function makeSections(specs: ReadonlyArray<SectionSpec>): DocumentSection[] {
 }
 
 const JPOP_SECTIONS: ReadonlyArray<SectionSpec> = [
-  { name: 'Intro', bars: 8 },
-  { name: 'Verse', bars: 16 },
-  { name: 'Pre-chorus', bars: 8 },
-  { name: 'Chorus', bars: 16 },
-  { name: 'Verse', bars: 16 },
-  { name: 'Pre-chorus', bars: 8 },
-  { name: 'Final chorus', bars: 16 },
-  { name: 'Outro', bars: 8 },
+  { name: 'sectionIntro', bars: 8 },
+  { name: 'sectionVerse', bars: 16 },
+  { name: 'sectionPreChorus', bars: 8 },
+  { name: 'sectionChorus', bars: 16 },
+  { name: 'sectionVerse', bars: 16 },
+  { name: 'sectionPreChorus', bars: 8 },
+  { name: 'sectionFinalChorus', bars: 16 },
+  { name: 'sectionOutro', bars: 8 },
 ];
 
 const BAROQUE_ORGAN_SECTIONS: ReadonlyArray<SectionSpec> = [
-  { name: 'Prelude', bars: 16 },
-  { name: 'Exposition', bars: 16 },
-  { name: 'Episode I', bars: 8 },
-  { name: 'Middle entry', bars: 8 },
-  { name: 'Final entry', bars: 8 },
-  { name: 'Coda', bars: 8 },
+  { name: 'sectionPrelude', bars: 16 },
+  { name: 'sectionExposition', bars: 16 },
+  { name: 'sectionEpisode', bars: 8 },
+  { name: 'sectionMiddleEntry', bars: 8 },
+  { name: 'sectionFinalEntry', bars: 8 },
+  { name: 'sectionCoda', bars: 8 },
 ];
 
-/** Builds tracks from (name, color, optional synth preset) tuples. */
-function tracksFrom(entries: ReadonlyArray<readonly [string, string, string?]>): DocumentTrack[] {
-  return entries.map(([name, color, preset]) => midiTrack(name, color, preset));
+/** Builds tracks from (name key, color, optional synth preset) tuples. */
+function tracksFrom(
+  entries: ReadonlyArray<readonly [DefaultNameKey, string, string?]>,
+): DocumentTrack[] {
+  return entries.map(([name, color, preset]) => midiTrack(defaultName(name), color, preset));
 }
 
 /**
@@ -200,34 +203,34 @@ function tracksFrom(entries: ReadonlyArray<readonly [string, string, string?]>):
 export function createTemplate(name: TemplateName): ProjectDocument {
   switch (name) {
     case 'empty':
-      return baseDocument('Empty project', []);
+      return baseDocument(defaultName('templateEmpty'), []);
     case 'band':
       return baseDocument(
-        'Band',
+        defaultName('templateBand'),
         tracksFrom([
-          ['Drums', '#f87171', PRESET.drums],
-          ['Bass', '#fbbf24', PRESET.bass],
-          ['Piano', '#60a5fa', PRESET.piano],
-          ['Guitar', '#34d399', PRESET.guitar],
-          ['Vocal', '#f472b6', PRESET.pad],
+          ['instrumentDrums', '#f87171', PRESET.drums],
+          ['instrumentBass', '#fbbf24', PRESET.bass],
+          ['instrumentPiano', '#60a5fa', PRESET.piano],
+          ['instrumentGuitar', '#34d399', PRESET.guitar],
+          ['instrumentVocal', '#f472b6', PRESET.pad],
         ]),
       );
     case 'jpop':
       return baseDocument(
-        'J-pop song',
+        defaultName('templateJpop'),
         [
-          midiTrack('Drums', '#f87171', PRESET.drums, {
+          midiTrack(defaultName('instrumentDrums'), '#f87171', PRESET.drums, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
             percussion: true,
           }),
-          midiTrack('Bass', '#fbbf24', PRESET.bass, {
+          midiTrack(defaultName('instrumentBass'), '#fbbf24', PRESET.bass, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.bass,
           }),
-          midiTrack('Backing', '#60a5fa', PRESET.piano, {
+          midiTrack(defaultName('instrumentBacking'), '#60a5fa', PRESET.piano, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
           }),
-          midiTrack('Lead', '#f472b6', PRESET.lead, {
+          midiTrack(defaultName('lead'), '#f472b6', PRESET.lead, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.soprano,
           }),
@@ -236,21 +239,21 @@ export function createTemplate(name: TemplateName): ProjectDocument {
       );
     case 'baroque-organ':
       return baseDocument(
-        'Baroque organ',
+        defaultName('templateBaroqueOrgan'),
         [
-          midiTrack('Manual I Soprano', '#60a5fa', PRESET.churchOrgan, {
+          midiTrack(defaultName('instrumentManualISoprano'), '#60a5fa', PRESET.churchOrgan, {
             clipLengthPpq: BAROQUE_ORGAN_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.soprano,
           }),
-          midiTrack('Manual I Alto', '#34d399', PRESET.churchOrgan, {
+          midiTrack(defaultName('instrumentManualIAlto'), '#34d399', PRESET.churchOrgan, {
             clipLengthPpq: BAROQUE_ORGAN_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.alto,
           }),
-          midiTrack('Manual II Tenor', '#a78bfa', PRESET.churchOrgan, {
+          midiTrack(defaultName('instrumentManualIITenor'), '#a78bfa', PRESET.churchOrgan, {
             clipLengthPpq: BAROQUE_ORGAN_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.tenor,
           }),
-          midiTrack('Pedal Bass', '#fbbf24', PRESET.churchOrgan, {
+          midiTrack(defaultName('instrumentPedalBass'), '#fbbf24', PRESET.churchOrgan, {
             clipLengthPpq: BAROQUE_ORGAN_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.bass,
           }),
@@ -263,38 +266,40 @@ export function createTemplate(name: TemplateName): ProjectDocument {
       );
     case 'gm-orchestra':
       return baseDocument(
-        'GM orchestra',
+        defaultName('templateGmOrchestra'),
         tracksFrom([
-          ['Violins I', '#60a5fa', PRESET.pad],
-          ['Violins II', '#3b82f6', PRESET.pad],
-          ['Violas', '#818cf8', PRESET.pad],
-          ['Cellos', '#a78bfa', PRESET.pad],
-          ['Contrabasses', '#7c3aed', PRESET.bass],
-          ['Flutes', '#34d399', PRESET.organ],
-          ['Oboes', '#2dd4bf', PRESET.organ],
-          ['Clarinets', '#4ade80', PRESET.organ],
-          ['Bassoons', '#16a34a', PRESET.organ],
-          ['Horns', '#fbbf24', PRESET.brass],
-          ['Trumpets', '#fb923c', PRESET.brass],
-          ['Trombones', '#f97316', PRESET.brass],
-          ['Tuba', '#d97706', PRESET.brass],
-          ['Timpani', '#f87171', PRESET.drums],
-          ['Percussion', '#ef4444', PRESET.drums],
+          ['instrumentViolinsI', '#60a5fa', PRESET.pad],
+          ['instrumentViolinsII', '#3b82f6', PRESET.pad],
+          ['instrumentViolas', '#818cf8', PRESET.pad],
+          ['instrumentCellos', '#a78bfa', PRESET.pad],
+          ['instrumentContrabasses', '#7c3aed', PRESET.bass],
+          ['instrumentFlutes', '#34d399', PRESET.organ],
+          ['instrumentOboes', '#2dd4bf', PRESET.organ],
+          ['instrumentClarinets', '#4ade80', PRESET.organ],
+          ['instrumentBassoons', '#16a34a', PRESET.organ],
+          ['instrumentHorns', '#fbbf24', PRESET.brass],
+          ['instrumentTrumpets', '#fb923c', PRESET.brass],
+          ['instrumentTrombones', '#f97316', PRESET.brass],
+          ['instrumentTuba', '#d97706', PRESET.brass],
+          ['instrumentTimpani', '#f87171', PRESET.drums],
+          ['instrumentPercussion', '#ef4444', PRESET.drums],
         ]),
       );
     case 'programming':
       return baseDocument(
-        'Programming',
+        defaultName('templateProgramming'),
         tracksFrom([
-          ['Lead Synth', '#60a5fa', PRESET.lead],
-          ['Pad', '#a78bfa', PRESET.pad],
-          ['Pluck', '#34d399', PRESET.pluck],
-          ['Synth Bass', '#fbbf24', PRESET.bass],
-          ['Drums', '#f87171', PRESET.drums],
+          ['instrumentLeadSynth', '#60a5fa', PRESET.lead],
+          ['instrumentPad', '#a78bfa', PRESET.pad],
+          ['instrumentPluck', '#34d399', PRESET.pluck],
+          ['instrumentSynthBass', '#fbbf24', PRESET.bass],
+          ['instrumentDrums', '#f87171', PRESET.drums],
         ]),
       );
     case 'transcription':
-      return baseDocument('Transcription', [midiTrack('Piano', TRACK_COLOR_PALETTE[0])]);
+      return baseDocument(defaultName('templateTranscription'), [
+        midiTrack(defaultName('instrumentPiano'), TRACK_COLOR_PALETTE[0]),
+      ]);
     default: {
       const exhaustive: never = name;
       throw new RangeError(`Unknown template: ${String(exhaustive)}`);

@@ -10,13 +10,14 @@
  * by occurrence. Color comes from a chroma comparison of the sections
  * themselves rather than from the type ordinal, which the detector reuses
  * across parts that share nothing musically. Names are plain editable strings
- * (sections are app-level metadata, not localized keys). Side-effect-free and
+ * in the UI language current at detection. Side-effect-free and
  * dependency-injected for testing; the merge/commit lives in command/timeline.
  */
 
 import type { ChromaResult, Section, SectionAnalysis, SectionType } from '@libraz/libsonare';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
+import { type DefaultNameKey, defaultName } from './default-names';
 import {
   type ChromaFeatures,
   groupSectionRepeats,
@@ -41,17 +42,17 @@ const SECTION_TYPE_ORDER: readonly SectionType[] = [
   'unknown',
 ];
 
-/** Display labels of the core's section types, in {@link SECTION_TYPE_ORDER} order. */
-export const SECTION_TYPE_NAMES = [
-  'Intro',
-  'Verse',
-  'Pre-Chorus',
-  'Chorus',
-  'Bridge',
-  'Instrumental',
-  'Outro',
-  'Section',
-] as const;
+/** Name keys of the core's section types, in {@link SECTION_TYPE_ORDER} order. */
+export const SECTION_TYPE_NAME_KEYS = [
+  'sectionIntro',
+  'sectionVerse',
+  'sectionPreChorus',
+  'sectionChorus',
+  'sectionBridge',
+  'sectionInstrumental',
+  'sectionOutro',
+  'sectionSection',
+] as const satisfies ReadonlyArray<DefaultNameKey>;
 
 /** The audio section detector signature (libsonare `analyzeSections`). */
 export type AudioSectionAnalyzer = (samples: Float32Array, sampleRate: number) => SectionAnalysis;
@@ -92,8 +93,9 @@ function sectionTypeIndex(type: SectionType): number {
 
 /** Maps a section type to its stable label. */
 function sectionLabel(type: SectionType): string {
-  return (
-    SECTION_TYPE_NAMES[sectionTypeIndex(type)] ?? SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1]
+  return defaultName(
+    SECTION_TYPE_NAME_KEYS[sectionTypeIndex(type)] ??
+      SECTION_TYPE_NAME_KEYS[SECTION_TYPE_NAME_KEYS.length - 1],
   );
 }
 
@@ -174,7 +176,7 @@ export async function analyzeAudioClipSections(
     const occurrence = (seenPerLabel.get(label) ?? 0) + 1;
     seenPerLabel.set(label, occurrence);
     return {
-      name: chroma ? `${label} ${occurrence}` : label,
+      name: chroma ? defaultName('sectionOccurrence', { label, number: occurrence }) : label,
       color: groupColor(groups[index] ?? 0),
       startPpq,
       endPpq,

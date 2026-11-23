@@ -4,6 +4,7 @@ import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { loadAsset } from '@/persistence/assets';
 import { createAssetReferenceGuard } from '../asset-references';
 import { tuneAudioClipToMidi } from '../audio-tune-to-midi';
+import { defaultName } from '../default-names';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { clipKind, type EditorClip } from '../types';
@@ -89,7 +90,7 @@ export async function tuneAudioClipToMidiTrack(
   const isReferenced = createAssetReferenceGuard(store);
   try {
     const meta = await assets.save(
-      { name: `${clip.name} tuned`, sampleRate: tuned.sampleRate },
+      { name: defaultName('tuned', { name: clip.name }), sampleRate: tuned.sampleRate },
       tuned.channels,
     );
     if (!isCurrent()) {

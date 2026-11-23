@@ -9,6 +9,8 @@
  * itself.
  */
 
+import { type DefaultNameKey, defaultName } from './default-names';
+
 /** Role an externally separated stem plays in the mix. */
 export type ExternalStemRole = 'vocals' | 'drums' | 'bass' | 'other';
 
@@ -57,10 +59,14 @@ export function isExternalStemRole(value: unknown): value is ExternalStemRole {
   return typeof value === 'string' && EXTERNAL_STEM_ROLES.includes(value as ExternalStemRole);
 }
 
-/**
- * Track name an imported stem is laid down under. Document content, so it is
- * English like every other generated track name.
- */
+const STEM_TRACK_NAME_KEYS: Record<ExternalStemRole, DefaultNameKey> = {
+  vocals: 'externalStemVocals',
+  drums: 'externalStemDrums',
+  bass: 'externalStemBass',
+  other: 'externalStemOther',
+};
+
+/** Track name an imported stem is laid down under, in the current UI language. */
 export function externalStemTrackName(role: ExternalStemRole): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
+  return defaultName(STEM_TRACK_NAME_KEYS[role]);
 }

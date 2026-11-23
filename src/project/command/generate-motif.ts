@@ -28,6 +28,7 @@ import {
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
+import { defaultName } from '../default-names';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projection';
@@ -145,7 +146,7 @@ export function buildMotifPlan(
   const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0 });
   if (fresh.length === 0) return null;
   return {
-    name: 'Motif',
+    name: defaultName('generatedMotif'),
     notes: fresh.map(materializeNote),
     lengthPpq,
     preset: MOTIF_PRESET,

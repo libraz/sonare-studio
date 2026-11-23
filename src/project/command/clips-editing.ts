@@ -19,6 +19,7 @@ import { ingestAudioBuffer } from '../audio-import';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { audioClipSegments } from '../comping';
+import { defaultName } from '../default-names';
 import type { RawNote } from '../midi-events';
 import { joinMidiLaneFields } from '../midi-lane-kinds';
 import {
@@ -745,8 +746,11 @@ export async function consolidateAudioClips(
     const isReferenced = createAssetReferenceGuard(store);
     try {
       const meta = options.ingest
-        ? await ingest(stitched, sampleRate, `${ordered[0].name} (consolidated)`)
-        : await assets!.save({ name: `${ordered[0].name} (consolidated)`, sampleRate }, stitched);
+        ? await ingest(stitched, sampleRate, defaultName('consolidated', { name: ordered[0].name }))
+        : await assets!.save(
+            { name: defaultName('consolidated', { name: ordered[0].name }), sampleRate },
+            stitched,
+          );
       assertCurrent();
       const assetId = meta.id;
       const sourceId = getAudioSourceId(assetId);
@@ -774,7 +778,7 @@ export async function consolidateAudioClips(
           {
             id: createdClipId,
             trackId,
-            name: `${ordered[0].name} (consolidated)`,
+            name: defaultName('consolidated', { name: ordered[0].name }),
             startPpq,
             lengthPpq,
             sourceOffsetPpq: 0,

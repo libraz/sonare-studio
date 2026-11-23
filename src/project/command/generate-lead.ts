@@ -2,12 +2,14 @@
  * Creates the empty lead-melody target used after arranging generated parts.
  *
  * The command is intentionally idempotent: a second request selects the
- * existing Lead/主旋律 track instead of adding another one; when that track has
+ * existing lead track (named in any message language) instead of adding another one; when that track has
  * no clip spanning the progression, it receives one. A new track and its clip
  * are created in one atomic history entry on the first request.
  */
 
 import { maxOf, minOf } from '@/lib/math';
+import { MESSAGES } from '@/ui/i18n/messages';
+import { defaultName } from '../default-names';
 import { useProjectStore } from '../store';
 import { clipKind } from '../types';
 import { addMidiClip } from './clips-create';
@@ -15,12 +17,14 @@ import { setActiveClip } from './clips-state';
 import { addGeneratedTrack } from './generate-track';
 import { executeAtomic } from './history';
 
-const DEFAULT_LEAD_NAME = 'Lead';
-const LEAD_NAMES = new Set(['lead', '主旋律']);
-
 function normalizedName(name: string): string {
-  return name.trim().toLowerCase();
+  return name.trim().toLocaleLowerCase();
 }
+
+/** The lead track name in every message language, normalized. */
+const LEAD_NAMES: ReadonlySet<string> = new Set(
+  Object.values(MESSAGES).map(({ common }) => normalizedName(common.defaultNames.lead)),
+);
 
 interface ChordProgressionRange {
   startPpq: number;
@@ -43,15 +47,11 @@ function chordProgressionRange(
   return endPpq > startPpq ? { startPpq, endPpq, lengthPpq: endPpq - startPpq } : null;
 }
 
-function isLeadTrack(
-  track: { name: string; kind: string; frozen?: unknown },
-  name: string,
-): boolean {
+function isLeadTrack(track: { name: string; kind: string; frozen?: unknown }): boolean {
   return (
     track.kind === 'midi' &&
     track.frozen === undefined &&
-    (LEAD_NAMES.has(normalizedName(track.name)) ||
-      normalizedName(track.name) === normalizedName(name))
+    LEAD_NAMES.has(normalizedName(track.name))
   );
 }
 
@@ -65,16 +65,14 @@ function clipSpansRange(
 /**
  * Creates or reuses an empty lead-melody clip spanning the chord progression.
  *
- * @param name Localized display name for a newly created lead track.
  * @returns The selected lead clip id, or null when no chord progression exists.
  */
-export function createLeadMelodyCommand(name = DEFAULT_LEAD_NAME): number | null {
+export function createLeadMelodyCommand(): number | null {
   const store = useProjectStore();
   const progression = chordProgressionRange(store);
   if (progression === null) return null;
 
-  const requestedName = name.trim() || DEFAULT_LEAD_NAME;
-  const leadTracks = store.tracks.filter((track) => isLeadTrack(track, requestedName));
+  const leadTracks = store.tracks.filter(isLeadTrack);
   const leadTrack =
     leadTracks.find((track) =>
       store.clips.some(
@@ -105,7 +103,7 @@ export function createLeadMelodyCommand(name = DEFAULT_LEAD_NAME): number | null
       trackId: leadTrack.id,
       startPpq: progression.startPpq,
       lengthPpq: progression.lengthPpq,
-      name: requestedName,
+      name: defaultName('lead'),
     });
     setActiveClip(clipId);
     return clipId;
@@ -115,7 +113,7 @@ export function createLeadMelodyCommand(name = DEFAULT_LEAD_NAME): number | null
     addGeneratedTrack(
       store,
       {
-        name: requestedName,
+        name: defaultName('lead'),
         notes: [],
         startPpq: progression.startPpq,
         lengthPpq: progression.lengthPpq,

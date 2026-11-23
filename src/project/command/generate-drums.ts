@@ -20,6 +20,7 @@ import {
 } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
+import { defaultName } from '../default-names';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { normalizeTempoMap, tempoAtPpq } from '../tempo-map';
@@ -119,7 +120,7 @@ export function buildDrumsPlan(
   );
   if (notes.length === 0) return null;
   return {
-    name: 'Drums',
+    name: defaultName('generatedDrums'),
     notes,
     lengthPpq: bars * BEATS_PER_BAR,
     preset: DRUMS_PRESET,

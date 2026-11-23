@@ -11,6 +11,9 @@
  * can live in a Vue ref without deep reactivity.
  */
 
+import { defaultName } from '@/project/default-names';
+import { MESSAGES } from '@/ui/i18n/messages';
+
 /** One entry of the version list. */
 export interface AssetVersion {
   /** Asset id of this version. */
@@ -65,13 +68,20 @@ export function selectVersion(state: VersionHistoryState, index: number): Versio
   return { versions: state.versions, currentIndex: index };
 }
 
-/** Name suffix marking assets produced by the sample editor. */
-const EDITED_SUFFIX = ' (edited)';
+const NAME_PLACEHOLDER = '{name}';
+
+/** The edited-asset suffix of every message language. */
+const EDITED_SUFFIXES: ReadonlyArray<string> = Object.values(MESSAGES).map(({ common }) => {
+  const template = common.defaultNames.editedAsset;
+  return template.slice(template.indexOf(NAME_PLACEHOLDER) + NAME_PLACEHOLDER.length);
+});
 
 /**
- * Derives the display name for an edited copy of an asset: appends
- * " (edited)" once (names already carrying the suffix are kept as-is).
+ * Derives the display name for an edited copy of an asset: appends the edited
+ * suffix once (a name already ending in the suffix of any language is kept as-is).
  */
 export function editedAssetName(name: string): string {
-  return name.endsWith(EDITED_SUFFIX) ? name : name + EDITED_SUFFIX;
+  return EDITED_SUFFIXES.some((suffix) => name.endsWith(suffix))
+    ? name
+    : defaultName('editedAsset', { name });
 }

@@ -541,7 +541,7 @@ function onGenerate(): void {
 function onComposeLead(): void {
   error.value = null;
   try {
-    const clipId = createLeadMelodyCommand(g.value.leadName);
+    const clipId = createLeadMelodyCommand();
     if (clipId === null) {
       error.value = g.value.leadError;
       return;

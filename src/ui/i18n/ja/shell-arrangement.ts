@@ -202,7 +202,6 @@ export const shellArrangement = {
       doneBodyNoChords:
         '選択したパートを生成しました。ベースとバッキングには後からコード進行を追加できます。',
       composeLead: '主旋律を作曲',
-      leadName: '主旋律',
       leadError: '主旋律のクリップを作成できませんでした。',
     },
     keyChange: {

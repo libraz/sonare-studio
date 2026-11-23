@@ -5,16 +5,32 @@ import { type AudioAssetMeta, audioAssetUri, loadAsset } from '@/persistence/ass
 import { createAssetReferenceGuard } from '../asset-references';
 import {
   type SeparatedStem,
+  type StemKind,
   separateAudioClipComponents,
   separateAudioClipStems,
 } from '../audio-stems';
 import { decomposeStemsInWorker } from '../decompose-stems-client';
+import { type DefaultNameKey, defaultName } from '../default-names';
 import { assertCanAddTracks } from '../mixer';
 import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { executeAtomic } from './history';
 import { requireClip, reusableAudioSourceId } from './utils';
+
+/** Name template of each separated band. */
+const STEM_NAME_KEYS: Record<StemKind, DefaultNameKey> = {
+  harmonic: 'stemHarmonic',
+  percussive: 'stemPercussive',
+  residual: 'stemResidual',
+};
+
+/** Track name of one separated stem or NMF component of the clip named `baseName`. */
+function stemTrackName(baseName: string, stem: Pick<SeparatedStem, 'kind' | 'index'>): string {
+  return stem.kind === 'component'
+    ? defaultName('stemComponent', { name: baseName, number: (stem.index ?? 0) + 1 })
+    : defaultName(STEM_NAME_KEYS[stem.kind], { name: baseName });
+}
 
 function stemSourceToken(
   store: ReturnType<typeof useProjectStore>,
@@ -220,9 +236,9 @@ export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
   if (stems.length === 0) return [];
   if (!isStemSourceCurrent(store, project, clipId, sourceToken)) return [];
   const baseName = clip.name;
-  return placeSeparatedStems(clipId, clip, project, sourceToken, stems, (stem) => {
-    return `${baseName} ${stem.kind}`;
-  });
+  return placeSeparatedStems(clipId, clip, project, sourceToken, stems, (stem) =>
+    stemTrackName(baseName, stem),
+  );
 }
 
 /** Injected NMF decomposer for {@link splitAudioClipToComponents}. */
@@ -300,7 +316,7 @@ export async function splitAudioClipToComponents(
     project,
     sourceToken,
     stems,
-    (stem) => `${baseName} component ${(stem.index ?? 0) + 1}`,
+    (stem) => stemTrackName(baseName, stem),
     signal,
   );
 }

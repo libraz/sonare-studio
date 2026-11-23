@@ -12,6 +12,7 @@ import { createAssetReferenceGuard } from './asset-references';
 import { type AudioClipSliceTempo, renderAudibleAudioClipWindow } from './audio-clip-render';
 import { dropClipTakesBatch } from './commands';
 import { audioClipSegments } from './comping';
+import { defaultName } from './default-names';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -93,7 +94,7 @@ async function renderClipComp(
   return {
     channels: rendered.channels,
     sampleRate: rendered.sampleRate,
-    name: `${clip.name} (comp)`,
+    name: defaultName('comp', { name: clip.name }),
   };
 }
 

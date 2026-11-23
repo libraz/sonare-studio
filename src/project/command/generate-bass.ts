@@ -15,6 +15,7 @@ import { editorChordToChord } from '@/compose/chord-io';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { minOf } from '@/lib/math';
 import type { EditorChordSymbol } from '../chords';
+import { defaultName } from '../default-names';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
@@ -65,7 +66,7 @@ export function buildBassPlan(
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
   if (notes.length === 0) return null;
   return {
-    name: 'Bass',
+    name: defaultName('generatedBass'),
     notes,
     lengthPpq,
     preset: BASS_PRESET,

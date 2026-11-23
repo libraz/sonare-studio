@@ -15,6 +15,7 @@ import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
+import { defaultName } from '../default-names';
 import { trackProvenance } from '../generation';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
@@ -85,7 +86,7 @@ export function buildCounterPlan(
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
   if (notes.length === 0) return null;
   return {
-    name: 'Counter melody',
+    name: defaultName('generatedCounterMelody'),
     notes,
     lengthPpq: melodyEndBeat,
     preset: COUNTER_PRESET,

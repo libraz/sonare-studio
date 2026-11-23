@@ -21,6 +21,7 @@ import {
 } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
 import type { EditorChordSymbol } from '../chords';
+import { defaultName } from '../default-names';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
@@ -113,7 +114,7 @@ export function buildBackingPlan(
   // The backing voicing is deterministic, so its record carries no seed of
   // its own; the part and the algorithm version are what reproduce it.
   return {
-    name: 'Backing',
+    name: defaultName('generatedBacking'),
     notes,
     lengthPpq,
     preset: BACKING_PRESET,

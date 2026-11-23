@@ -14,6 +14,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { createAssetReferenceGuard } from './asset-references';
 import { addBouncedClip, setTrackFrozen } from './commands';
+import { defaultName } from './default-names';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -153,12 +154,12 @@ export async function freezeTrack(
       ? await options.ingest(
           [result.channels[0], result.channels[1]],
           result.sampleRate,
-          `${track.name} (frozen)`,
+          defaultName('frozen', { name: track.name }),
         )
-      : await assets!.save({ name: `${track.name} (frozen)`, sampleRate: result.sampleRate }, [
-          result.channels[0],
-          result.channels[1],
-        ]);
+      : await assets!.save(
+          { name: defaultName('frozen', { name: track.name }), sampleRate: result.sampleRate },
+          [result.channels[0], result.channels[1]],
+        );
     assertProjectOperationCurrent(
       freezeOperations,
       operation,
@@ -251,12 +252,12 @@ export async function bounceTrackRange(
       ? await options.ingest(
           [result.channels[0], result.channels[1]],
           result.sampleRate,
-          `${track.name} (bounce)`,
+          defaultName('bounce', { name: track.name }),
         )
-      : await assets!.save({ name: `${track.name} (bounce)`, sampleRate: result.sampleRate }, [
-          result.channels[0],
-          result.channels[1],
-        ]);
+      : await assets!.save(
+          { name: defaultName('bounce', { name: track.name }), sampleRate: result.sampleRate },
+          [result.channels[0], result.channels[1]],
+        );
     assertProjectOperationCurrent(
       freezeOperations,
       operation,
@@ -266,7 +267,7 @@ export async function bounceTrackRange(
     );
     // One undoable edit: a single undo removes the clip AND its new track.
     const clipId = addBouncedClip({
-      name: `${track.name} (bounce)`,
+      name: defaultName('bounce', { name: track.name }),
       assetId: meta.id,
       startPpq,
       lengthPpq: endPpq - startPpq,

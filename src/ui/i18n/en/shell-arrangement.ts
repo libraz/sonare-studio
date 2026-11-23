@@ -204,7 +204,6 @@ export const shellArrangement = {
       doneBodyNoChords:
         'The selected parts are ready. Add a chord progression later to generate bass and backing.',
       composeLead: 'Compose lead melody',
-      leadName: 'Lead',
       leadError: 'Could not create the lead melody clip.',
     },
     keyChange: {

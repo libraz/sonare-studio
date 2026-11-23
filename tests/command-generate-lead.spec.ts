@@ -26,7 +26,7 @@ describe('createLeadMelodyCommand', () => {
   });
 
   it('creates and selects a four-bar lead clip in one undo entry', () => {
-    const clipId = createLeadMelodyCommand('Lead');
+    const clipId = createLeadMelodyCommand();
     expect(clipId).not.toBeNull();
     expect(store.tracks).toHaveLength(1);
     expect(store.tracks[0].name).toBe('Lead');
@@ -39,18 +39,18 @@ describe('createLeadMelodyCommand', () => {
   });
 
   it('reuses the lead target when composing is requested again', () => {
-    const first = createLeadMelodyCommand('Lead');
-    const second = createLeadMelodyCommand('Lead');
+    const first = createLeadMelodyCommand();
+    const second = createLeadMelodyCommand();
     expect(second).toBe(first);
     expect(store.tracks).toHaveLength(1);
     expect(store.clips).toHaveLength(1);
   });
 
   it('creates an editable target when the previous lead is frozen', () => {
-    const first = createLeadMelodyCommand('Lead');
+    const first = createLeadMelodyCommand();
     const frozenTrackId = store.activeTrackId;
     setTrackFrozen(frozenTrackId, { assetId: 'frozen-lead' });
-    const second = createLeadMelodyCommand('Lead');
+    const second = createLeadMelodyCommand();
     expect(second).not.toBe(first);
     expect(store.activeTrack?.frozen).toBeUndefined();
     expect(store.activeClip?.lengthPpq).toBe(16);
@@ -58,10 +58,10 @@ describe('createLeadMelodyCommand', () => {
   });
 
   it('adds a spanning clip to the existing lead track when the chord progression grows', () => {
-    const first = createLeadMelodyCommand('Lead');
+    const first = createLeadMelodyCommand();
     const firstTrackId = store.activeTrackId;
     setProjectChords([{ startPpq: 0, endPpq: 32, rootPc: 0, quality: 0 }]);
-    const second = createLeadMelodyCommand('Lead');
+    const second = createLeadMelodyCommand();
     expect(second).not.toBe(first);
     expect(store.tracks).toHaveLength(1);
     expect(store.activeTrackId).toBe(firstTrackId);
