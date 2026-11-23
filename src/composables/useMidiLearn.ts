@@ -27,11 +27,10 @@ import {
   setVcaGroupSolo,
 } from '@/project/commands';
 import {
+  bankOffsetAfter,
   bankPagingSize,
   bankSlotTrackId,
   clampBankOffset,
-  nextBankOffset,
-  previousBankOffset,
 } from '@/project/control-surface';
 import {
   DEFAULT_DUAL_PAN,
@@ -256,13 +255,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     const store = useProjectStore();
     const surface = store.controlSurface;
     const count = store.tracks.length;
-    const offset =
-      action === 'home'
-        ? 0
-        : action === 'next'
-          ? nextBankOffset(surface.bankOffset, count, bankPagingSize(surface))
-          : previousBankOffset(surface.bankOffset, count, bankPagingSize(surface));
-    store.controlSurface = { ...surface, bankOffset: offset };
+    store.controlSurface = { ...surface, bankOffset: bankOffsetAfter(action, surface, count) };
   }
 
   /** Shifts the bank window by whole tracks (a surface CHANNEL button). */

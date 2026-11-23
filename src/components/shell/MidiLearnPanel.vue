@@ -5,10 +5,10 @@ import { confirmDestructive } from '@/composables/useDialogs';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import {
+  bankOffsetAfter,
+  bankPagingSize,
   CONTROL_SURFACE_PROTOCOLS,
   type ControlSurfaceProtocol,
-  nextBankOffset,
-  previousBankOffset,
   sanitizeControlSurfaceSettings,
 } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
@@ -237,7 +237,10 @@ const bankRange = computed(() => {
   const total = props.tracks.length;
   if (total === 0) return '';
   const from = Math.min(total, surfaceSettings.value.bankOffset + 1);
-  const to = Math.min(total, surfaceSettings.value.bankOffset + surfaceSettings.value.bankSize);
+  const to = Math.min(
+    total,
+    surfaceSettings.value.bankOffset + bankPagingSize(surfaceSettings.value),
+  );
   return formatMessage(t.value.shell.midiLearn.surfaceBankRange, {
     from: String(from),
     to: String(to),
@@ -266,11 +269,11 @@ const bankPrevBlocked = computed(() =>
   ),
 );
 const bankNextBlocked = computed(() => {
-  const { bankOffset, bankSize } = surfaceSettings.value;
+  const surface = surfaceSettings.value;
   return firstBlock(
     [props.tracks.length === 0, t.value.reasons.noTrack],
     [
-      nextBankOffset(bankOffset, props.tracks.length, bankSize) === bankOffset,
+      bankOffsetAfter('next', surface, props.tracks.length) === surface.bankOffset,
       t.value.shell.midiLearn.reasons.lastBank,
     ],
   );
@@ -283,16 +286,9 @@ const clearAllBlocked = computed(() =>
   ]),
 );
 
-function moveBank(action: 'prev' | 'next' | 'home'): void {
-  const { bankOffset, bankSize } = surfaceSettings.value;
-  const total = props.tracks.length;
+function moveBank(action: 'prev' | 'next'): void {
   updateSurface({
-    bankOffset:
-      action === 'home'
-        ? 0
-        : action === 'next'
-          ? nextBankOffset(bankOffset, total, bankSize)
-          : previousBankOffset(bankOffset, total, bankSize),
+    bankOffset: bankOffsetAfter(action, surfaceSettings.value, props.tracks.length),
   });
 }
 

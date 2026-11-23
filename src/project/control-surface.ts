@@ -11,7 +11,7 @@
 
 import { clampInt } from '@/lib/math';
 import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
-import { MAX_CONTROL_SURFACE_SLOTS } from './midi-learn-targets';
+import { MAX_CONTROL_SURFACE_SLOTS, type MidiLearnBankAction } from './midi-learn-targets';
 
 /**
  * Native protocol spoken by the surface. `none` leaves the surface to the
@@ -141,6 +141,19 @@ export function nextBankOffset(offset: number, trackCount: number, bankSize: num
 export function previousBankOffset(offset: number, trackCount: number, bankSize: number): number {
   const size = Math.max(1, Math.floor(bankSize));
   return clampBankOffset(clampBankOffset(offset, trackCount, size) - size, trackCount, size);
+}
+
+/** Bank offset after a bank navigation action, paging by {@link bankPagingSize}. */
+export function bankOffsetAfter(
+  action: MidiLearnBankAction,
+  surface: Pick<ControlSurfaceSettings, 'protocol' | 'bankSize' | 'bankOffset'>,
+  trackCount: number,
+): number {
+  if (action === 'home') return 0;
+  const size = bankPagingSize(surface);
+  return action === 'next'
+    ? nextBankOffset(surface.bankOffset, trackCount, size)
+    : previousBankOffset(surface.bankOffset, trackCount, size);
 }
 
 /**

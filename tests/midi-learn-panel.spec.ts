@@ -264,6 +264,28 @@ describe('MidiLearnPanel control surface', () => {
     expect(store.controlSurface.bankOffset).toBe(0);
   });
 
+  it('pages a protocol surface by its physical strips, as the hardware bank buttons do', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    store.tracks = Array.from({ length: 40 }, (_, index) => ({
+      ...TRACKS[0],
+      id: index + 1,
+      name: `Track ${index + 1}`,
+      kind: 'midi' as const,
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      order: index,
+    }));
+    store.controlSurface = { ...store.controlSurface, protocol: 'mcu', bankSize: 16 };
+    await (wrapper as VueWrapper).setProps({ tracks: store.tracks });
+
+    const [, next] = (wrapper as VueWrapper).findAll('.ml-bank-step');
+    await next.trigger('click');
+    expect(store.controlSurface.bankOffset).toBe(8);
+  });
+
   it('labels the surface section in every locale', () => {
     for (const bundle of [en, ja]) {
       expect(bundle.shell.midiLearn.surface.length).toBeGreaterThan(0);
