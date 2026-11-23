@@ -179,10 +179,6 @@ function onRootChange(index: number, chord: EditorChordSymbol, value: number): v
   commitAt(index, { ...chord, rootPc: value });
 }
 
-function qualityChoiceKeyFor(chord: EditorChordSymbol): string {
-  return qualityChoiceKey(chord);
-}
-
 function onQualityChange(index: number, chord: EditorChordSymbol, value: string): void {
   const choice = CHORD_QUALITY_CHOICES.find((candidate) => qualityChoiceKey(candidate) === value);
   if (choice === undefined) return;
@@ -249,7 +245,7 @@ function chordName(chord: EditorChordSymbol): string {
  */
 const qualityOptionsByIndex = computed<ReadonlyArray<ReadonlyArray<QualityOption>>>(() =>
   store.chords.map((chord) => {
-    const key = qualityChoiceKeyFor(chord);
+    const key = qualityChoiceKey(chord);
     if (QUALITY_OPTION_KEYS.has(key)) return QUALITY_OPTIONS;
     return [{ value: key, label: chordName(chord) }, ...QUALITY_OPTIONS];
   }),
@@ -326,7 +322,7 @@ const rowItems = computed<RowItem[]>(() => {
       roman: romanFor(chord),
       position: positionText(chord),
       tentative: isTentative(chord),
-      qualityKey: qualityChoiceKeyFor(chord),
+      qualityKey: qualityChoiceKey(chord),
       dominantTooltip: insertDominantTooltip(chord),
       dominantBlocked: insertDominantBlocked(chord),
     };
