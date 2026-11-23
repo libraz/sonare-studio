@@ -128,6 +128,7 @@ watch(
     const wasOpen = previous?.[0] === true;
     if (!open) {
       if (wasOpen) {
+        stopAudition();
         if (previousFocus?.isConnected) previousFocus.focus();
         previousFocus = null;
       }
@@ -499,9 +500,14 @@ onBeforeUnmount(() => {
   audition = null;
 });
 
-function onClose(): void {
+/** Silences the audition and drops any render still in flight. */
+function stopAudition(): void {
   auditionGeneration++;
   audition?.stop();
+}
+
+function onClose(): void {
+  stopAudition();
   emit('close');
 }
 
