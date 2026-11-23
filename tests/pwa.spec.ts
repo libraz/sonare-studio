@@ -692,7 +692,7 @@ describe('Service Worker release isolation', () => {
       fetcher,
     );
 
-    await expect(worker.install()).rejects.toThrow('without an HTML shell: /');
+    await expect(worker.install()).rejects.toThrow('/: answered without an HTML shell');
     expect(await caches.keys()).toEqual([]);
   });
 
@@ -895,7 +895,9 @@ describe('Service Worker release isolation', () => {
       caches,
       fetcher,
     );
-    await expect(workerB.install()).rejects.toThrow('answered with the app shell');
+    await expect(workerB.install()).rejects.toThrow(
+      '/assets/app-b.js: answered with the app shell',
+    );
     // The half-deployed release leaves no cache behind, so the running one keeps
     // serving until an install actually succeeds.
     expect(await caches.keys()).toEqual([manifestA.cacheVersion]);
@@ -906,6 +908,42 @@ describe('Service Worker release isolation', () => {
     expect(
       caches.stores.get(manifestB.cacheVersion)?.entries.get('/assets/app-b.js'),
     ).toMatchObject({ body: 'release-b:/assets/app-b.js' });
+  });
+
+  it('names the asset whose fetch or cache write failed the install', async () => {
+    const template = readSource('public/sw.js');
+    const manifest = releaseManifest('a');
+    // A body that errors mid-stream surfaces when the cache reads it, not at fetch.
+    class BrokenBodyResponse extends SwResponse {
+      override clone(): SwResponse {
+        throw new TypeError('network error');
+      }
+    }
+    let failure: 'fetch' | 'write' | null = 'fetch';
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      if (path === '/assets/app-a.js' && failure === 'fetch')
+        throw new TypeError('Failed to fetch');
+      if (path === '/assets/app-a.js' && failure === 'write') return new BrokenBodyResponse('');
+      return releaseResponse(`release-a:${path}`, path);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const install = () =>
+      evaluateServiceWorker(
+        template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+        caches,
+        fetcher,
+      ).install();
+
+    await expect(install()).rejects.toThrow('/assets/app-a.js: Failed to fetch');
+    expect(await caches.keys()).toEqual([]);
+    failure = 'write';
+    await expect(install()).rejects.toThrow('/assets/app-a.js: network error');
+    expect(await caches.keys()).toEqual([]);
+    failure = null;
+    await install();
+    expect(await caches.keys()).toEqual([manifest.cacheVersion]);
   });
 
   it('answers a stale asset with 404 rather than caching the app shell under its URL', async () => {

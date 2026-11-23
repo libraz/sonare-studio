@@ -147,15 +147,15 @@ const migrateLegacyShellCaches = async () => {
 const precacheAsset = async (cache, asset) => {
   const request = new Request(asset, { cache: 'reload' });
   const response = await fetch(request);
-  if (!response.ok) throw new Error(`Precache fetch failed: ${asset} (${response.status})`);
+  if (!response.ok) throw new Error(`answered with status ${response.status}`);
   if (isShellFallback(new URL(asset, self.location.origin), response)) {
-    throw new Error(`Precache fetch answered with the app shell: ${asset}`);
+    throw new Error('answered with the app shell');
   }
   if (
     (asset === SHELL_CACHE_KEY || asset === LEGACY_SHELL_CACHE_KEY) &&
     !isHtmlResponse(response)
   ) {
-    throw new Error(`Precache fetch answered without an HTML shell: ${asset}`);
+    throw new Error('answered without an HTML shell');
   }
   const normalized = isDocumentPath(new URL(asset, self.location.origin).pathname)
     ? await normalizeShellResponse(response)
@@ -170,7 +170,17 @@ const precacheAppShell = async () => {
     const cache = await caches.open(CACHE_VERSION);
     // Settle every entry before reporting a failure: a write still in flight
     // would otherwise land after the cleanup below had already run.
-    const results = await Promise.allSettled(assets.map((asset) => precacheAsset(cache, asset)));
+    const results = await Promise.allSettled(
+      assets.map((asset) =>
+        // A rejected fetch or cache write carries no URL of its own, so every
+        // failure is reported against the asset that caused it.
+        precacheAsset(cache, asset).catch((error) => {
+          throw new Error(`Precache failed: ${asset}: ${error?.message ?? error}`, {
+            cause: error,
+          });
+        }),
+      ),
+    );
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
   } catch (error) {
