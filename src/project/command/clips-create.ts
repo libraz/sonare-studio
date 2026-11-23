@@ -2,18 +2,12 @@ import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import { validateClipFadePair } from '../clip-fades';
 import { assertCanAddTracks } from '../mixer';
 import { StaleProjectOperationError } from '../operation';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '../tempo-map';
 import { type ClipCompSegment, type ClipTake, type ClipWarp, TRACK_COLOR_PALETTE } from '../types';
 import { installProjectClipWarp, sanitizeClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
-import { requireEditableTrack, validatePpq } from './utils';
+import { requireEditableTrack, reusableAudioSourceId, validatePpq } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip creation commands
@@ -202,9 +196,7 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
       throw new RangeError('Clip assetId must reference the active take asset');
     }
   }
-  const known = getAudioSourceId(input.assetId);
-  const sourceId =
-    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
+  const sourceId = reusableAudioSourceId(input.assetId, project.sources().length);
   const fadeIn = input.fadeInPpq ?? 0;
   const fadeOut = input.fadeOutPpq ?? 0;
   validateClipFadePair(fadeIn, fadeOut, finalLengthPpq);
@@ -327,9 +319,7 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
   }
   assertCanAddTracks(store.tracks.length);
   const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
-  const known = getAudioSourceId(input.assetId);
-  const sourceId =
-    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
+  const sourceId = reusableAudioSourceId(input.assetId, project.sources().length);
   return executeAtomic((edit) => {
     const trackId = edit(1, () => project.addTrack({ kind: 'audio', name: input.name }));
     const newClipId = edit(1, () =>

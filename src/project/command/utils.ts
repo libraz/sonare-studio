@@ -4,7 +4,7 @@ import {
   assignMidiLaneFields,
   transformMidiLaneFields,
 } from '../midi-lane-kinds';
-import type { useProjectStore } from '../store';
+import { getAudioSourceId, type useProjectStore } from '../store';
 import type {
   ClipCompSegment,
   ClipWarp,
@@ -14,6 +14,15 @@ import type {
   SmfSysExPacket,
 } from '../types';
 import { sanitizeWarpAnchors, warpSourceSecondsAt } from '../warp';
+
+/**
+ * The Project source already registered for an asset, or undefined when there is none or undo
+ * has rolled the registration back (the id then points past the source list).
+ */
+export function reusableAudioSourceId(assetId: string, sourceCount: number): number | undefined {
+  const known = getAudioSourceId(assetId);
+  return known !== undefined && known >= 1 && known <= sourceCount ? known : undefined;
+}
 
 /** Throws RangeError when a PPQ value is not finite or negative. */
 export function validatePpq(value: number, label: string): void {

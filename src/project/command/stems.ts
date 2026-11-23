@@ -10,17 +10,11 @@ import {
 } from '../audio-stems';
 import { decomposeStemsInWorker } from '../decompose-stems-client';
 import { assertCanAddTracks } from '../mixer';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { executeAtomic } from './history';
-import { requireClip } from './utils';
+import { requireClip, reusableAudioSourceId } from './utils';
 
 function stemSourceToken(
   store: ReturnType<typeof useProjectStore>,
@@ -119,9 +113,7 @@ async function placeSeparatedStems(
     const gain = clip.gain;
     const sourceCount = project.sources().length;
     const plans = saved.map(({ stem, meta }) => {
-      const known = getAudioSourceId(meta.id);
-      const sourceId =
-        known !== undefined && known >= 1 && known <= sourceCount ? known : undefined;
+      const sourceId = reusableAudioSourceId(meta.id, sourceCount);
       return { stem, meta, sourceId };
     });
 

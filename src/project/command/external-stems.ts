@@ -3,17 +3,11 @@ import { type AudioAssetMeta, audioAssetUri } from '@/persistence/assets';
 import { createAssetReferenceGuard } from '../asset-references';
 import { type ExternalStemRole, externalStemTrackName } from '../external-stems';
 import { assertCanAddTracks } from '../mixer';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '../tempo-map';
 import { TRACK_COLOR_PALETTE } from '../types';
 import { executeAtomic } from './history';
-import { validatePpq } from './utils';
+import { reusableAudioSourceId, validatePpq } from './utils';
 
 /** One already-decoded stem produced by an external separation tool. */
 export interface ExternalStemImport {
@@ -87,9 +81,7 @@ export async function importExternalStems(
 
     const sourceCount = project.sources().length;
     const plans = saved.map(({ stem, meta }) => {
-      const known = getAudioSourceId(meta.id);
-      const sourceId =
-        known !== undefined && known >= 1 && known <= sourceCount ? known : undefined;
+      const sourceId = reusableAudioSourceId(meta.id, sourceCount);
       const durationSeconds = meta.numFrames / meta.sampleRate;
       const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
       return { stem, meta, sourceId, lengthPpq };

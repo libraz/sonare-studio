@@ -1,15 +1,9 @@
 import { audioAssetUri } from '@/persistence/assets';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import type { ClipTake } from '../types';
 import { makeRoomForRecordingWithin } from './clip-lane';
 import { executeAtomic } from './history';
-import { requireEditableTrack, validatePpq } from './utils';
+import { requireEditableTrack, reusableAudioSourceId, validatePpq } from './utils';
 
 /** One destination prepared by the recording workflow for atomic placement. */
 export interface AddRecordedAudioClipInput {
@@ -76,9 +70,7 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
       );
     }
     for (const input of prepared) {
-      const known = getAudioSourceId(input.assetId);
-      const sourceId =
-        known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
+      const sourceId = reusableAudioSourceId(input.assetId, project.sources().length);
       const clipId = edit(1, () =>
         project.addClip({
           trackId: input.trackId,

@@ -1,16 +1,10 @@
 import { audioAssetUri } from '@/persistence/assets';
 import { sanitizeCompSegments } from '../comping';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
 import { clearProjectClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
-import { parkClipForReplacement, requireEditableClip } from './utils';
+import { parkClipForReplacement, requireEditableClip, reusableAudioSourceId } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip comp / take commands
@@ -187,9 +181,7 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       if (bakedAssetId === undefined) continue;
       const clip = store.clips.find((entry) => entry.id === input.clipId);
       if (!clip) continue;
-      const known = getAudioSourceId(bakedAssetId);
-      const sourceId =
-        known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
+      const sourceId = reusableAudioSourceId(bakedAssetId, project.sources().length);
       // The rebased clip occupies the original's range, and a track holds no
       // two overlapping clips, so the original steps aside until it is dropped.
       parkClipForReplacement(store, clip, (startPpq) =>

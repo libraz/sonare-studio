@@ -1,16 +1,10 @@
 import { audioAssetUri } from '@/persistence/assets';
-import {
-  getAudioSourceId,
-  getProject,
-  placeholderSourceAudio,
-  setAudioSourceId,
-  useProjectStore,
-} from '../store';
+import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { isAudioClip } from '../types';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
 import { executeAtomic } from './history';
-import { parkClipForReplacement, requireEditableClip } from './utils';
+import { parkClipForReplacement, requireEditableClip, reusableAudioSourceId } from './utils';
 
 /**
  * Replaces one audio clip's asset as a single failure-atomic command. The new
@@ -27,9 +21,7 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
   }
   if (clip.assetId === assetId) return clipId;
 
-  const known = getAudioSourceId(assetId);
-  const sourceId =
-    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
+  const sourceId = reusableAudioSourceId(assetId, project.sources().length);
   const activeTakeIndex = clip.compSegments?.[0]?.takeIndex ?? 0;
   const takes = clip.takes?.map((take, index) => ({
     ...take,
