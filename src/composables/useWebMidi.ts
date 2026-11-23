@@ -175,6 +175,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   // synchronously so the watcher below cannot restart a connect that is already
   // being made for the very same set.
   let boundExclusionKey = '';
+  // Selection the in-flight or current binding was built for, recorded the same way.
+  let boundSelectionId: string | null = null;
   let detachListeners: Array<() => void> = [];
   let generation = 0;
   let disposed = false;
@@ -299,6 +301,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     error.value = null;
     lastEngine = engine;
     boundExclusionKey = exclusionKey();
+    boundSelectionId = selectedInputId.value;
     release();
     const connectGeneration = generation;
     const selectedId = selectedInputId.value;
@@ -354,12 +357,12 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     }
   }
 
-  // Changing the input selection while connected rebinds so the engine route
-  // and the note listeners both follow the new restriction.
-  watch(selectedInputId, () => {
-    if (connected.value && boundEngine) {
-      void connect(boundEngine);
-    }
+  // Changing the input selection rebinds so the engine route and the note
+  // listeners follow the new restriction. Like the exclusion watcher, this
+  // survives an internal release and a connect the change superseded.
+  watch(selectedInputId, (id) => {
+    if (id === boundSelectionId) return;
+    if (lastEngine) void connect(lastEngine);
   });
 
   // Assigning or releasing a control surface changes which ports are musical;
