@@ -25,6 +25,17 @@ export interface ScoreClipWindow {
 }
 
 /**
+ * The opening pickup a score window starting at `startPpq` carries, before any
+ * rounding onto the display grid: only a window opening at PPQ 0 has one. The
+ * window, the click resolver and the quantizer all read it from here.
+ */
+export function openingPickupPpq(startPpq: number, pickupLengthPpq: number | undefined): number {
+  return startPpq === 0 && Number.isFinite(pickupLengthPpq) && (pickupLengthPpq ?? 0) > 0
+    ? (pickupLengthPpq ?? 0)
+    : 0;
+}
+
+/**
  * Resolves the clip-start meter and extends a score window to the next
  * barline at or after the clip end, so the last engraved measure is complete.
  *
@@ -36,10 +47,7 @@ export function scoreClipWindow(input: ScoreClipWindowInput): ScoreClipWindow {
   const meter = timeSignatureAt(input.timeSignatures, input.clipStartPpq);
   const timeSig = { beats: meter.numerator, beatUnit: meter.denominator };
   const measureLenPpq = timeSigLengthPpq(timeSig);
-  const pickupLengthPpq =
-    input.clipStartPpq === 0 && input.pickupLengthPpq < input.clipLengthPpq
-      ? input.pickupLengthPpq
-      : 0;
+  const pickupLengthPpq = openingPickupPpq(input.clipStartPpq, input.pickupLengthPpq);
   const clipEndPpq = input.clipStartPpq + input.clipLengthPpq;
   // The bar holding the clip end is no longer than a bar of the meter there.
   const searchEndPpq =
@@ -71,10 +79,7 @@ export function scoreOnsetResolver(
 ): (note: { startPpq: number; durationPpq: number }) => number | null {
   const startPpq = input.clipStartPpq;
   const windowLengthPpq = scoreClipWindow(input).clipLengthPpq;
-  const requestedPickup =
-    startPpq === 0 && input.pickupLengthPpq > 0 && input.pickupLengthPpq < windowLengthPpq
-      ? input.pickupLengthPpq
-      : 0;
+  const requestedPickup = openingPickupPpq(startPpq, input.pickupLengthPpq);
   const pickupSteps = Math.round(requestedPickup / gridPpq);
   const pickupLengthPpq = pickupSteps * gridPpq;
   // Moving the pickup barline onto the grid moves every later barline with it.

@@ -48,6 +48,7 @@ import {
   type NoteValue,
   noteValueToPpq,
 } from '@/notation/model';
+import { openingPickupPpq } from '@/notation/score-clip-window';
 import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
 import {
@@ -338,11 +339,7 @@ function resolveScoreWindow(options: QuantizeOptions, grid: number): ScoreWindow
     { startPpq: 0, numerator: options.timeSig.beats, denominator: options.timeSig.beatUnit },
     ...(options.timeSignatures ?? []),
   ];
-  // Only a window opening at PPQ 0 has a pickup, as in the measure grid.
-  const requestedPickup =
-    startPpq === 0 && Number.isFinite(options.pickupLengthPpq) && (options.pickupLengthPpq ?? 0) > 0
-      ? (options.pickupLengthPpq ?? 0)
-      : 0;
+  const requestedPickup = openingPickupPpq(startPpq, options.pickupLengthPpq);
   // A pickup off the display grid would leave a tail no note value covers.
   const pickupLengthPpq = roundToLattice(requestedPickup, grid);
   // Moving the pickup barline moves every later barline, the window end included.
