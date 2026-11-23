@@ -911,6 +911,8 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   function onDoubleClick(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (options.isReadOnly?.() === true) return;
+    // The other tools act on the press alone; a dblclick after an erase or split must not create.
+    if (currentTool() !== 'select') return;
     if (hitAt(point)) return;
     const step = options.getGridPpq();
     // Snap to the grid cell containing the click (floor), so the note starts

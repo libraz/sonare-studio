@@ -885,6 +885,8 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   }
 
   function onDoubleClick(point: ClipPoint, _modifiers: ClipModifiers = {}): void {
+    // The other tools act on the press alone; a dblclick after an erase or split must not create.
+    if (currentTool() !== 'select') return;
     if (hitTestClip(toRects(), point, view, hitOptions())) return;
     const lane = view.laneIndexAtY(point.y);
     const trackIds = options.getTrackIds();
