@@ -79,7 +79,8 @@ export function useCommonTakeSilence(options: UseCommonTakeSilenceOptions): Comm
       byClip.value = new Map();
       return;
     }
-    const deps = await options.deps();
+    // A failed dependency load reads as "unavailable", like a null result.
+    const deps = await options.deps().catch(() => null);
     if (!deps || current !== generation) return;
     const tempo = options.tempo();
     const keyed = clips.map((clip) => ({ clip, key: scanKey(clip, tempo) }));
@@ -89,7 +90,12 @@ export function useCommonTakeSilence(options: UseCommonTakeSilenceOptions): Comm
       keyed.map(async ({ clip, key }): Promise<[number, PpqSpan[]]> => {
         let scan = cache.get(key);
         if (!scan) {
-          scan = commonTakeSilence(clip, tempo, deps).catch(() => []);
+          // A failed scan draws nothing now and is not cached, so the next refresh retries it.
+          const pending: Promise<PpqSpan[]> = commonTakeSilence(clip, tempo, deps).catch(() => {
+            if (cache.get(key) === pending) cache.delete(key);
+            return [];
+          });
+          scan = pending;
           cache.set(key, scan);
         }
         return [clip.id, await scan];
