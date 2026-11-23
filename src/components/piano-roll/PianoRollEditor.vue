@@ -33,7 +33,7 @@ import {
 } from '@/project/midi-cc';
 import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
-import type { MeasureRange } from '@/project/time-signature';
+import { adjacentBarDelta, type MeasureRange } from '@/project/time-signature';
 import type { NewEditorNote } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
@@ -536,7 +536,7 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   }
   const delta =
     store.snapEnabled && store.snapBar
-      ? barKeyboardDelta(note.startPpq, direction, coarse)
+      ? adjacentBarDelta(pianoRollMeasureAt, note.startPpq, direction, coarse)
       : direction === 'left'
         ? -step
         : step;
@@ -607,24 +607,6 @@ const floorPianoRollPpq = (ppq: number): number =>
 /** Bar containing a piano-roll position, resolved on the timeline meter. */
 function pianoRollMeasureAt(ppq: number): MeasureRange {
   return localMeasureRange(store.timeSignatures, timeSignatureOriginPpq.value, ppq);
-}
-
-/** Moves a piano-roll position to the adjacent real bar boundary in Bar mode. */
-function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: boolean): number {
-  let cursor = Math.max(0, ppq);
-  const steps = coarse ? 4 : 1;
-  for (let index = 0; index < steps; index += 1) {
-    const current = pianoRollMeasureAt(cursor);
-    if (direction === 'right') {
-      cursor = current.startPpq + current.lengthPpq;
-      continue;
-    }
-    cursor =
-      cursor > current.startPpq + 1e-9
-        ? current.startPpq
-        : pianoRollMeasureAt(Math.max(0, cursor - 1e-6)).startPpq;
-  }
-  return cursor - ppq;
 }
 
 function resolveScalePitch(pitch: number): number {
@@ -730,7 +712,7 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
     const minStart = minOf(selected.map((note) => note.startPpq));
     const requestedDelta =
       store.snapEnabled && store.snapBar
-        ? barKeyboardDelta(minStart, direction, event.shiftKey)
+        ? adjacentBarDelta(pianoRollMeasureAt, minStart, direction, event.shiftKey)
         : direction === 'left'
           ? -step
           : step;

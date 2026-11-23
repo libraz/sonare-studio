@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adjacentBarDelta,
   advanceBarsPpq,
   barNumberAt,
   barStartPpq,
@@ -301,5 +302,20 @@ describe('clipMeasureGrid', () => {
       [6, 3],
       [9, 3],
     ]);
+  });
+});
+
+describe('adjacentBarDelta', () => {
+  const fourFour = (ppq: number) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 });
+
+  it('steps right to the next bar start, four bars when coarse', () => {
+    expect(adjacentBarDelta(fourFour, 5, 'right', false)).toBe(3);
+    expect(adjacentBarDelta(fourFour, 5, 'right', true)).toBe(15);
+  });
+
+  it('steps left to the current bar start first, then to the previous bar', () => {
+    expect(adjacentBarDelta(fourFour, 5, 'left', false)).toBe(-1);
+    expect(adjacentBarDelta(fourFour, 4, 'left', false)).toBe(-4);
+    expect(adjacentBarDelta(fourFour, 0, 'left', false)).toBe(0);
   });
 });

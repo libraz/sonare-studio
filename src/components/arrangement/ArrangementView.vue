@@ -30,7 +30,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
-import { snapPpqToMeterGrid } from '@/project/time-signature';
+import { adjacentBarDelta, snapPpqToMeterGrid } from '@/project/time-signature';
 import { canTrackContainClip, clipKind, isAudioClip } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
@@ -59,6 +59,7 @@ import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { snapChoices } from '@/ui/shell/app-shell-options';
+import { useSnapChoice } from '@/ui/shell/use-snap-choice';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import ChordLane from './ChordLane.vue';
@@ -128,13 +129,7 @@ const emit = defineEmits<{
 const appSettings = useAppSettings();
 const store = useProjectStore();
 const { t } = useI18n();
-const snapChoice = computed<number | 'bar'>({
-  get: () => (store.snapBar ? 'bar' : store.snapDivision),
-  set: (value) => {
-    store.snapBar = value === 'bar';
-    if (value !== 'bar') store.snapDivision = value;
-  },
-});
+const snapChoice = useSnapChoice();
 /** The project's key timeline, read by the chord lane's harmonic analysis. */
 const arrangementKeyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 
@@ -316,23 +311,6 @@ const snapArrangementPpq = (ppq: number): number =>
   snapPpqToMeterGrid(store.timeSignatures, ppq, store.snapBar ? 'bar' : gridPpq.value);
 
 /** Moves an arrangement position to the adjacent meter-defined bar boundary. */
-function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: boolean): number {
-  let cursor = Math.max(0, ppq);
-  const steps = coarse ? 4 : 1;
-  for (let index = 0; index < steps; index += 1) {
-    const current = barRangeAt(store.timeSignatures, cursor);
-    if (direction === 'right') {
-      cursor = current.startPpq + current.lengthPpq;
-      continue;
-    }
-    cursor =
-      cursor > current.startPpq + 1e-9
-        ? current.startPpq
-        : barRangeAt(store.timeSignatures, Math.max(0, cursor - 1e-6)).startPpq;
-  }
-  return cursor - ppq;
-}
-
 // Lane view contract for the clip gestures: horizontal mapping from the
 // shared range, vertical mapping from the row layout and scroll offset.
 // Clips occupy a row's track zone, so laneHeight stays the plain lane height
@@ -608,7 +586,12 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
     if (direction === 'left' || direction === 'right') {
       const delta =
         store.snapEnabled && store.snapBar
-          ? barKeyboardDelta(clip.startPpq, direction, coarse)
+          ? adjacentBarDelta(
+              (ppq) => barRangeAt(store.timeSignatures, ppq),
+              clip.startPpq,
+              direction,
+              coarse,
+            )
           : direction === 'left'
             ? -step
             : step;

@@ -109,6 +109,7 @@ import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import { COUNT_IN_CHOICES, snapChoices, TOUR_STEPS } from '@/ui/shell/app-shell-options';
 import { installSonareDevDebug } from '@/ui/shell/dev-debug';
+import { useSnapChoice } from '@/ui/shell/use-snap-choice';
 
 /**
  * Single-window app shell: a transport bar with the project menu on top, the
@@ -173,13 +174,7 @@ function setLoopRange(startPpq: number, endPpq: number): void {
 
 /** Genuine audio-engine status once running: sample rate and transport mode. */
 const store = useProjectStore();
-const snapChoice = computed<number | 'bar'>({
-  get: () => (store.snapBar ? 'bar' : store.snapDivision),
-  set: (value) => {
-    store.snapBar = value === 'bar';
-    if (value !== 'bar') store.snapDivision = value;
-  },
-});
+const snapChoice = useSnapChoice();
 const stepInput = useStepInput();
 const historyCanUndo = computed(() => canUndo());
 const historyCanRedo = computed(() => canRedo());

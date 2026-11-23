@@ -495,3 +495,32 @@ export function isFourFourBarRange(
     (measure) => measure.numerator === 4 && measure.denominator === 4,
   );
 }
+
+/** Bars a keyboard bar-step moves by: one, or four with the coarse modifier. */
+const COARSE_BAR_STEPS = 4;
+
+/**
+ * Distance from `ppq` to the bar boundary one bar (four when `coarse`) away.
+ * Stepping left from inside a bar lands on that bar's own start first.
+ */
+export function adjacentBarDelta(
+  measureAt: (ppq: number) => { startPpq: number; lengthPpq: number },
+  ppq: number,
+  direction: 'left' | 'right',
+  coarse: boolean,
+): number {
+  let cursor = Math.max(0, ppq);
+  const steps = coarse ? COARSE_BAR_STEPS : 1;
+  for (let index = 0; index < steps; index += 1) {
+    const current = measureAt(cursor);
+    if (direction === 'right') {
+      cursor = current.startPpq + current.lengthPpq;
+      continue;
+    }
+    cursor =
+      cursor > current.startPpq + 1e-9
+        ? current.startPpq
+        : measureAt(Math.max(0, cursor - 1e-6)).startPpq;
+  }
+  return cursor - ppq;
+}
