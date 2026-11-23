@@ -9,7 +9,7 @@ import { clampSectionEdge, newSectionSpan, sectionIndexAt } from '@/ui/arrangeme
 import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { isImeComposing } from '@/ui/keyboard/ime';
 import { openContextMenu } from '@/ui/menu/context-menu';
 import { colorWithAlpha } from './theme';
@@ -257,7 +257,9 @@ function onLaneDoubleClick(event: MouseEvent): void {
   setSections([
     ...sections.map((s) => ({ ...s })),
     {
-      name: `Section ${sections.length + 1}`,
+      name: formatMessage(t.value.shell.arrangement.sectionDefaultName, {
+        number: sections.length + 1,
+      }),
       color,
       startPpq: span.startPpq,
       endPpq: span.endPpq,

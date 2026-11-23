@@ -572,6 +572,7 @@ export const shellArrangement = {
       invalidTimeLength: 'Enter a finite time length greater than zero.',
     },
     sectionName: 'Section name',
+    sectionDefaultName: 'Section {number}',
     chords: 'CHORDS',
     chordLane: 'Chord lane',
     chordSeek: 'Jump to chord {name}',

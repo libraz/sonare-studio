@@ -571,6 +571,7 @@ export const shellArrangement = {
       invalidTimeLength: '0 より大きい有限の長さを入力してください。',
     },
     sectionName: 'セクション名',
+    sectionDefaultName: 'セクション {number}',
     chords: 'コード',
     chordLane: 'コードレーン',
     chordSeek: 'コード {name} へ移動',
