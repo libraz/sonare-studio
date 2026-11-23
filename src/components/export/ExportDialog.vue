@@ -626,6 +626,7 @@ function onKeydown(event: KeyboardEvent): void {
             type="text"
             class="filename-input"
             :disabled="!!busyReason"
+            v-tooltip="{ reason: busyReason }"
             spellcheck="false"
           />
           <span class="filename-preview">{{ filenamePreview }}</span>
