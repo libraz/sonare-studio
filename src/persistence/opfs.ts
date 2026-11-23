@@ -85,16 +85,21 @@ export interface ProjectRenameHooks {
   rollback?: () => Promise<void>;
 }
 
+// The second lane is an independent FNV-style pass (golden-ratio seed, Murmur3 mixing
+// multiplier) so the revision carries 64 bits; changing either value changes every revision.
+const REVISION_SECOND_SEED = 0x9e3779b9;
+const REVISION_SECOND_MULTIPLIER = 0x85ebca6b;
+
 /** Content revision used for compare-and-swap named saves. */
 export function projectBytesRevision(bytes: Uint8Array): string {
   let first = FNV1A_OFFSET_BASIS;
-  let second = 0x9e3779b9;
+  let second = REVISION_SECOND_SEED;
   // Indexed typed-array access stays on the fast path for multi-megabyte
   // archives; `for…of` creates an iterator step for every byte.
   for (let index = 0; index < bytes.length; index += 1) {
     const byte = bytes[index];
     first = Math.imul(first ^ byte, FNV1A_PRIME) >>> 0;
-    second = Math.imul(second ^ byte, 0x85ebca6b) >>> 0;
+    second = Math.imul(second ^ byte, REVISION_SECOND_MULTIPLIER) >>> 0;
   }
   return `${bytes.byteLength.toString(36)}-${first.toString(16).padStart(8, '0')}${second
     .toString(16)
