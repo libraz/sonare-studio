@@ -28,6 +28,7 @@ import {
   insertMarkers,
   insertSections,
   insertTimelineSegments,
+  isRedundantBreakpoint,
   validateTimelineRange,
 } from '../timeline-edit';
 import {
@@ -193,13 +194,21 @@ function duplicateTimelineMapWindow<T extends TempoSegment | TimeSignatureSegmen
 ): T[] {
   const lengthPpq = endPpq - startPpq;
   const active = [...sourceSegments].reverse().find((segment) => segment.startPpq <= startPpq);
-  const copied = [
-    ...(active ? [{ ...active, startPpq: endPpq }] : []),
-    ...sourceSegments
-      .filter((segment) => segment.startPpq > startPpq && segment.startPpq < endPpq)
-      .map((segment) => ({ ...segment, startPpq: segment.startPpq + lengthPpq })),
-  ] as T[];
+  const copied = sourceSegments
+    .filter((segment) => segment.startPpq > startPpq && segment.startPpq < endPpq)
+    .map((segment) => ({ ...segment, startPpq: segment.startPpq + lengthPpq })) as T[];
   const byPosition = new Map(segments.map((segment) => [segment.startPpq, { ...segment }]));
+  if (active !== undefined) {
+    const boundary = { ...active, startPpq: endPpq };
+    const previous = [...byPosition.values()]
+      .filter((segment) => segment.startPpq < endPpq)
+      .sort((left, right) => left.startPpq - right.startPpq)
+      .at(-1);
+    // A boundary equal to what is already in effect would only be noise in the document.
+    if (previous === undefined || !isRedundantBreakpoint(previous, boundary)) {
+      byPosition.set(endPpq, boundary);
+    }
+  }
   for (const segment of copied) byPosition.set(segment.startPpq, segment);
   return [...byPosition.values()].sort((left, right) => left.startPpq - right.startPpq);
 }

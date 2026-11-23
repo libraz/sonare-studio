@@ -8,6 +8,7 @@
 
 import type { AutomationLaneState, AutomationPoint } from './automation';
 import type { EditorChordSymbol } from './chords';
+import { meterBarLengthPpq } from './time-signature';
 import type { EditorMarker, EditorSection, TempoSegment, TimeSignatureSegment } from './types';
 
 /** Rejects an invalid non-negative timeline span. */
@@ -296,6 +297,23 @@ function sameSegmentValue<T extends TimelineSegment>(left: T, right: T): boolean
   return false;
 }
 
+function isTempoRamp(segment: TempoSegment): boolean {
+  return segment.endBpm !== undefined && segment.endBpm !== 0 && segment.endBpm !== segment.bpm;
+}
+
+/**
+ * True when a breakpoint changes nothing after the one before it: the same
+ * constant tempo, or the same meter landing on that meter's bar grid. A ramp
+ * is never continued by an equal breakpoint, since that would restart it.
+ */
+export function isRedundantBreakpoint<T extends TimelineSegment>(previous: T, segment: T): boolean {
+  if (!sameSegmentValue(previous, segment)) return false;
+  if ('bpm' in previous) return !isTempoRamp(previous);
+  const barPpq = meterBarLengthPpq(previous as TimeSignatureSegment);
+  const offsetBars = (segment.startPpq - previous.startPpq) / barPpq;
+  return Math.abs(offsetBars - Math.round(offsetBars)) < 1e-9;
+}
+
 /** Moves tempo/meter changes at and after an inserted boundary, except the origin entry. */
 export function insertTimelineSegments<T extends TimelineSegment>(
   segments: ReadonlyArray<T>,
@@ -328,10 +346,9 @@ export function deleteTimelineSegments<T extends TimelineSegment>(
       startPpq: segment.startPpq >= endPpq ? segment.startPpq - lengthPpq : segment.startPpq,
     }));
   if (active !== undefined && !result.some((segment) => segment.startPpq === startPpq)) {
-    result.push({ ...active, startPpq });
+    const boundary = { ...active, startPpq };
+    const previous = result.filter((segment) => segment.startPpq < startPpq).at(-1);
+    if (previous === undefined || !isRedundantBreakpoint(previous, boundary)) result.push(boundary);
   }
-  result.sort((a, b) => a.startPpq - b.startPpq);
-  return result.filter(
-    (segment, index) => index === 0 || !sameSegmentValue(result[index - 1], segment),
-  );
+  return result.sort((a, b) => a.startPpq - b.startPpq);
 }

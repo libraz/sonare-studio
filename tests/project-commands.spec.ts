@@ -2667,7 +2667,6 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.tempoSegments).toEqual([
         { startPpq: 0, bpm: 120 },
         { startPpq: 4, bpm: 130 },
-        { startPpq: 8, bpm: 130 },
         { startPpq: 12, bpm: 140 },
       ]);
       expect(store.timeSignatures).toEqual([
