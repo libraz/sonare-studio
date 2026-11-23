@@ -85,11 +85,6 @@ function chordWindows(options: ChordEstimateOptions): ChordWindow[] {
   });
 }
 
-/** Spells a pitch class as a chord-symbol token, e.g. 'C#', 'Bb', 'F'. */
-function pitchClassName(pc: number, keyFifths: number): string {
-  return chordPitchClassName(pc, keyFifths);
-}
-
 /**
  * Groups the chord windows into runs of equal, contiguous length, one analysis
  * range each. Detection slices a range from its own origin, so a measure-length
@@ -188,7 +183,7 @@ export function estimateChordSymbols(
     const symbol: EstimatedChordSymbol = {
       ppq: region.startPpq,
       endPpq: region.endPpq,
-      text: `${pitchClassName(rootPc, keyFifths)}${chordSuffix(mapped.quality, mapped.extensions, mapped.omissions)}`,
+      text: `${chordPitchClassName(rootPc, keyFifths)}${chordSuffix(mapped.quality, mapped.extensions, mapped.omissions)}`,
       rootPc,
       quality: mapped.quality,
     };
@@ -200,7 +195,7 @@ export function estimateChordSymbols(
     }
     const bassPc = regionBassPc(notes, region.startPpq, region.endPpq);
     if (bassPc !== null && bassPc !== rootPc) {
-      symbol.text = `${symbol.text}/${pitchClassName(bassPc, keyFifths)}`;
+      symbol.text = `${symbol.text}/${chordPitchClassName(bassPc, keyFifths)}`;
       symbol.bassPc = bassPc;
     }
     out.push(symbol);
