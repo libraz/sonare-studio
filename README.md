@@ -7,25 +7,40 @@
 [![Platform](https://img.shields.io/badge/platform-browser%20%7C%20WebAssembly-lightgrey)](https://github.com/libraz/sonare-studio)
 [![Demo](https://img.shields.io/badge/demo-sonare--studio.libraz.net-2563eb)](https://sonare-studio.libraz.net)
 
-**sonare studio is a DAW that runs entirely in the browser, with nothing uploaded.** Arrangement, piano roll, mixer, mastering, an engraved score and theory-driven composition all run inside the tab on a WebAssembly audio engine, and projects stay in the browser's own storage until you export them as ordinary files.
+**sonare studio is a browser sample app that drives [libsonare](https://github.com/libraz/libsonare)'s WebAssembly build end to end, and serves as its integration test bed.** Arrangement, piano roll, mixer, mastering, an engraved score and composition through [libcantus](https://github.com/libraz/libcantus) run inside the tab on that build. Nothing is uploaded: projects stay in the browser's own storage until you export them as ordinary files.
 
 🎧 **[Open the app](https://sonare-studio.libraz.net)** &nbsp;·&nbsp; 📖 **[Documentation](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md)** &nbsp;·&nbsp; **[Getting started](https://github.com/libraz/sonare-studio/blob/main/docs/en/getting-started.md)** &nbsp;·&nbsp; **[Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md)**
 
-> Pre-1.0 and experimental, with no warranty: the `.szd` project format can still change between releases, and the code has not been independently audited.
+> A sample application, not a supported production DAW. It is pre-1.0 and comes with no warranty, and the code has not been independently audited. A project file from an earlier schema version is upgraded on open; one from a newer version is refused. There is no compatibility promise across libsonare major versions.
 
 ![Schematic of the shell: menu bar, arrangement over a tabbed editor dock, device rack alongside, transport bar at the bottom](docs/images/shell-layout.svg)
 
-## What it does
+## What it exercises
 
-- **Arrange** — multi-track MIDI and audio timeline with sections, markers, a chord lane, a tempo/meter map, warp and freeze. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Edit notes** — piano roll with controller lanes, ornaments, MIDI FX, expression maps, groove, step input and a step sequencer. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Play sound** — built-in synths, GM/GS programs and drum kits, SoundFont (SF2) playback and multi-timbral setups. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Mix and master** — channel, bus and VCA strips with inserts, sends, automation and metering, and a mastering chain with loudness targets. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Read the score** — the active clip engraved with Verovio, with chord symbols, print and PDF; the app's own notation layer reads and writes MusicXML and `.mxl`. [Architecture](https://github.com/libraz/sonare-studio/blob/main/docs/en/architecture.md#notation-is-derived-never-authored)
-- **Compose** — chord progressions and generated parts from one reproducible seed, reharmonization, and note-by-note theory guidance. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Record and analyse audio** — takes and comping, tempo/chord/section analysis, audio-to-MIDI transcription and stem separation. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Move files in and out** — `.szd`, DAWproject, Standard MIDI File, MIDI 2.0 clips, MusicXML, stems, and WAV / FLAC / MP3 mixdown. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Works offline** — installable PWA, English and Japanese UI, remappable shortcuts, autosave and named revisions. [Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md)
+Each line below is driven through the UI by an end-to-end scenario.
+
+- **Arrange** — tracks, MIDI and audio clips, sections, markers, a chord track estimated from the notes, tempo and meter maps, warp, freeze and bounce. [Arranging](https://github.com/libraz/sonare-studio/blob/main/docs/en/arranging.md)
+- **Edit notes** — piano roll, playing-technique marks and expression maps, groove, controller lanes, MIDI FX, music typing with step input, and a step sequencer. [Editing notes](https://github.com/libraz/sonare-studio/blob/main/docs/en/editing-notes.md)
+- **Play sound** — built-in synth presets, GM programs and drum kits, SoundFont (SF2) with GS insertion effects, and a multi-timbral channel map. [Instruments](https://github.com/libraz/sonare-studio/blob/main/docs/en/instruments.md)
+- **Mix and master** — gain, mute, snapshots, VCA groups, inserts, fader automation, a suggested starting mix, and a mastering chain with presets and A/B preview. [Mixing and mastering](https://github.com/libraz/sonare-studio/blob/main/docs/en/mixing-and-mastering.md)
+- **Read the score** — the active clip engraved with Verovio, annotations, print, PDF, and MusicXML / `.mxl` export and import. [Score](https://github.com/libraz/sonare-studio/blob/main/docs/en/score.md)
+- **Compose** — chord progressions and generated parts from libcantus, reroll, the theory card, the placement guide and secondary-dominant reharmonization. [Composing](https://github.com/libraz/sonare-studio/blob/main/docs/en/composing.md)
+- **Record and analyse audio** — import, microphone recording, take alignment, audio-to-MIDI transcription, stem separation and the sample editor. [Recording and analysing audio](https://github.com/libraz/sonare-studio/blob/main/docs/en/audio-recording-and-analysis.md)
+- **Move files in and out** — `.szd`, Standard MIDI File and MIDI 2.0 clip export, DAWproject, MusicXML, and WAV mixdown and stems. [Files and formats](https://github.com/libraz/sonare-studio/blob/main/docs/en/files-and-formats.md)
+- **Work offline** — installable PWA, English and Japanese UI, remappable shortcuts, save and continue, and named revisions. [Offline use and settings](https://github.com/libraz/sonare-studio/blob/main/docs/en/offline-and-settings.md)
+
+## What it verifies
+
+The scenarios in [`scripts/e2e/scenarios/`](https://github.com/libraz/sonare-studio/tree/main/scripts/e2e/scenarios) drive a production build through menus, panels, dock tabs and keys, then check the project document and the rendered audio. Through them the suite reaches these parts of libsonare:
+
+- the project model
+- realtime playback in the AudioWorklet and the offline renderer
+- synth, GM and SoundFont synthesis
+- mixer strips, insert effects and the mastering chain
+- warp time-stretching
+- audio analysis: take alignment, transcription and stem separation
+
+A wrong result in analysis, mastering or synthesis output is a libsonare bug. Report it in the [libsonare tracker](https://github.com/libraz/libsonare/issues), with the scenario that shows it if there is one.
 
 ## Getting started
 
@@ -44,12 +59,12 @@ The start screen offers a new project or the bundled demo. Press **Play** and th
 The documentation is plain Markdown under [`docs/`](https://github.com/libraz/sonare-studio/tree/main/docs), in English and Japanese.
 
 - **Learn** — [Introduction](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md) · [Getting started](https://github.com/libraz/sonare-studio/blob/main/docs/en/getting-started.md)
-- **Guides** — [Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md) · [Deployment](https://github.com/libraz/sonare-studio/blob/main/docs/en/deployment.md)
+- **Guides** — [Arranging](https://github.com/libraz/sonare-studio/blob/main/docs/en/arranging.md) · [Editing notes](https://github.com/libraz/sonare-studio/blob/main/docs/en/editing-notes.md) · [Instruments](https://github.com/libraz/sonare-studio/blob/main/docs/en/instruments.md) · [Mixing and mastering](https://github.com/libraz/sonare-studio/blob/main/docs/en/mixing-and-mastering.md) · [Score](https://github.com/libraz/sonare-studio/blob/main/docs/en/score.md) · [Composing](https://github.com/libraz/sonare-studio/blob/main/docs/en/composing.md) · [Recording and analysing audio](https://github.com/libraz/sonare-studio/blob/main/docs/en/audio-recording-and-analysis.md) · [Files and formats](https://github.com/libraz/sonare-studio/blob/main/docs/en/files-and-formats.md) · [Offline use and settings](https://github.com/libraz/sonare-studio/blob/main/docs/en/offline-and-settings.md) · [Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md) · [Deployment](https://github.com/libraz/sonare-studio/blob/main/docs/en/deployment.md)
 - **Reference** — [Architecture](https://github.com/libraz/sonare-studio/blob/main/docs/en/architecture.md) · [Contributing](https://github.com/libraz/sonare-studio/blob/main/CONTRIBUTING.md)
 
 ## Non-goals
 
-No MPE, no plugin hosting (VST/AU/CLAP), no notation editor beyond a few note gestures on the score, and no accounts, sync or collaboration. DAWproject and MusicXML round-trips are lossy by the nature of those formats, and the app lists what an export will drop before you confirm. [What it does not do](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does-not-do)
+Not a supported production DAW, and no compatibility promise for project files across libsonare major versions. No MPE, no plugin hosting (VST/AU/CLAP), no notation editor beyond a few note gestures on the score, and no accounts, sync or collaboration. DAWproject and MusicXML round-trips are lossy by the nature of those formats, and the app lists what an export will drop before you confirm. [What it does not do](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does-not-do)
 
 ## License
 

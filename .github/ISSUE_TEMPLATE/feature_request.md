@@ -6,6 +6,11 @@ labels: enhancement
 
 <!-- Fill in what you know; any section can stay empty. -->
 
+<!--
+sonare studio is a sample app that exercises libsonare, not a production DAW.
+A request that needs a new engine capability belongs in https://github.com/libraz/libsonare/issues.
+-->
+
 ## What you want to do
 
 <!-- The task you are trying to get done, and where the current behaviour gets in the way. -->

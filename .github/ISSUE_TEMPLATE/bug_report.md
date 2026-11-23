@@ -27,5 +27,5 @@ labels: bug
 The maintainer can test on macOS in every shipped language and on Windows in Japanese only.
 For Windows in another language, a screenshot helps most.
 For a problem with a project or an imported file, attach the file if you can share it.
-Sound, analysis or rendering that is wrong inside the engine belongs in https://github.com/libraz/libsonare/issues.
+sonare studio is a sample app for libsonare. A wrong result in analysis, mastering or synthesis output belongs in https://github.com/libraz/libsonare/issues.
 -->

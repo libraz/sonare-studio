@@ -19,14 +19,14 @@ The maintainer tests on macOS in every shipped language and on Windows in Japane
 
 ## What you are contributing to
 
-A browser DAW written in TypeScript and Vue 3:
+A browser sample app for libsonare's WebAssembly build, written in TypeScript and Vue 3. Its end-to-end scenarios drive that build through the UI and serve as its integration test bed. The main directories:
 
 - `src/project/` is the project model's TypeScript side: the command layer every edit goes through, undo, and the document format.
 - `src/engine/` drives the realtime engine in the AudioWorklet; `src/export/` renders and writes files offline.
 - `src/compose/` adapts the theory library to the project; `src/notation/` builds the engraved score.
 - `src/components/` and `src/ui/` are the Vue components and the framework-free UI helpers, including the locale tables under `src/ui/i18n/`.
 
-The audio engine itself is [libsonare](https://github.com/libraz/libsonare), installed from npm as `@libraz/libsonare`. DSP that sounds wrong, an analysis result that is off, or an engine call that fails belongs in the [libsonare repository](https://github.com/libraz/libsonare/issues). Chord, key and counterpoint results come from [libcantus](https://github.com/libraz/libcantus), and wrong theory goes there.
+The audio engine itself is [libsonare](https://github.com/libraz/libsonare), installed from npm as `@libraz/libsonare`. A behaviour bug in analysis, mastering or synthesis output, DSP that sounds wrong, or an engine call that fails belongs in the [libsonare repository](https://github.com/libraz/libsonare/issues); a scenario under `scripts/e2e/scenarios/` that shows it is the best reproduction. Chord, key and counterpoint results come from [libcantus](https://github.com/libraz/libcantus), and wrong theory goes there.
 
 The rest of this document has two parts. [Checklist](#checklist) describes what a finished change looks like. [Reference](#reference) explains how the checks behave.
 

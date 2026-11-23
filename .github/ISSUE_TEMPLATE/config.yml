@@ -5,7 +5,7 @@ contact_links:
     about: What the app does, how to run it, and its keyboard shortcuts
   - name: Audio engine issues
     url: https://github.com/libraz/libsonare/issues
-    about: DSP, analysis and rendering belong to the libsonare engine
+    about: Wrong analysis, mastering or synthesis output belongs to the libsonare engine
   - name: Security vulnerabilities
     url: https://github.com/libraz/sonare-studio/blob/main/SECURITY.md
     about: Report privately as described in the security policy

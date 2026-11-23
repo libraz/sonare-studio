@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { en } from '@/ui/i18n/en';
 import { normalizeComboString } from '@/ui/settings/key-combo';
 import { LAYOUT_PRESETS } from '@/ui/settings/layouts';
 import { SHORTCUT_ACTIONS, type ShortcutScope } from '@/ui/settings/shortcuts';
@@ -8,7 +9,8 @@ const shortcutsDocs = ['en', 'ja'].map((locale) => ({
   locale,
   text: readSource(`docs/${locale}/shortcuts.md`),
 }));
-const introduction = readSource('docs/en/introduction.md');
+const settingsGuide = readSource('docs/en/offline-and-settings.md');
+const filesGuide = readSource('docs/en/files-and-formats.md');
 const appMenu = readSource('src/composables/useAppShortcutsMenu.ts');
 
 function documentedShortcutActionIds(markdown: string): string[] {
@@ -84,21 +86,22 @@ describe('documentation parity', () => {
     },
   );
 
-  it('keeps the documented layouts and named file capabilities current', () => {
-    const layoutLine = introduction.split('\n').find((line) => line.includes('workspace layouts'));
-    expect(layoutLine).toBeDefined();
-    for (const preset of LAYOUT_PRESETS) {
-      expect(layoutLine).toContain(preset.name);
-    }
+  it('names only real layout presets and file commands in the guides', () => {
+    const layoutSection = settingsGuide.split('## Workspace layouts')[1]?.split('\n## ')[0] ?? '';
+    const layoutNames = [...layoutSection.matchAll(/^- \*\*([^*]+)\*\*/gm)].map(
+      (match) => match[1],
+    );
+    expect(layoutNames.length).toBeGreaterThan(0);
+    const presetNames = LAYOUT_PRESETS.map((preset) => preset.name);
+    for (const name of layoutNames) expect(presetNames).toContain(name);
 
-    const namedCapabilities = [
-      { commandId: 'file.importBackup', docText: 'browser backup import/export' },
-      { commandId: 'file.exportBackup', docText: 'browser backup import/export' },
-      { commandId: 'file.exportMidi2', docText: 'MIDI 2.0 clip files' },
+    const fileCommands = [
+      { commandId: 'file.exportSmf', label: en.shell.project.exportSmf },
+      { commandId: 'file.exportMidi2', label: en.shell.project.exportMidi2 },
     ];
-    for (const capability of namedCapabilities) {
-      expect(appMenu).toContain(`commandItem('${capability.commandId}'`);
-      expect(introduction.toLowerCase()).toContain(capability.docText.toLowerCase());
+    for (const { commandId, label } of fileCommands) {
+      expect(appMenu).toContain(`commandItem('${commandId}'`);
+      expect(filesGuide).toContain(`**File** > **${label}**`);
     }
   });
 });
