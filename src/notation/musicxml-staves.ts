@@ -10,6 +10,14 @@ import type { StaffNumber } from './musicxml-shared';
 /** MIDI split point between the staves of a grand staff (middle C / C4). */
 const GRAND_STAFF_SPLIT_MIDI = 60;
 
+/** The staff an override or the event itself names, if any. */
+function assignedStaff(
+  event: NotatedEvent,
+  overrides: ReadonlyMap<NotatedEvent, StaffNumber>,
+): StaffNumber | undefined {
+  return overrides.get(event) ?? (event.staff === 1 || event.staff === 2 ? event.staff : undefined);
+}
+
 /**
  * Returns the staff a note event belongs to in a grand staff: treble when the
  * chord's mean pitch reaches middle C, bass otherwise.
@@ -23,9 +31,8 @@ function noteStaff(
   event: NotatedEvent,
   overrides: ReadonlyMap<NotatedEvent, StaffNumber>,
 ): StaffNumber {
-  const override = overrides.get(event);
-  if (override !== undefined) return override;
-  if (event.staff === 1 || event.staff === 2) return event.staff;
+  const assigned = assignedStaff(event, overrides);
+  if (assigned !== undefined) return assigned;
   if (event.pitches.length === 0) return 1;
   const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
   return staffForMeanPitch(mean, GRAND_STAFF_SPLIT_MIDI);
@@ -33,8 +40,8 @@ function noteStaff(
 
 /**
  * Assigns a staff to every event of a grand-staff part. Notes split at
- * middle C by their mean pitch; rests inherit the staff of the preceding
- * note in the same voice (chained across measures), leading rests adopt the
+ * middle C by their mean pitch; a rest with an assigned staff keeps it, other
+ * rests inherit the staff of the preceding note in the same voice (chained across measures), leading rests adopt the
  * first note's staff, and all-rest voices default to staff 1.
  */
 export function buildStaffMap(
@@ -65,10 +72,11 @@ export function buildStaffMap(
         leadingRests.length = 0;
         staffMap.set(event, staff);
         current = staff;
-      } else if (current === undefined) {
-        leadingRests.push(event);
       } else {
-        staffMap.set(event, current);
+        const assigned = assignedStaff(event, overrides);
+        if (assigned !== undefined) staffMap.set(event, assigned);
+        else if (current === undefined) leadingRests.push(event);
+        else staffMap.set(event, current);
       }
     }
     for (const rest of leadingRests) {
