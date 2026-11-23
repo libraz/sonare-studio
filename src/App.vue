@@ -157,7 +157,6 @@ function setLoopRange(startPpq: number, endPpq: number): void {
   if (endPpq > startPpq) transport.setLoop(startPpq, endPpq, true);
 }
 
-/** Genuine audio-engine status once running: sample rate and transport mode. */
 const store = useProjectStore();
 const stepInput = useStepInput();
 const historyCanUndo = computed(() => canUndo());

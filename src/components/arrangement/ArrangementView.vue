@@ -201,7 +201,6 @@ const gridPpq = computed(() => (store.snapEnabled ? 4 / store.snapDivision : 0))
 const snapArrangementPpq = (ppq: number): number =>
   snapPpqToMeterGrid(store.timeSignatures, ppq, store.snapBar ? 'bar' : gridPpq.value);
 
-/** Moves an arrangement position to the adjacent meter-defined bar boundary. */
 // Lane view contract for the clip gestures: horizontal mapping from the
 // shared range, vertical mapping from the row layout and scroll offset.
 // Clips occupy a row's track zone, so laneHeight stays the plain lane height
