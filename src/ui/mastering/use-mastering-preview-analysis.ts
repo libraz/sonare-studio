@@ -326,14 +326,21 @@ export function useMasteringPreviewAnalysis(
     ),
   );
 
+  /** Bumped per picked file so only the latest pick's decode lands. */
+  let referencePick = 0;
+
   async function onReferenceFile(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    const pick = ++referencePick;
     try {
-      referenceAudio.value = await (props.decodeReference ?? decodeMasteringReference)(file);
+      const decoded = await (props.decodeReference ?? decodeMasteringReference)(file);
+      if (pick !== referencePick) return;
+      referenceAudio.value = decoded;
       referenceAnalysis.value = null;
       error.value = '';
     } catch (err) {
+      if (pick !== referencePick) return;
       error.value = describeError(err, t.value.notices.errors);
     }
   }
@@ -351,6 +358,8 @@ export function useMasteringPreviewAnalysis(
         return;
       }
       const wasm = await ensureWasm();
+      // A reference picked while the preview rendered makes this comparison obsolete.
+      if (referenceAudio.value !== reference) return;
       referenceAnalysis.value = analyzeMatchEqToReference(
         wasm,
         source.channels,
