@@ -2,9 +2,9 @@
  * External separated-stem provenance: the studio's role vocabulary for stems
  * produced by an outside source-separation tool and imported as tracks.
  *
- * libsonare stores the role as a free-form string on the audio source
- * (`Project.setAudioSourceMetadata`), so the accepted values are defined here
- * and nowhere else. This is deliberately separate from the HPSS band vocabulary
+ * The role is stored on the clip that places the stem (`externalStemRole`),
+ * not on its audio source, which identical stems share; the accepted values
+ * are defined here and nowhere else. This is deliberately separate from the HPSS band vocabulary
  * in src/project/audio-stems.ts, which describes bands the studio separates
  * itself.
  */

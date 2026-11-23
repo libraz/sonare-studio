@@ -136,18 +136,15 @@ describe('importExternalStems', () => {
     );
   });
 
-  it('records the asset id and role as the audio source metadata', async () => {
+  it('records the asset id as the audio source content hash and the role on the clip', async () => {
     const stems = [stem('Song bass', 'bass', 0), stem('Song other', 'other', 20)];
     const clipIds = await importExternalStems(stems, { startPpq: 0 });
 
-    expect(sourceMetadata(clipIds[0])).toEqual({
-      contentHash: expectedAssetId(stems[0]),
-      externalStemRole: 'bass',
-    });
-    expect(sourceMetadata(clipIds[1])).toEqual({
-      contentHash: expectedAssetId(stems[1]),
-      externalStemRole: 'other',
-    });
+    expect(sourceMetadata(clipIds[0])).toEqual({ contentHash: expectedAssetId(stems[0]) });
+    expect(sourceMetadata(clipIds[1])).toEqual({ contentHash: expectedAssetId(stems[1]) });
+    expect(
+      clipIds.map((id) => store.clips.find((clip) => clip.id === id)?.externalStemRole),
+    ).toEqual(['bass', 'other']);
   });
 
   it('undoes the whole import in one step, native project included', async () => {
@@ -180,9 +177,9 @@ describe('importExternalStems', () => {
     expect(readDoc().tracks).toHaveLength(baselineTracks + 2);
     expect(readDoc().clips).toHaveLength(baselineClips + 2);
     expect(store.clips.filter((clip) => clip.externalStemRole !== undefined)).toHaveLength(2);
-    expect(sourceMetadata(store.clips.filter((clip) => clip.kind === 'audio')[0].id)).toMatchObject(
-      { externalStemRole: 'vocals' },
-    );
+    expect(sourceMetadata(store.clips.filter((clip) => clip.kind === 'audio')[0].id)).toEqual({
+      contentHash: expectedAssetId(stem('Song vocals', 'vocals', 0)),
+    });
   });
 
   it('rejects a stem without audio and stores nothing', async () => {
@@ -234,15 +231,9 @@ describe('external stem provenance persistence', () => {
     const reloaded = store.clips.filter((clip) => clip.kind === 'audio');
     expect(reloaded.map((clip) => clip.externalStemRole)).toEqual(['vocals', 'bass']);
     expect(reloaded.map((clip) => clip.contentHash)).toEqual(stems.map(expectedAssetId));
-    // The provenance is replayed onto the rebuilt Project's audio sources.
-    expect(sourceMetadata(reloaded[0].id)).toEqual({
-      contentHash: expectedAssetId(stems[0]),
-      externalStemRole: 'vocals',
-    });
-    expect(sourceMetadata(reloaded[1].id)).toEqual({
-      contentHash: expectedAssetId(stems[1]),
-      externalStemRole: 'bass',
-    });
+    // The content hash is replayed onto the rebuilt Project's audio sources.
+    expect(sourceMetadata(reloaded[0].id)).toEqual({ contentHash: expectedAssetId(stems[0]) });
+    expect(sourceMetadata(reloaded[1].id)).toEqual({ contentHash: expectedAssetId(stems[1]) });
   });
 
   it('loads documents written before the provenance fields existed', async () => {

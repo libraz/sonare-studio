@@ -519,13 +519,12 @@ export function hydrateProjectFromDocument(
             sourceUri: audioAssetUri(assetId),
           });
           loadedSourceIds.set(assetId, created.sources().length);
-          // External-stem provenance rides the source, so replay it once
-          // per asset, on the clip that registered the source.
-          if (isExternalStemRole(clip.externalStemRole)) {
+          // The content hash rides the source, so replay it once per asset, on
+          // the clip that registered the source. The stem role stays on the clip.
+          if (typeof clip.contentHash === 'string' && clip.contentHash.length > 0) {
             created.setAudioSourceMetadata({
               sourceId: created.sources().length,
-              ...(typeof clip.contentHash === 'string' ? { contentHash: clip.contentHash } : {}),
-              externalStemRole: clip.externalStemRole,
+              contentHash: clip.contentHash,
             });
           }
         } else {

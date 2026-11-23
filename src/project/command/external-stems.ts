@@ -34,9 +34,9 @@ export interface ImportExternalStemsOptions {
  * Every stem starts at the same timeline position, so a separator's output
  * stays sample-aligned with itself. The asset stores run first under one
  * lease-backed transaction; the tracks, sources and clips are then created
- * inside a single `executeAtomic`, and each stem's asset id and role are
- * written onto its audio source as the source's content hash / stem role so
- * the provenance survives in the native project.
+ * inside a single `executeAtomic`. Each stem's asset id is written onto its
+ * audio source as the content hash; the role is stored on the clip, because
+ * identical stems share one source under different roles.
  *
  * @param stems Decoded stems in the order they should be laid down.
  * @param options Timeline placement shared by every stem.
@@ -79,17 +79,13 @@ export async function importExternalStems(
       saved.push({ stem, meta });
     }
 
-    const sourceCount = project.sources().length;
-    const plans = saved.map(({ stem, meta }) => {
-      const sourceId = reusableAudioSourceId(meta.id, sourceCount);
-      const durationSeconds = meta.numFrames / meta.sampleRate;
-      const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
-      return { stem, meta, sourceId, lengthPpq };
-    });
-
     const result = executeAtomic((edit) => {
       const newClipIds: number[] = [];
-      for (const { stem, meta, sourceId, lengthPpq } of plans) {
+      for (const { stem, meta } of saved) {
+        // Resolved per stem: identical stems share one content-hash asset and so one source.
+        const sourceId = reusableAudioSourceId(meta.id, project.sources().length);
+        const durationSeconds = meta.numFrames / meta.sampleRate;
+        const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
         const trackName = externalStemTrackName(stem.role);
         const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
         const trackId = edit(1, () => project.addTrack({ kind: 'audio', name: trackName }));
@@ -122,13 +118,10 @@ export async function importExternalStems(
         if (sourceId === undefined) setAudioSourceId(meta.id, clipSourceId);
         else edit(1, () => project.setClipSource(newClipId, sourceId));
         // The asset id is the audio's deterministic content hash, so it is what
-        // the source's owning content hash records.
+        // the source's owning content hash records. The stem role belongs to
+        // the clip: identical stems share this source under different roles.
         edit(1, () =>
-          project.setAudioSourceMetadata({
-            sourceId: clipSourceId,
-            contentHash: meta.id,
-            externalStemRole: stem.role,
-          }),
+          project.setAudioSourceMetadata({ sourceId: clipSourceId, contentHash: meta.id }),
         );
         store.clips = [
           ...store.clips,
