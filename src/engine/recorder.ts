@@ -935,9 +935,9 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const ppqToCaptureSeconds = (ppq: number): number =>
       (startOptions.tempoMap ? ppqToSeconds(startOptions.tempoMap, ppq) : (ppq * 60) / tempoBpm) -
       startSeconds;
-    const punchDurationSeconds = hasEndPpq
-      ? ppqToCaptureSeconds(endPpq)
-      : DEFAULT_MAX_DURATION_SECONDS;
+    const boundPpq = hasEndPpq ? endPpq : startOptions.punchOutPpq;
+    const punchDurationSeconds =
+      boundPpq !== undefined ? ppqToCaptureSeconds(boundPpq) : DEFAULT_MAX_DURATION_SECONDS;
     const maxDurationSeconds = startOptions.maxDurationSeconds ?? punchDurationSeconds;
     if (!Number.isFinite(maxDurationSeconds) || maxDurationSeconds <= 0) {
       throw new RangeError(
