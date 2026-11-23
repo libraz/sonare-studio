@@ -15,9 +15,11 @@ import {
   STREAMING_RETUNE_MAX_SEMITONES,
   STREAMING_RETUNE_MIN_SEMITONES,
 } from '@/engine/streaming-retune';
+import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import {
   CUSTOM_VOICE_PRESET_TEMPLATE,
   parseCustomVoicePreset,
@@ -176,6 +178,12 @@ const midiCycleRecordModeOptions = computed(() => [
 
 const midiCycleRecordMode = computed(() => props.midiRecording.cycleRecordMode?.value ?? 'takes');
 
+/** Enter commits the position by blurring, unless it confirms an IME conversion. */
+function onBbtEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  (event.target as HTMLInputElement).blur();
+}
+
 function setMidiCycleRecordMode(value: string | number): void {
   if (props.midiRecording.cycleRecordMode !== undefined) {
     props.midiRecording.cycleRecordMode.value = String(
@@ -210,12 +218,16 @@ function onVoiceChangerChange(value: string | number): void {
 
 async function onApplyCustomVoicePreset(): Promise<void> {
   customVoiceError.value = '';
-  const preset = parseCustomVoicePreset(await ensureWasm(), customVoiceJson.value);
-  if (preset === null) {
-    customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
-    return;
+  try {
+    const preset = parseCustomVoicePreset(await ensureWasm(), customVoiceJson.value);
+    if (preset === null) {
+      customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
+      return;
+    }
+    props.recording.setVoiceChangerPreset(preset);
+  } catch (err) {
+    customVoiceError.value = describeError(err, t.value.notices.errors);
   }
-  props.recording.setVoiceChangerPreset(preset);
 }
 
 function onRetuneInput(event: Event): void {
@@ -603,7 +615,7 @@ function onRetuneInput(event: Event): void {
           v-tooltip="t.shell.transport.playheadPositionTitle"
           @focus="emit('bbtFocus')"
           @input="emit('updateBbtDraft', ($event.target as HTMLInputElement).value)"
-          @keydown.enter="($event.target as HTMLInputElement).blur()"
+          @keydown.enter="onBbtEnter"
           @blur="emit('bbtBlur')"
         />
       </div>

@@ -275,7 +275,9 @@ async function togglePreview(asset: AudioAssetMeta): Promise<void> {
     if (disposed || generation !== previewGeneration) return;
     previewError.value = errorMessage(error);
   } finally {
-    if (previewLoadingId.value === asset.id) previewLoadingId.value = null;
+    if (generation === previewGeneration && previewLoadingId.value === asset.id) {
+      previewLoadingId.value = null;
+    }
   }
 }
 

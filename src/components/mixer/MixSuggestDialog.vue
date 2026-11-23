@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MixAssistantResult } from '@libraz/libsonare';
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
@@ -129,6 +129,12 @@ watch(
   },
   { immediate: true },
 );
+
+onBeforeUnmount(() => {
+  generation++;
+  handle?.cancel();
+  handle = null;
+});
 
 /** Library explanation lines with strip ids read back as track names. */
 const reasons = computed(() =>

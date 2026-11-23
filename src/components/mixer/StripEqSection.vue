@@ -293,7 +293,9 @@ function onMatchFlat(): void {
 }
 
 async function applyMatchFlat(): Promise<void> {
-  if (!canMatchFlat.value || !scopeFrame.value || !props.scope) return;
+  const frame = scopeFrame.value;
+  const scope = props.scope;
+  if (!canMatchFlat.value || !frame || !scope) return;
   if (
     (eq.value?.bands.length ?? 0) > 0 &&
     !(await confirmDialog({
@@ -304,8 +306,8 @@ async function applyMatchFlat(): Promise<void> {
     }))
   )
     return;
-  const bands = matchFlatEqBands(scopeFrame.value.bands, {
-    sampleRate: props.scope.sampleRate,
+  const bands = matchFlatEqBands(frame.bands, {
+    sampleRate: scope.sampleRate,
     maxBands: MAX_BANDS,
     existingBands: eq.value?.bands,
   });

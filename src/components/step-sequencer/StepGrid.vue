@@ -77,6 +77,7 @@ function paintCell(row: number, step: number): void {
 }
 
 function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0 && event.button !== 2) return;
   const cell = cellFromElement(event.target as Element | null);
   if (!cell) return;
   const erase = event.button === 2;

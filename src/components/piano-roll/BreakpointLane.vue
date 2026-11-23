@@ -285,7 +285,7 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  if (!drag) return;
+  if (!drag || props.readOnly) return;
   const point = localPoint(event);
   if (drag.mode === 'move' && !gesture.move(point.x, point.y)) return;
   const value = valueFromY(point.y);
@@ -315,6 +315,10 @@ function pointsEqual(a: ReadonlyArray<ClipCcPoint>, b: ReadonlyArray<ClipCcPoint
 
 function onPointerUp(): void {
   if (!drag) return;
+  if (props.readOnly) {
+    onPointerCancel();
+    return;
+  }
   gesture.end();
   drag = null;
   dragValue = null;
@@ -329,6 +333,13 @@ function onPointerCancel(): void {
   preview.value = null;
   schedule();
 }
+
+watch(
+  () => props.readOnly,
+  (readOnly) => {
+    if (readOnly) onPointerCancel();
+  },
+);
 
 /** Deletes a hit breakpoint, matching the arrangement automation gesture. */
 function onDoubleClick(event: MouseEvent): void {
