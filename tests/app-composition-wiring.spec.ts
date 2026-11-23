@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readSource } from './helpers/source-text';
 
 const app = readSource('src/App.vue');
+const editorToolbar = readSource('src/components/shell/EditorToolbar.vue');
 const main = readSource('src/main.ts');
 
 describe('application composition wiring', () => {
@@ -73,6 +74,7 @@ describe('application composition wiring', () => {
     expect(app).toContain('isRecording,');
     expect(app).toContain('isLooping: loopEnabled,');
     expect(app).toContain('armedTrackIds,');
-    expect(app).toContain(':surface="controlSurface"');
+    expect(app).toContain(':control-surface="controlSurface"');
+    expect(editorToolbar).toContain(':surface="controlSurface"');
   });
 });

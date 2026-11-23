@@ -1,4 +1,5 @@
 import type { TourStep } from '@/components/onboarding/tour-steps';
+import type { DockTab } from '@/composables/useAppShellLayout';
 import { COUNT_IN_BARS_MAX, COUNT_IN_BARS_MIN } from '@/ui/settings/app-settings';
 
 /** Count-in bar choices (Off through the maximum); the transport bar localizes the labels. */
@@ -35,3 +36,17 @@ export const TOUR_STEPS: Omit<TourStep, 'title' | 'body'>[] = [
   { id: 'score', target: '.dock-tab-score', placement: 'top' },
   { id: 'menu', target: '.app-menubar:not(.app-menubar--end)' },
 ];
+
+/** Editor dock tabs in strip order; `labelKey` indexes the localized `tabs` / `tabTitles` trees. */
+export const DOCK_TABS = [
+  { id: 'roll', labelKey: 'pianoRoll' },
+  { id: 'mixer', labelKey: 'mixer' },
+  { id: 'mastering', labelKey: 'mastering' },
+  { id: 'steps', labelKey: 'steps' },
+  { id: 'lists', labelKey: 'lists' },
+  { id: 'media', labelKey: 'media' },
+  { id: 'sample', labelKey: 'sample' },
+] as const satisfies readonly {
+  id: DockTab;
+  labelKey: 'pianoRoll' | 'mixer' | 'mastering' | 'steps' | 'lists' | 'media' | 'sample';
+}[];

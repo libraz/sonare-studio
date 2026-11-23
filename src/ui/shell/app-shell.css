@@ -7,20 +7,6 @@
   color: var(--text-2);
 }
 
-.bar-field {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-}
-
-.midi-learn-anchor {
-  position: relative;
-  display: inline-flex;
-}
-
 /* The error banner's own styles live in ErrorBanner.vue. */
 
 .main-row {
@@ -205,56 +191,6 @@
   }
 }
 
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-height: 34px;
-  padding: var(--sp-2) var(--sp-5);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border-strong);
-  /* Never wrap to a second row (which would steal piano-roll height). The left
-   * controls scroll sideways instead; the bar stays overflow-visible so the
-   * MIDI Learn popover is not clipped. */
-  flex-wrap: nowrap;
-  font-size: var(--fs-sm);
-}
-
-/* Scrollable region holding the left-hand controls; grows to fill the bar and
- * scrolls horizontally when the controls do not fit. */
-.editor-toolbar-scroll {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
-
-.editor-toolbar > .midi-learn-anchor,
-.editor-toolbar > .engine-status,
-.editor-toolbar > .tb-sep,
-.editor-toolbar > button {
-  flex: none;
-}
-
-/* Controls of one purpose sit tight; purposes are split by a hairline. */
-.tb-group {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.tb-sep {
-  flex: none;
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-}
-
 /* One-shot actions carry a hairline face; borderless pills are on/off settings. */
 .tb-action {
   flex: none;
@@ -273,88 +209,6 @@
 
 .tb-action:disabled {
   background: transparent;
-}
-
-/* Popover trigger: label plus caret, lit while its popover is open. */
-.tb-menu {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  font-size: var(--fs-xs);
-  padding: var(--sp-1) var(--sp-3);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-
-.tb-menu.is-open {
-  background: var(--surface-selection);
-  color: var(--accent);
-}
-
-.tb-caret {
-  flex: none;
-  opacity: 0.6;
-}
-
-.tb-select {
-  flex: 0 0 auto;
-  width: auto;
-}
-
-.tb-range {
-  width: 4.5rem;
-}
-
-.step-cursor {
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Engine health reduced to a single dot — the verbose text ("engine off",
- * clip count) lives in the tooltip / accessible label instead of taking up
- * permanent bar space. */
-.engine-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 0.15rem;
-}
-
-.engine-status-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-full);
-  background: var(--text-4);
-  transition: background var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
-}
-
-/* Settling into "on" (boot, or a finished bounce) seats the dot with one pop. */
-.engine-status-on .engine-status-dot {
-  background: var(--success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 28%, transparent);
-  animation: pop-in var(--dur-3) var(--ease-spring);
-}
-
-.engine-status-pending .engine-status-dot {
-  background: var(--warning);
-  animation: engine-status-pulse 1s var(--ease-out) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .engine-status-pending .engine-status-dot {
-    animation: none;
-  }
-}
-
-@keyframes engine-status-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
 }
 
 .piano-roll-host {

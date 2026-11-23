@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DOCK_TABS } from '@/ui/shell/app-shell-options';
 import { readSource } from './helpers/source-text';
 
 const appVue = readSource('src/App.vue');
@@ -21,9 +22,11 @@ describe('editor dock tab strip', () => {
 
   it('uses a full ARIA tab pattern for editor dock panels', () => {
     const tabs = ['roll', 'mixer', 'mastering', 'steps', 'lists', 'media', 'sample'];
+    expect(DOCK_TABS.map((tab) => tab.id)).toEqual(tabs);
+    expect(appVue).toContain('v-for="tab in DOCK_TABS"');
+    expect(appVue).toContain(':id="dockTabId(tab.id)"');
+    expect(appVue).toContain(':aria-controls="dockPanelId(tab.id)"');
     for (const tab of tabs) {
-      expect(appVue).toContain(`:id="dockTabId('${tab}')"`);
-      expect(appVue).toContain(`:aria-controls="dockPanelId('${tab}')"`);
       expect(appVue).toContain(`:id="dockPanelId('${tab}')"`);
       expect(appVue).toContain('role="tabpanel"');
       expect(appVue).toContain(`:aria-labelledby="dockTabId('${tab}')"`);

@@ -13,12 +13,9 @@ import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
 import KeyChangeDialog from '@/components/compose/KeyChangeDialog.vue';
-import TrackGenerateDialog, {
-  type TrackGenerateOpenWith,
-} from '@/components/compose/TrackGenerateDialog.vue';
+import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
-import { formatBarBeatTick } from '@/components/lists/bar-beat';
 import ProjectListsPanel, { type ListTab } from '@/components/lists/ProjectListsPanel.vue';
 import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
@@ -40,12 +37,10 @@ import CommandPalette from '@/components/shell/CommandPalette.vue';
 import ContextMenu from '@/components/shell/ContextMenu.vue';
 import DiagnosticsPanel from '@/components/shell/DiagnosticsPanel.vue';
 import DialogHost from '@/components/shell/DialogHost.vue';
+import EditorToolbar from '@/components/shell/EditorToolbar.vue';
 import ErrorBanner from '@/components/shell/ErrorBanner.vue';
-import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import PwaUpdateBanner from '@/components/shell/PwaUpdateBanner.vue';
-import SelectMenu from '@/components/shell/SelectMenu.vue';
 import StartScreen from '@/components/shell/StartScreen.vue';
-import ToggleButton from '@/components/shell/ToggleButton.vue';
 import ToolPalette from '@/components/shell/ToolPalette.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
@@ -59,12 +54,14 @@ import { useEditorTool } from '@/composables/useEditorTool';
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
 import { useFileDownloads } from '@/composables/useFileDownloads';
+import { useGenerateDialogs } from '@/composables/useGenerateDialogs';
 import { useInputControls } from '@/composables/useInputControls';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import { useMidiRecording } from '@/composables/useMidiRecording';
 import { useNotePreview } from '@/composables/useNotePreview';
 import { useOutsidePopovers } from '@/composables/useOutsidePopovers';
 import { useProjectAudioAssets } from '@/composables/useProjectAudioAssets';
+import { useProjectCapacityWarning } from '@/composables/useProjectCapacityWarning';
 import { useProjectExport } from '@/composables/useProjectExport';
 import { useProjectPersistence } from '@/composables/useProjectPersistence';
 import { usePwaInstallPrompt } from '@/composables/usePwaInstallPrompt';
@@ -75,7 +72,6 @@ import { useShortcuts } from '@/composables/useShortcuts';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
-import { editableDrumTracks } from '@/compose/tracks';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
@@ -85,31 +81,20 @@ import { describeError, errorMessage as thrownMessage } from '@/lib/errors';
 import { readLocalStorage } from '@/lib/local-storage';
 import { clamp01 } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
-import {
-  canRedo,
-  canUndo,
-  quantizeSelection,
-  redo,
-  setActiveTrack,
-  type TrackPart,
-  undo,
-} from '@/project/commands';
+import { canRedo, canUndo, redo, setActiveTrack, undo } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
 import { persistedProjectStateKey } from '@/project/persisted-state';
-import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { installPwaReloadPreparation } from '@/pwa';
 import { installPwaLaunchQueue, type PwaLaunchQueue } from '@/pwa-launch';
 import { clearAudioClipData } from '@/ui/arrangement/audio-clip-data';
-import { firstBlock } from '@/ui/disabled-reason';
-import { formatMessage, useI18n } from '@/ui/i18n';
+import { useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
-import { COUNT_IN_CHOICES, snapChoices, TOUR_STEPS } from '@/ui/shell/app-shell-options';
+import { COUNT_IN_CHOICES, DOCK_TABS, TOUR_STEPS } from '@/ui/shell/app-shell-options';
 import { installSonareDevDebug } from '@/ui/shell/dev-debug';
-import { useSnapChoice } from '@/ui/shell/use-snap-choice';
 
 /**
  * Single-window app shell: a transport bar with the project menu on top, the
@@ -174,7 +159,6 @@ function setLoopRange(startPpq: number, endPpq: number): void {
 
 /** Genuine audio-engine status once running: sample rate and transport mode. */
 const store = useProjectStore();
-const snapChoice = useSnapChoice();
 const stepInput = useStepInput();
 const historyCanUndo = computed(() => canUndo());
 const historyCanRedo = computed(() => canRedo());
@@ -202,59 +186,12 @@ const appSettings = useAppSettings();
 const { t } = useI18n();
 const mediaWarningIntro = computed(() => t.value.shell.media.missingWarning);
 
-// Project-capacity warnings are derived purely from the project snapshot: the
-// engine addresses mixer strips and internal instruments through fixed-width id
-// spaces, so a project that outgrows them silently loses telemetry or misroutes
-// control. Dismiss hides the current set; a changed set re-surfaces.
-const capacityIssues = computed(() =>
-  evaluateProjectCapacity(store.tracks, store.projectExternalMidi),
-);
-const dismissedCapacityKey = ref('');
-const capacityWarning = computed(() => {
-  const issues = capacityIssues.value;
-  if (issues.length === 0) return '';
-  const key = JSON.stringify(issues);
-  if (key === dismissedCapacityKey.value) return '';
-  const strings = t.value.shell.capacity;
-  const lines = issues.map((issue) => formatProjectCapacityIssue(issue, strings));
-  return [strings.warningIntro, ...lines].join('\n');
-});
-function dismissCapacityWarning(): void {
-  dismissedCapacityKey.value = JSON.stringify(capacityIssues.value);
-}
+const { capacityWarning, dismissCapacityWarning } = useProjectCapacityWarning();
 const shortcuts = useShortcuts();
 const { tool: editorTool, setTool: setEditorTool } = useEditorTool();
 function toggleTheme(): void {
   appSettings.set('theme', appSettings.resolvedTheme.value === 'dark' ? 'light' : 'dark');
 }
-const applyStateText = computed(() => {
-  if (!handle.value) return t.value.shell.editor.engineOff;
-  if (applyPending.value) return t.value.shell.editor.pending;
-  return formatMessage(t.value.shell.editor.clipCount, { count: String(scheduledCount.value) });
-});
-
-/** Quantize edits the selected notes of the active track. */
-const quantizeBlocked = computed(() =>
-  firstBlock(
-    [store.selection.size === 0, t.value.reasons.noNoteSelection],
-    [store.activeTrack?.frozen !== undefined, t.value.reasons.trackFrozen],
-  ),
-);
-
-/** Apply bounces through a live engine into a loaded project. */
-const applyBlocked = computed(() =>
-  firstBlock(
-    [!handle.value, t.value.reasons.engineOff],
-    [!store.initialized, t.value.reasons.projectLoading],
-  ),
-);
-
-/** Engine status dot state: off (no engine), pending (bouncing), or running. */
-const engineStatusState = computed(() => {
-  if (!handle.value) return 'off';
-  if (applyPending.value) return 'pending';
-  return 'on';
-});
 const localizedTourSteps = computed(() =>
   TOUR_STEPS.map((step) => {
     const { title, body } =
@@ -291,60 +228,17 @@ const { downloadBlobFile, lastDownload } = useFileDownloads();
 
 const { confirmAction, confirmLossAction, runAction } = useActionGuards({ busy, errorMessage });
 const commandPaletteOpen = ref(false);
-const chordGenerateDialogOpen = ref(false);
-const trackGenerateDialogOpen = ref(false);
-const trackGenerateOpenWith = ref<TrackGenerateOpenWith | null>(null);
-const keyChangeDialogOpen = ref(false);
-
-/** Opens Flow B (track generation), optionally pre-focused on one part. */
-function openTrackGenerateDialog(openWith: TrackGenerateOpenWith | null = null): void {
-  trackGenerateOpenWith.value = openWith;
-  chordGenerateDialogOpen.value = false;
-  trackGenerateDialogOpen.value = true;
-}
-
-/** Opens Flow A (chord progression). */
-function openChordGenerateDialog(): void {
-  trackGenerateDialogOpen.value = false;
-  chordGenerateDialogOpen.value = true;
-}
-
-/** Opens the key-change detection dialog from the Generate menu. */
-function openKeyChangeDialog(): void {
-  trackGenerateDialogOpen.value = false;
-  chordGenerateDialogOpen.value = false;
-  keyChangeDialogOpen.value = true;
-}
-
-/** Track-header "regenerate": opens Flow B pre-focused on replacing this track. */
-function onRegenerateTrack(trackId: number, part: TrackPart): void {
-  if (store.tracks.find((track) => track.id === trackId)?.frozen !== undefined) {
-    errorMessage.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
-    return;
-  }
-  openTrackGenerateDialog({ part, target: { kind: 'replaceTrack', trackId } });
-}
-
-/** Start a drum variation at exactly the clicked arrangement section. */
-function onRegenerateSectionDrums(sectionId: number): void {
-  const section = store.sections.find((entry) => entry.id === sectionId);
-  if (!section) return;
-  const track = editableDrumTracks(store.tracks, store.clips)[0];
-  if (!track) {
-    errorMessage.value = t.value.shell.arrangement.regenerateSectionDrumsNoTrack;
-    return;
-  }
-  openTrackGenerateDialog({
-    part: 'drums',
-    target: {
-      kind: 'replaceRange',
-      trackId: track.id,
-      startPpq: section.startPpq,
-      endPpq: section.endPpq,
-    },
-  });
-}
-
+const {
+  chordGenerateDialogOpen,
+  trackGenerateDialogOpen,
+  trackGenerateOpenWith,
+  keyChangeDialogOpen,
+  openTrackGenerateDialog,
+  openChordGenerateDialog,
+  openKeyChangeDialog,
+  onRegenerateTrack,
+  onRegenerateSectionDrums,
+} = useGenerateDialogs({ errorMessage });
 /** One-shot deep-link target for the lists dock panel (chord-lane "open list" action). */
 const listsInitialTab = ref<ListTab | undefined>(undefined);
 
@@ -613,28 +507,6 @@ const {
   trackMeterSource,
   runAction,
 });
-/** Web MIDI exists in this browser unless a connect attempt has proven otherwise. */
-const webMidiSupported = computed(
-  () =>
-    typeof navigator !== 'undefined' &&
-    'requestMIDIAccess' in navigator &&
-    webMidi.available.value !== false,
-);
-const connectMidiBlocked = computed(() =>
-  firstBlock(
-    [!webMidiSupported.value, t.value.reasons.noWebMidi],
-    [busy.value, t.value.reasons.busy],
-  ),
-);
-
-function stepInputBack(): void {
-  stepInput.back();
-}
-
-function stepInputCursorToPlayhead(): void {
-  stepInput.setCursor(positionPpq.value);
-}
-
 // Share the single learn handle so insert-knob menus can bind CC too.
 provide(MIDI_LEARN_KEY, midiLearn);
 
@@ -1021,102 +893,20 @@ onMounted(installLaunchQueueConsumer);
         <div class="dock-tabs">
           <div v-tablist class="dock-tab-scroll" role="tablist" :aria-label="t.shell.editor.panels">
             <button
-              :id="dockTabId('roll')"
+              v-for="tab in DOCK_TABS"
+              :key="tab.id"
+              :id="dockTabId(tab.id)"
               type="button"
               class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'roll' }"
+              :class="{ active: dockTab === tab.id }"
               role="tab"
-              :aria-selected="dockTab === 'roll'"
-              :aria-controls="dockPanelId('roll')"
-              :aria-label="t.shell.editor.tabs.pianoRoll"
-              v-tooltip="t.shell.editor.tabTitles.pianoRoll"
-              @click="selectDockTab('roll')"
+              :aria-selected="dockTab === tab.id"
+              :aria-controls="dockPanelId(tab.id)"
+              :aria-label="t.shell.editor.tabs[tab.labelKey]"
+              v-tooltip="t.shell.editor.tabTitles[tab.labelKey]"
+              @click="selectDockTab(tab.id)"
             >
-              {{ t.shell.editor.tabs.pianoRoll }}
-            </button>
-            <button
-              :id="dockTabId('mixer')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'mixer' }"
-              role="tab"
-              :aria-selected="dockTab === 'mixer'"
-              :aria-controls="dockPanelId('mixer')"
-              :aria-label="t.shell.editor.tabs.mixer"
-              v-tooltip="t.shell.editor.tabTitles.mixer"
-              @click="selectDockTab('mixer')"
-            >
-              {{ t.shell.editor.tabs.mixer }}
-            </button>
-            <button
-              :id="dockTabId('mastering')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'mastering' }"
-              role="tab"
-              :aria-selected="dockTab === 'mastering'"
-              :aria-controls="dockPanelId('mastering')"
-              :aria-label="t.shell.editor.tabs.mastering"
-              v-tooltip="t.shell.editor.tabTitles.mastering"
-              @click="selectDockTab('mastering')"
-            >
-              {{ t.shell.editor.tabs.mastering }}
-            </button>
-            <button
-              :id="dockTabId('steps')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'steps' }"
-              role="tab"
-              :aria-selected="dockTab === 'steps'"
-              :aria-controls="dockPanelId('steps')"
-              :aria-label="t.shell.editor.tabs.steps"
-              v-tooltip="t.shell.editor.tabTitles.steps"
-              @click="selectDockTab('steps')"
-            >
-              {{ t.shell.editor.tabs.steps }}
-            </button>
-            <button
-              :id="dockTabId('lists')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'lists' }"
-              role="tab"
-              :aria-selected="dockTab === 'lists'"
-              :aria-controls="dockPanelId('lists')"
-              :aria-label="t.shell.editor.tabs.lists"
-              v-tooltip="t.shell.editor.tabTitles.lists"
-              @click="selectDockTab('lists')"
-            >
-              {{ t.shell.editor.tabs.lists }}
-            </button>
-            <button
-              :id="dockTabId('media')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'media' }"
-              role="tab"
-              :aria-selected="dockTab === 'media'"
-              :aria-controls="dockPanelId('media')"
-              :aria-label="t.shell.editor.tabs.media"
-              v-tooltip="t.shell.editor.tabTitles.media"
-              @click="selectDockTab('media')"
-            >
-              {{ t.shell.editor.tabs.media }}
-            </button>
-            <button
-              :id="dockTabId('sample')"
-              type="button"
-              class="dock-tab dock-tab-toggle"
-              :class="{ active: dockTab === 'sample' }"
-              role="tab"
-              :aria-selected="dockTab === 'sample'"
-              :aria-controls="dockPanelId('sample')"
-              :aria-label="t.shell.editor.tabs.sample"
-              v-tooltip="t.shell.editor.tabTitles.sample"
-              @click="selectDockTab('sample')"
-            >
-              {{ t.shell.editor.tabs.sample }}
+              {{ t.shell.editor.tabs[tab.labelKey] }}
             </button>
           </div>
           <button
@@ -1148,191 +938,25 @@ onMounted(installLaunchQueueConsumer);
           role="tabpanel"
           :aria-labelledby="dockTabId('roll')"
         >
-          <div class="editor-toolbar">
-            <div class="editor-toolbar-scroll">
-              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupGrid">
-                <ToggleButton
-                  v-model="store.snapEnabled"
-                  size="sm"
-                  :label="t.shell.editor.snap"
-                  :title="t.shell.editor.snapToggleTitle"
-                  shortcut="view.toggleSnap"
-                />
-                <SelectMenu
-                  v-model="snapChoice"
-                  class="tb-select"
-                  :options="snapChoices(t.shell.editor.snapBar)"
-                  size="sm"
-                  :aria-label="t.shell.editor.snap"
-                  :title="t.shell.editor.snapGridTitle"
-                />
-                <ToggleButton
-                  v-model="store.scaleHighlight.enabled"
-                  size="sm"
-                  :label="t.shell.editor.scaleHighlight"
-                  :title="t.shell.editor.scaleHighlightTitle"
-                />
-              </div>
-              <span class="tb-sep" aria-hidden="true" />
-              <div class="tb-group">
-                <button
-                  type="button"
-                  class="tb-action"
-                  :disabled="!!quantizeBlocked"
-                  v-tooltip="{
-                    text: t.shell.editor.quantizeTitle,
-                    shortcut: 'edit.quantizeSelection',
-                    reason: quantizeBlocked,
-                  }"
-                  @click="quantizeSelection()"
-                >
-                  {{ t.shell.editor.quantize }}
-                </button>
-                <label class="bar-field" v-tooltip="t.shell.editor.quantizeStrengthTitle">
-                  {{ t.shell.editor.quantizeStrength }}
-                  <input
-                    v-model.number="store.quantizeStrength"
-                    class="tb-range"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    :aria-label="t.shell.editor.quantizeStrength"
-                  />
-                </label>
-                <label class="bar-field" v-tooltip="t.shell.editor.swingTitle">
-                  {{ t.shell.editor.swing }}
-                  <input
-                    v-model.number="store.quantizeSwing"
-                    class="tb-range"
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    :aria-label="t.shell.editor.swing"
-                  />
-                </label>
-              </div>
-              <span class="tb-sep" aria-hidden="true" />
-              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupInput">
-                <ToggleButton
-                  :model-value="musicTyping.enabled.value"
-                  size="sm"
-                  :label="t.shell.editor.musicTyping"
-                  :title="t.shell.editor.musicTypingTitle"
-                  @update:model-value="toggleMusicTyping"
-                />
-                <ToggleButton
-                  :model-value="stepInput.armed.value"
-                  size="sm"
-                  :label="t.shell.editor.stepInput"
-                  :title="t.shell.editor.stepInputTitle"
-                  @update:model-value="toggleStepInput"
-                />
-                <template v-if="stepInput.armed.value">
-                  <span class="step-cursor" v-tooltip="t.shell.editor.stepCursorTitle">
-                    @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
-                  </span>
-                  <button
-                    type="button"
-                    class="tb-action"
-                    v-tooltip="t.shell.editor.stepBackTitle"
-                    @click="stepInputBack"
-                  >
-                    {{ t.shell.editor.stepBack }}
-                  </button>
-                  <button
-                    type="button"
-                    class="tb-action"
-                    v-tooltip="t.shell.editor.stepCursorToPlayheadTitle"
-                    @click="stepInputCursorToPlayhead"
-                  >
-                    {{ t.shell.editor.stepCursorToPlayhead }}
-                  </button>
-                </template>
-              </div>
-              <span class="tb-sep" aria-hidden="true" />
-              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupMidi">
-                <!-- The input list fills only once access is granted, so it shows when connected. -->
-                <span v-if="webMidi.connected.value" class="bar-field">
-                  {{ t.shell.editor.midiIn }}
-                  <SelectMenu
-                    v-model="midiInputSelection"
-                    class="tb-select"
-                    :options="midiInputChoices"
-                    size="sm"
-                    :aria-label="t.shell.editor.midiIn"
-                    :title="t.shell.editor.midiInTitle"
-                  />
-                </span>
-                <button
-                  v-if="!webMidi.connected.value"
-                  type="button"
-                  class="tb-action"
-                  :disabled="!!connectMidiBlocked"
-                  v-tooltip="{ text: t.shell.editor.connectMidiTitle, reason: connectMidiBlocked }"
-                  @click="connectWebMidi"
-                >
-                  {{ t.shell.editor.connectMidi }}
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="tb-action"
-                  v-tooltip="t.shell.editor.disconnectMidiTitle"
-                  @click="webMidi.disconnect()"
-                >
-                  {{ t.shell.editor.disconnectMidi }}
-                </button>
-              </div>
-            </div>
-            <span class="midi-learn-anchor">
-              <button
-                type="button"
-                class="tb-menu"
-                :class="{ 'is-open': midiLearnOpen }"
-                aria-haspopup="dialog"
-                :aria-expanded="midiLearnOpen"
-                v-tooltip="t.shell.editor.midiLearnTitle"
-                @click="midiLearnOpen = !midiLearnOpen"
-              >
-                {{ t.shell.editor.midiLearn }}
-                <svg class="tb-caret" viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
-                  <path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4"
-                    stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <Transition name="pop">
-                <MidiLearnPanel
-                  v-if="midiLearnOpen"
-                  :learn="midiLearn"
-                  :tracks="store.tracks"
-                  :surface="controlSurface"
-                  @close="midiLearnOpen = false"
-                />
-              </Transition>
-            </span>
-            <span class="tb-sep" aria-hidden="true" />
-            <button
-              type="button"
-              class="tb-action"
-              :disabled="!!applyBlocked"
-              v-tooltip="{ text: t.shell.editor.applyTitle, reason: applyBlocked }"
-              @click="applyNow"
-            >
-              {{ t.shell.editor.apply }}
-            </button>
-            <span
-              class="engine-status"
-              :class="`engine-status-${engineStatusState}`"
-              role="status"
-              tabindex="0"
-              v-tooltip="applyStateText"
-              :aria-label="`${t.shell.editor.engineStatus}: ${applyStateText}`"
-            >
-              <span class="engine-status-dot" aria-hidden="true" />
-            </span>
-          </div>
+          <EditorToolbar
+            v-model:midi-input-selection="midiInputSelection"
+            v-model:midi-learn-open="midiLearnOpen"
+            :step-input="stepInput"
+            :music-typing="musicTyping"
+            :web-midi="webMidi"
+            :midi-learn="midiLearn"
+            :control-surface="controlSurface"
+            :midi-input-choices="midiInputChoices"
+            :busy="busy"
+            :engine-running="!!handle"
+            :apply-pending="applyPending"
+            :scheduled-count="scheduledCount"
+            :read-position-ppq="readPositionPpq"
+            @toggle-music-typing="toggleMusicTyping"
+            @toggle-step-input="toggleStepInput"
+            @connect-midi="connectWebMidi"
+            @apply="applyNow"
+          />
           <InfoLine />
           <PianoRollEditor
             ref="pianoRollRef"
