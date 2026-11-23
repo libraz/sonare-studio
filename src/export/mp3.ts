@@ -101,6 +101,11 @@ function id3Tag(metadata: AudioFileMetadata | undefined): Uint8Array {
   return out;
 }
 
+/** lamejs returns Int8Array at runtime despite its Uint8Array typing; view the same bytes unsigned. */
+function unsignedView(chunk: Uint8Array): Uint8Array {
+  return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+}
+
 function mpegFrameSize(bytes: Uint8Array, offset: number): number {
   if (offset + 4 > bytes.length || bytes[offset] !== 0xff || (bytes[offset + 1] & 0xe0) !== 0xe0) {
     throw new RangeError('MP3 encoder did not produce an MPEG frame header');
@@ -225,17 +230,17 @@ export async function encodeMp3(
     const left = floatBlockTo16(channels[0], offset, end);
     const right = channels.length === 2 ? floatBlockTo16(channels[1], offset, end) : undefined;
     const chunk = right ? encoder.encodeBuffer(left, right) : encoder.encodeBuffer(left);
-    if (chunk.length > 0) chunks.push(chunk);
+    if (chunk.length > 0) chunks.push(unsignedView(chunk));
   }
   const tail = encoder.flush();
-  if (tail.length > 0) chunks.push(tail);
+  if (tail.length > 0) chunks.push(unsignedView(tail));
 
   let audioLength = 0;
   for (const chunk of chunks) audioLength += chunk.length;
   const id3 = id3Tag(options.metadata);
   // The Info frame is one MPEG frame long, so the first audio frame header sizes it. lamejs hands
   // back signed bytes; `Uint8Array.from` normalises them.
-  const infoLength = audioLength === 0 ? 0 : mpegFrameSize(Uint8Array.from(chunks[0]), 0);
+  const infoLength = audioLength === 0 ? 0 : mpegFrameSize(chunks[0], 0);
   const audioStart = id3.length + infoLength;
   const out = new Uint8Array(audioStart + audioLength);
   out.set(id3);
