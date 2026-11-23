@@ -12,7 +12,6 @@ import {
   isSoloProcessor,
   type MixerSidechainSource,
 } from '../mixer';
-import { editedProcessorParams } from '../processor-controls';
 import { useProjectStore } from '../store';
 import {
   pruneInsertProcessorReferences,
@@ -20,7 +19,7 @@ import {
   reorderInsertProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
-import { validateInsertParams } from './insert-params';
+import { editDropsOtherParams, paramsAfterEdit, validateInsertParams } from './insert-params';
 import {
   currentStrip,
   isMixerBusStripTarget,
@@ -428,22 +427,18 @@ export function setInsertParam(
     throw new RangeError(`Insert param "${param}" must be finite, got ${value}`);
   }
   const key = `insert-param:${String(target)}:${index}:${param}`;
-  const resetsAmpOverrides =
-    slot.processor === 'saturation.ampSim' &&
-    param === 'presetIndex' &&
-    Object.keys(slot.params).some((name) => name !== 'presetIndex');
-  if (slot.params[param] === value && !resetsAmpOverrides && !hasPendingGesture(key)) return;
+  if (
+    slot.params[param] === value &&
+    !editDropsOtherParams(slot.processor, slot.params, param) &&
+    !hasPendingGesture(key)
+  ) {
+    return;
+  }
   patchMixerMirror(key, options, () => {
     const next = cloneStrip(strip);
     next.inserts[index] = {
       ...next.inserts[index],
-      // Choosing a new amp rig replaces the old rig's custom knob settings.
-      // Keeping them would make the newly selected preset sound like a hybrid
-      // while the UI still names it as the untouched new rig.
-      params:
-        slot.processor === 'saturation.ampSim' && param === 'presetIndex'
-          ? { presetIndex: value }
-          : editedProcessorParams(slot.processor, next.inserts[index].params, param, value),
+      params: paramsAfterEdit(slot.processor, next.inserts[index].params, param, value),
     };
     writeStrip(store, target, next);
   });

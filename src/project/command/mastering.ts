@@ -9,14 +9,13 @@ import {
   type MasteringChainState,
   type ProjectMixerState,
 } from '../mixer';
-import { editedProcessorParams } from '../processor-controls';
 import { useProjectStore } from '../store';
 import {
   pruneMasteringProcessorReferences,
   reorderMasteringProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
-import { validateInsertParams } from './insert-params';
+import { editDropsOtherParams, paramsAfterEdit, validateInsertParams } from './insert-params';
 import { patchMixerMirror } from './mixer-internal';
 
 /** Returns a working copy of the current mastering chain (default = empty). */
@@ -235,11 +234,17 @@ export function setMasteringParam(
     throw new RangeError(`Mastering param "${param}" must be finite, got ${value}`);
   }
   const key = `mastering-param:${index}:${param}`;
-  if (slot.params[param] === value && !hasPendingGesture(key)) return;
+  if (
+    slot.params[param] === value &&
+    !editDropsOtherParams(slot.processor, slot.params, param) &&
+    !hasPendingGesture(key)
+  ) {
+    return;
+  }
   patchMixerMirror(key, options, () => {
     chain.processors[index] = {
       ...chain.processors[index],
-      params: editedProcessorParams(slot.processor, chain.processors[index].params, param, value),
+      params: paramsAfterEdit(slot.processor, chain.processors[index].params, param, value),
     };
     writeMasteringChain(store, chain);
   });
