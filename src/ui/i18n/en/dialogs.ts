@@ -167,6 +167,7 @@ export const dialogs = {
     peak: 'Peak',
     truePeak: 'True peak',
     loudness: 'Loudness',
+    masteringPresetLoudness: 'Mastering preset output',
     limitations: 'Limitations',
     memoryBudget: 'Memory limit',
     memoryBudgetTitle: 'Memory the export may use; raise it for long or high-rate exports',

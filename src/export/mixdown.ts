@@ -68,11 +68,17 @@ export interface MasteringDeps {
   ): {
     left: Float32Array;
     right: Float32Array;
-    /** True when the preset's loudness stage stopped short of its target. */
-    loudnessTargetLimited?: boolean;
-    /** Integrated loudness the preset stage produced, in LUFS. */
-    outputLufs?: number;
+    /** The chain's own loudness summary; absent when the seam does not report one. */
+    report?: MasteringPresetReport;
   };
+}
+
+/** Loudness summary the mastering chain reported for its preset stage. */
+export interface MasteringPresetReport {
+  /** Integrated loudness of the stage output in LUFS. */
+  outputLufs: number;
+  /** True when peak headroom kept the stage from reaching its loudness target. */
+  loudnessTargetLimited: boolean;
 }
 
 /** Metering seam used for the post-render loudness/peak report. */
@@ -177,6 +183,8 @@ export interface MixdownReport {
    * peak > 0 dBFS.
    */
   clipping?: ClippingSummary;
+  /** What the mastering chain reported for its preset stage; absent when no preset ran. */
+  masteringPreset?: MasteringPresetReport;
   /** Non-fatal renderer limitations that affected this bounce. */
   limitations?: ExportLimitation[];
   /** Non-fatal media omissions that made the rendered deliverable incomplete. */
@@ -277,8 +285,10 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
         return {
           left: out.left,
           right: out.right,
-          loudnessTargetLimited: out.loudnessTargetLimited,
-          outputLufs: out.outputLufs,
+          report: {
+            outputLufs: out.outputLufs,
+            loudnessTargetLimited: out.loudnessTargetLimited,
+          },
         };
       };
     }

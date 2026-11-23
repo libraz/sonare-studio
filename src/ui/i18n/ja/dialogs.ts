@@ -170,6 +170,7 @@ export const dialogs = {
     peak: 'ピーク',
     truePeak: 'トゥルーピーク',
     loudness: 'ラウドネス',
+    masteringPresetLoudness: 'マスタリングプリセットの出力',
     limitations: '制限事項',
     memoryBudget: 'メモリ上限',
     memoryBudgetTitle: '書き出しに使えるメモリ量。長い曲や高いサンプルレートでは上げてください',

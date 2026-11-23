@@ -3279,8 +3279,10 @@ describe('renderProjectWithEngine', () => {
     const applyPreset = vi.fn((_preset, left: Float32Array, right: Float32Array) => ({
       left,
       right,
-      loudnessTargetLimited: true,
-      outputLufs: -10.26,
+      report: {
+        outputLufs: -10.26,
+        loudnessTargetLimited: true,
+      },
     }));
 
     const result = await renderProjectWithEngine(doc, {
@@ -3291,6 +3293,34 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.limitations).toEqual([
       { kind: 'mastering-loudness-target-limited', outputLufs: -10.26 },
     ]);
+  });
+
+  it('carries the loudness summary the mastering chain reported for its preset', async () => {
+    const doc = makeDoc();
+    doc.mixer = { ...docMixer(doc), masteringChain: { preset: 'streaming', processors: [] } };
+    const summary = { outputLufs: -14.02, loudnessTargetLimited: false };
+    const applyPreset = vi.fn((_preset, left: Float32Array, right: Float32Array) => ({
+      left,
+      right,
+      report: summary,
+    }));
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { applyPreset, processStereo: vi.fn() }, metering: null },
+    });
+
+    expect(result.report.masteringPreset).toEqual(summary);
+    expect(result.report.limitations ?? []).toEqual([]);
+  });
+
+  it('reports no mastering preset summary when no preset ran', async () => {
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { applyPreset: vi.fn(), processStereo: vi.fn() }, metering: null },
+    });
+
+    expect(result.report.masteringPreset).toBeUndefined();
   });
 
   it('applies every mastering processor offline in declared rack order', async () => {

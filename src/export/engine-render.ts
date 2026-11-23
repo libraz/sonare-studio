@@ -57,6 +57,7 @@ import { assertMasteringBufferWithinLimit } from '@/export/mastering-limit';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   type ExportLimitation,
+  type MasteringPresetReport,
   MixdownCancelledError,
   type MixdownReport,
   type MixdownResult,
@@ -1001,6 +1002,7 @@ export async function renderProjectWithEngine(
   // else keeps the whole-buffer call it has always used.
   let masteringFrozenParams: string[] | undefined;
   let presetLoudnessLimit: ExportLimitation | undefined;
+  let masteringPreset: MasteringPresetReport | undefined;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
     // The plan was computed during preflight, before the render buffers were
     // created. It is non-null under the same condition as this branch.
@@ -1019,10 +1021,11 @@ export async function renderProjectWithEngine(
       );
       mixL = out.left;
       mixR = out.right;
-      if (out.loudnessTargetLimited === true && Number.isFinite(out.outputLufs)) {
+      masteringPreset = out.report;
+      if (out.report?.loudnessTargetLimited === true && Number.isFinite(out.report.outputLufs)) {
         presetLoudnessLimit = {
           kind: 'mastering-loudness-target-limited',
-          outputLufs: out.outputLufs as number,
+          outputLufs: out.report.outputLufs,
         };
       }
     }
@@ -1061,6 +1064,7 @@ export async function renderProjectWithEngine(
     deps?.metering ?? null,
   );
   const limitations = offlineAutomationLimitations(doc, masteringFrozenParams ?? []);
+  if (masteringPreset) report.masteringPreset = { ...masteringPreset };
   if (presetLoudnessLimit) limitations.push(presetLoudnessLimit);
   if (warpOverflows > 0)
     limitations.push({ kind: 'warp-voices-exceeded', overflows: warpOverflows });

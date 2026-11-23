@@ -681,6 +681,16 @@ function onKeydown(event: KeyboardEvent): void {
             <dt>{{ t.dialogs.exportAudio.loudness }}</dt>
             <dd class="report-lufs">{{ formatLevel(report.lufs) }} LUFS</dd>
           </template>
+          <template v-if="report.masteringPreset !== undefined">
+            <dt>{{ t.dialogs.exportAudio.masteringPresetLoudness }}</dt>
+            <dd
+              class="report-mastering-lufs"
+              :data-lufs="report.masteringPreset.outputLufs"
+              :data-target-limited="report.masteringPreset.loudnessTargetLimited"
+            >
+              {{ formatLevel(report.masteringPreset.outputLufs) }} LUFS
+            </dd>
+          </template>
         </dl>
         <div v-if="reportLimitations.length > 0" class="report-limitations">
           <h4>{{ t.dialogs.exportAudio.limitations }}</h4>

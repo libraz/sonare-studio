@@ -776,6 +776,32 @@ describe('ExportDialog', () => {
     ]);
   });
 
+  it('shows the loudness the mastering preset reported, only when one ran', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await clickExport();
+    control.resolve(makeResult({ report: { peakDb: -6, lufs: -14.2 } }));
+    await flushPromises();
+    expect(q('.export-report')).not.toBeNull();
+    expect(q('.report-mastering-lufs')).toBeNull();
+
+    await clickExport();
+    control.resolve(
+      makeResult({
+        report: {
+          peakDb: -6,
+          lufs: -14.2,
+          masteringPreset: { outputLufs: -14.04, loudnessTargetLimited: false },
+        },
+      }),
+    );
+    await flushPromises();
+    const row = q('.report-mastering-lufs');
+    expect(row?.textContent?.trim()).toBe('-14.0 LUFS');
+    expect(row?.getAttribute('data-lufs')).toBe('-14.04');
+    expect(row?.getAttribute('data-target-limited')).toBe('false');
+  });
+
   it('reads a silent render as -∞ in the export report', async () => {
     const control = makeRender();
     mountDialog(control);
