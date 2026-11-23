@@ -105,6 +105,11 @@ const removeTargetBlocked = computed(() =>
   firstBlock([props.streamingPlatforms.length <= 1, reasons.value.lastTarget]),
 );
 
+/** Text for a number input; a non-finite value renders blank so the browser keeps partial text. */
+function numberFieldText(value: number): number | string {
+  return Number.isFinite(value) ? value : '';
+}
+
 function formatAttenuation(value: number): string {
   const db = Math.abs(value) < 0.05 ? 0 : value;
   return `${db.toFixed(1)} dB`;
@@ -237,7 +242,7 @@ function formatAttenuation(value: number): string {
         </div>
         <div
           v-for="(platform, index) in streamingPlatforms"
-          :key="`${platform.name}:${index}`"
+          :key="index"
           class="targets-editor-row"
         >
           <input
@@ -258,7 +263,7 @@ function formatAttenuation(value: number): string {
             type="number"
             step="0.1"
             :aria-label="t.shell.mastering.streaming.targetLufs"
-            :value="platform.targetLufs"
+            :value="numberFieldText(platform.targetLufs)"
             @input="
               emit(
                 'update-streaming-platform',
@@ -273,7 +278,7 @@ function formatAttenuation(value: number): string {
             type="number"
             step="0.1"
             :aria-label="t.shell.mastering.streaming.ceiling"
-            :value="platform.ceilingDbtp"
+            :value="numberFieldText(platform.ceilingDbtp)"
             @input="
               emit(
                 'update-streaming-platform',

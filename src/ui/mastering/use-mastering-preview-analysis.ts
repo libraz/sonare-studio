@@ -37,6 +37,7 @@ import {
   streamingTargetsFromReport,
 } from '@/ui/mastering/streaming';
 import type { MasteringPreview } from '@/ui/mastering/use-mastering-preview';
+import { parseNumber } from '@/ui/numeric-input';
 import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import { analyzeMatchEqToReference } from '@/ui/sample-editor/wasm-ops';
 
@@ -298,7 +299,7 @@ export function useMasteringPreviewAnalysis(
     if (!current) return;
     const next: StreamingPlatform = { ...current };
     if (field === 'name') next.name = value;
-    else next[field] = Number(value);
+    else next[field] = parseNumber(value) ?? Number.NaN;
     streamingPlatforms.value = streamingPlatforms.value.map((entry, i) =>
       i === index ? next : entry,
     );
