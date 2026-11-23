@@ -33,9 +33,9 @@ The clip inspector of an audio clip has three fields: **Gain** in decibels, **Fa
 
 ## Copy, cut and paste clips
 
-Select a clip, then use **Edit > Copy** or **Edit > Cut**.
+Select a clip, then use **Edit > Copy selection** or **Edit > Cut selection**.
 
-- **Edit > Paste** places the clip at the playhead.
+- **Edit > Paste at playhead** places the clip at the playhead.
 - Right-click an empty stretch of a lane and choose **Paste** to place the clip there. The position snaps to a bar boundary.
 
 ## Work with sections

@@ -53,7 +53,7 @@ The send is stored on the track against that bus. A -6 dB send makes the bus car
 
 Start playback with the **Mixer** tab open. The master strip shows the momentary, short-term and integrated loudness in LUFS and the true peak in dBTP.
 
-Lowering a track's gain by 12 dB lowers the momentary loudness and the true peak by about 12 dB within two seconds. A **Gain reduction** row appears on the master strip while a master insert reduces gain, for example a **Brickwall Limiter** with a ceiling below the signal. It is absent without one.
+Lowering a track's gain by 12 dB lowers the momentary loudness and the true peak by about 12 dB within two seconds. A **GR** (gain reduction) row appears on the master strip while a master insert reduces gain, for example a **Brickwall Limiter** with a ceiling below the signal. It is absent without one.
 
 ## Add and bypass inserts
 
