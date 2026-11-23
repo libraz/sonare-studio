@@ -11,8 +11,6 @@ import {
   type BatchTarget,
   createLeadMelodyCommand,
   generateTracksBatchCommand,
-  MAX_DRUM_DIFFICULTY,
-  MIN_DRUM_DIFFICULTY,
   type TrackPart,
 } from '@/project/commands';
 import { normalizeGenerationSeed, partSeed } from '@/project/generation';
@@ -20,6 +18,22 @@ import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
 import { advanceBarsPpq, barsBetweenPpq, isFourFourBarRange } from '@/project/time-signature';
+import {
+  BACKING_STYLES,
+  BASS_STYLES,
+  type BackingStyleId,
+  type BassStyle,
+  CONTOURS,
+  DRUM_DIFFICULTIES,
+  GROOVES,
+  type GrooveId,
+  MID_RANGE_PARTS,
+  type MotifContour,
+  PART_IDS,
+  PART_LABEL_KEYS,
+  PART_ROLE_KEYS,
+  SECTIONS,
+} from '@/ui/compose/track-generate-part-options';
 import { useTrackGenerateSources } from '@/ui/compose/use-track-generate-sources';
 import { useTrackGenerateTargets } from '@/ui/compose/use-track-generate-targets';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -61,30 +75,6 @@ const appSettings = useAppSettings();
 const { t } = useI18n();
 
 const g = computed(() => t.value.shell.generate.track);
-
-const PART_IDS: readonly TrackPart[] = ['motif', 'drums', 'bass', 'counter', 'backing'];
-
-/** Parts that occupy the mid register (may collide with one another). */
-const MID_RANGE_PARTS: ReadonlySet<TrackPart> = new Set(['motif', 'counter', 'backing']);
-
-const PART_LABEL_KEYS: Record<
-  TrackPart,
-  'partMotif' | 'partDrums' | 'partBass' | 'partCounter' | 'partBacking'
-> = {
-  motif: 'partMotif',
-  drums: 'partDrums',
-  bass: 'partBass',
-  counter: 'partCounter',
-  backing: 'partBacking',
-};
-
-const PART_ROLE_KEYS: Record<TrackPart, 'roleMid' | 'roleRhythm' | 'roleLow' | 'roleMidHigh'> = {
-  motif: 'roleMid',
-  drums: 'roleRhythm',
-  bass: 'roleLow',
-  counter: 'roleMidHigh',
-  backing: 'roleMid',
-};
 
 /** Per-part checklist state (params live in the dedicated refs below). */
 interface PartState {
@@ -242,71 +232,11 @@ const {
 
 // --- Part parameters -----------------------------------------------------------
 
-type MotifContour = 'arch' | 'ascending' | 'descending' | 'wave';
-const CONTOURS: ReadonlyArray<{
-  id: MotifContour;
-  labelKey: 'contourArch' | 'contourAscending' | 'contourDescending' | 'contourWave';
-}> = [
-  { id: 'arch', labelKey: 'contourArch' },
-  { id: 'ascending', labelKey: 'contourAscending' },
-  { id: 'descending', labelKey: 'contourDescending' },
-  { id: 'wave', labelKey: 'contourWave' },
-];
 const motifBars = ref(2);
 const motifBarsDirty = ref(false);
 const motifContour = ref<MotifContour>('arch');
 const motifDevelop = ref(true);
 
-type GrooveId =
-  | 'standard'
-  | 'funk'
-  | 'shuffle'
-  | 'bossa'
-  | 'trap'
-  | 'halftime'
-  | 'breakbeat'
-  | 'house'
-  | 'synthpop';
-const GROOVES: ReadonlyArray<{
-  id: GrooveId;
-  labelKey:
-    | 'grooveStandard'
-    | 'grooveFunk'
-    | 'grooveShuffle'
-    | 'grooveBossa'
-    | 'grooveTrap'
-    | 'grooveHalftime'
-    | 'grooveBreakbeat'
-    | 'grooveHouse'
-    | 'grooveSynthpop';
-}> = [
-  { id: 'standard', labelKey: 'grooveStandard' },
-  { id: 'funk', labelKey: 'grooveFunk' },
-  { id: 'shuffle', labelKey: 'grooveShuffle' },
-  { id: 'bossa', labelKey: 'grooveBossa' },
-  { id: 'trap', labelKey: 'grooveTrap' },
-  { id: 'halftime', labelKey: 'grooveHalftime' },
-  { id: 'breakbeat', labelKey: 'grooveBreakbeat' },
-  { id: 'house', labelKey: 'grooveHouse' },
-  { id: 'synthpop', labelKey: 'grooveSynthpop' },
-];
-const SECTIONS: ReadonlyArray<{
-  id: SectionId;
-  labelKey:
-    | 'sectionIntro'
-    | 'sectionVerse'
-    | 'sectionPrechorus'
-    | 'sectionChorus'
-    | 'sectionBridge'
-    | 'sectionOutro';
-}> = [
-  { id: 'intro', labelKey: 'sectionIntro' },
-  { id: 'verse', labelKey: 'sectionVerse' },
-  { id: 'prechorus', labelKey: 'sectionPrechorus' },
-  { id: 'chorus', labelKey: 'sectionChorus' },
-  { id: 'bridge', labelKey: 'sectionBridge' },
-  { id: 'outro', labelKey: 'sectionOutro' },
-];
 const drumStyle = ref<GrooveId>('standard');
 const drumSection = ref<SectionId>('verse');
 const drumNextSection = ref<SectionId | 'same'>('same');
@@ -320,10 +250,6 @@ const drumFills = ref(true);
  * fast groove more than a slow one, and the two dials are not interchangeable.
  */
 const drumDifficulty = ref(0);
-const DRUM_DIFFICULTIES: ReadonlyArray<number> = Array.from(
-  { length: MAX_DRUM_DIFFICULTY - MIN_DRUM_DIFFICULTY + 1 },
-  (_unused, index) => MIN_DRUM_DIFFICULTY + index,
-);
 
 const {
   DRUM_RANGE_MANUAL,
@@ -347,40 +273,11 @@ const {
   activeClipIsDrum,
 });
 
-type BassStyle = 'root' | 'rootFifth' | 'pop' | 'walking' | 'arpeggio';
-const BASS_STYLES: ReadonlyArray<{
-  id: BassStyle;
-  labelKey: 'bassRoot' | 'bassRootFifth' | 'bassPop' | 'bassWalking' | 'bassArpeggio';
-}> = [
-  { id: 'root', labelKey: 'bassRoot' },
-  { id: 'rootFifth', labelKey: 'bassRootFifth' },
-  { id: 'pop', labelKey: 'bassPop' },
-  { id: 'walking', labelKey: 'bassWalking' },
-  { id: 'arpeggio', labelKey: 'bassArpeggio' },
-];
 const bassStyle = ref<BassStyle>('root');
 
 const counterRegister = ref<'above' | 'below'>('below');
 const counterRhythm = ref<'complement' | 'follow'>('complement');
 
-type BackingStyleId = 'smooth' | 'close' | 'drop2' | 'drop3' | 'shell' | 'rootless';
-const BACKING_STYLES: ReadonlyArray<{
-  id: BackingStyleId;
-  labelKey:
-    | 'backingSmooth'
-    | 'backingClose'
-    | 'backingDrop2'
-    | 'backingDrop3'
-    | 'backingShell'
-    | 'backingRootless';
-}> = [
-  { id: 'smooth', labelKey: 'backingSmooth' },
-  { id: 'close', labelKey: 'backingClose' },
-  { id: 'drop2', labelKey: 'backingDrop2' },
-  { id: 'drop3', labelKey: 'backingDrop3' },
-  { id: 'shell', labelKey: 'backingShell' },
-  { id: 'rootless', labelKey: 'backingRootless' },
-];
 const backingStyle = ref<BackingStyleId>('smooth');
 
 // --- Length seeding (drums/motif default to the chord-progression length) ------
