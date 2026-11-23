@@ -90,6 +90,7 @@ export const shellMixing = {
     multiTimbral: 'マルチティンバー',
     multiTimbralHint: '各 MIDI チャンネルを個別の音色で鳴らす（GM/GS 音源モジュール）。',
     channelMap: 'チャンネルマップ',
+    programNumber: 'プログラム {number}',
     channelMapHint: '有効なチャンネルはトラック音色を上書きし、他は継承します。',
     channelShort: 'Ch ',
     channelInherit: '継承',

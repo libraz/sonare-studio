@@ -16,7 +16,7 @@ import {
   normalizeChannelMap,
   SF2_DRUM_CHANNEL,
 } from '@/ui/devices/sf2-model';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { readInputNumber, restoreUnreadableInput } from '@/ui/numeric-input';
 import { gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 
@@ -38,7 +38,10 @@ const CHANNELS = Array.from({ length: 16 }, (_, channel) => channel);
 
 /** Program name for a melodic channel program (GM set). */
 function programName(program: number): string {
-  return gmProgramName(program) ?? `Program ${program}`;
+  return (
+    gmProgramName(program) ??
+    formatMessage(t.value.shell.devicesPanel.programNumber, { number: program })
+  );
 }
 
 /** GM2 drum/SFX kits the loaded module names, in bank-LSB order. */

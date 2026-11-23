@@ -90,6 +90,7 @@ export const shellMixing = {
     multiTimbral: 'Multi-timbral',
     multiTimbralHint: 'Play each MIDI channel with its own program (GM/GS module).',
     channelMap: 'Channel map',
+    programNumber: 'Program {number}',
     channelMapHint: 'Enabled channels override the track program; others inherit it.',
     channelShort: 'Ch ',
     channelInherit: 'Inherit',
