@@ -37,6 +37,7 @@ export interface PainterOptions {
  *
  * Draw callbacks run in the order their layers were first scheduled. A draw
  * callback may call `schedule` again; such requests land in the next frame.
+ * A throwing callback does not stop the others; the frame rethrows afterwards.
  *
  * @param options - Optional frame scheduling hooks.
  * @returns A painter instance.
@@ -54,9 +55,17 @@ export function createPainter(options: PainterOptions = {}): Painter {
     frameHandle = null;
     const layers = dirty;
     dirty = new Map();
+    // One failing layer must not drop the others: draw them all, then surface the failure.
+    const errors: unknown[] = [];
     for (const draw of layers.values()) {
-      draw();
+      try {
+        draw();
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Several canvas layers failed to draw');
   };
 
   return {
