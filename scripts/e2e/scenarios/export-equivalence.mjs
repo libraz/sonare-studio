@@ -75,7 +75,12 @@ export async function run(ctx) {
   // exported level's ballpark (the meter is a block peak, so allow slack).
   await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
   await page.mouse.click(rulerBox.x + 2, rulerBox.y + 14);
+  const playStartPpq = await page.evaluate(() => window.__sonareDebug.positionPpq());
   await page.click('.transport-bar .transport-key.play');
+  await page.locator('.transport-bar .transport-key.play[aria-pressed="true"]').waitFor();
+  await page.waitForFunction((from) => window.__sonareDebug.positionPpq() > from, playStartPpq, {
+    timeout: 10000,
+  });
   let livePeak = Number.NEGATIVE_INFINITY;
   const liveDeadline = Date.now() + 2400;
   while (Date.now() < liveDeadline) {

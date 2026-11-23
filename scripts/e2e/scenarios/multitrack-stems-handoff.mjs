@@ -154,14 +154,20 @@ async function saveAs(page) {
   await prompt.waitFor({ state: 'visible' });
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);
   await prompt.locator('.modal-foot button.primary').click();
-  await prompt.waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined);
+  await prompt.waitFor({ state: 'detached', timeout: 10000 });
 
+  // The save either finishes or stops on an overwrite confirmation; wait for whichever comes.
   const overwrite = page.locator('.modal-card:has(.dialog-message)');
-  await overwrite.waitFor({ state: 'visible', timeout: 2000 }).catch(() => undefined);
-  if (await overwrite.isVisible().catch(() => false)) {
-    await overwrite.locator('.modal-foot button.primary').waitFor({ state: 'visible' });
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.modal-card .dialog-message') !== null ||
+      document.querySelector('.dirty-dot') === null,
+    null,
+    { timeout: 30000 },
+  );
+  if (await overwrite.isVisible()) {
     await overwrite.locator('.modal-foot button.primary').click();
-    await overwrite.waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined);
+    await overwrite.waitFor({ state: 'detached', timeout: 10000 });
   }
   await page.locator('.dirty-dot').waitFor({ state: 'detached', timeout: 30000 });
 }

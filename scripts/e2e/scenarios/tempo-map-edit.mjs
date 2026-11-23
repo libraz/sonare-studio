@@ -73,12 +73,22 @@ export async function run(ctx) {
   await field.focus();
   await field.fill('1.3.1.000');
   await field.press('Enter');
+  const seekedPpq = await page.evaluate(() => window.__sonareDebug.positionPpq());
   await page.click('.transport-bar .transport-key.play');
-  const start = await page.evaluate(() => window.__sonareDebug.positionPpq());
+  await page.waitForFunction((from) => window.__sonareDebug.positionPpq() > from, seekedPpq, {
+    timeout: 10000,
+  });
+  const start = await page.evaluate(() => ({
+    ppq: window.__sonareDebug.positionPpq(),
+    at: performance.now(),
+  }));
   await page.waitForTimeout(1500);
-  const end = await page.evaluate(() => window.__sonareDebug.positionPpq());
+  const end = await page.evaluate(() => ({
+    ppq: window.__sonareDebug.positionPpq(),
+    at: performance.now(),
+  }));
   await page.click('.transport-bar .transport-key.stop');
-  const rate = (end - start) / 1.5;
+  const rate = (end.ppq - start.ppq) / ((end.at - start.at) / 1000);
   if (!(rate > 0.6 && rate < 1.4)) {
     fail(`playhead rate past the entry is ${rate.toFixed(2)} PPQ/s, expected about 1`);
   } else {

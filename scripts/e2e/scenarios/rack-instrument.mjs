@@ -1,4 +1,4 @@
-/** Device rack: changing the instrument re-bounces the project. */
+/** Device rack: changing the instrument swaps the realtime synth without re-scheduling. */
 import { APPLY_WATCH_MS, remainsFalse } from '../harness.mjs';
 export const name = 'rack-instrument';
 
