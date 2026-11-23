@@ -156,6 +156,9 @@ export function useNotePreview(options: NotePreviewOptions) {
     const key = heldKey(channel, pitch);
     // A note-off arriving while the engine starts marks this entry; the note then never sounds.
     const pending = { released: false };
+    // A retrigger supersedes an earlier key-down still waiting on the engine.
+    const superseded = pendingNoteOns.get(key);
+    if (superseded) superseded.released = true;
     pendingNoteOns.set(key, pending);
     const h = await options.ensureEngineStarted();
     if (pendingNoteOns.get(key) === pending) pendingNoteOns.delete(key);
