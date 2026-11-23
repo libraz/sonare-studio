@@ -99,7 +99,7 @@ describe('component error banners', () => {
         'src/ui/arrangement/use-track-header-menu.ts',
         'src/components/devices/DeviceRack.vue',
         'src/components/mixer/MixerPanel.vue',
-        'src/components/step-sequencer/StepSequencer.vue',
+        'src/ui/step-sequencer/use-step-clip-bake.ts',
         'src/components/arrangement/ArrangementView.vue',
         'src/ui/arrangement/use-arrangement-processing.ts',
         'src/ui/arrangement/use-arrangement-clip-menu.ts',

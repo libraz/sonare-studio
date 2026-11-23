@@ -3,26 +3,13 @@ import { deriveSeed } from '@libraz/libcantus';
 import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
-import { confirmDialog } from '@/composables/useDialogs';
-import { useGestureTransaction } from '@/composables/useGestureTransaction';
-import { describeError } from '@/lib/errors';
 import { clampInt } from '@/lib/math';
-import { cloneJson } from '@/project/clone-json';
-import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
-import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
+import { midiTimelinePpqToSource } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
-import { firstBlock } from '@/ui/disabled-reason';
-import { formatMessage, useI18n } from '@/ui/i18n';
+import { useI18n } from '@/ui/i18n';
 import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
-import {
-  bakePattern,
-  isEmptyPlan,
-  patternFromNotes,
-  planNoteReplacement,
-  trimBakedNotesToWindow,
-} from '@/ui/step-sequencer/bake';
 import { euclideanRhythm } from '@/ui/step-sequencer/euclid';
 import { STEP_PARAM_KINDS, type StepParamKind } from '@/ui/step-sequencer/param-lane';
 import {
@@ -34,7 +21,6 @@ import {
   STEP_COUNTS,
   STEP_RESOLUTIONS,
   type StepCount,
-  type StepPattern,
   type StepResolution,
   shiftedRow,
   withRowFill,
@@ -44,7 +30,9 @@ import {
   withSwing,
 } from '@/ui/step-sequencer/pattern';
 import { jitterVelocities, sparseFill } from '@/ui/step-sequencer/randomize';
-import { patternLengthPpq, stepIndexAtPpq } from '@/ui/step-sequencer/timing';
+import { stepIndexAtPpq } from '@/ui/step-sequencer/timing';
+import { useStepClipBake } from '@/ui/step-sequencer/use-step-clip-bake';
+import { useStepPatternHistory } from '@/ui/step-sequencer/use-step-pattern-history';
 import StepGrid from './StepGrid.vue';
 import StepParamLane from './StepParamLane.vue';
 
@@ -67,70 +55,23 @@ const props = defineProps<{
 const store = useProjectStore();
 const { t } = useI18n();
 
-/** The editable pattern (replaced wholesale by every pure operation). */
-const pattern = ref<StepPattern>(createDrumPattern());
-interface PatternHistoryEntry {
-  pattern: StepPattern;
-  rootPitch: number;
-}
-
-const undoStack = ref<PatternHistoryEntry[]>([]);
-const redoStack = ref<PatternHistoryEntry[]>([]);
-const MAX_PATTERN_HISTORY = 100;
-
-function pushHistory(entry: PatternHistoryEntry): void {
-  undoStack.value = [...undoStack.value.slice(-(MAX_PATTERN_HISTORY - 1)), entry];
-  redoStack.value = [];
-}
-
-/** A pointer drag or paint stroke records one history entry, however many cells it writes. */
-const gesture = useGestureTransaction<PatternHistoryEntry>({ commit: pushHistory });
-
-function beginPointerGesture(): void {
-  gesture.begin({ pattern: cloneJson(pattern.value), rootPitch: rootPitch.value });
-}
-
-function setPattern(next: StepPattern, previousRootPitch = rootPitch.value): void {
-  if (gesture.active) {
-    gesture.markDirty();
-  } else {
-    pushHistory({ pattern: cloneJson(pattern.value), rootPitch: previousRootPitch });
-  }
-  pattern.value = next;
-}
-
-function undoPattern(): void {
-  const previous = undoStack.value.at(-1);
-  if (!previous) return;
-  redoStack.value = [
-    ...redoStack.value,
-    { pattern: cloneJson(pattern.value), rootPitch: rootPitch.value },
-  ];
-  undoStack.value = undoStack.value.slice(0, -1);
-  pattern.value = previous.pattern;
-  rootPitch.value = previous.rootPitch;
-}
-
-function redoPattern(): void {
-  const next = redoStack.value.at(-1);
-  if (!next) return;
-  undoStack.value = [
-    ...undoStack.value,
-    { pattern: cloneJson(pattern.value), rootPitch: rootPitch.value },
-  ];
-  redoStack.value = redoStack.value.slice(0, -1);
-  pattern.value = next.pattern;
-  rootPitch.value = next.rootPitch;
-}
+const {
+  pattern,
+  rootPitch,
+  gesture,
+  beginPointerGesture,
+  setPattern,
+  undoPattern,
+  redoPattern,
+  undoBlocked,
+  redoBlocked,
+} = useStepPatternHistory();
 
 /** Row whose parameters are edited in the lane and targeted by row ops. */
 const selectedRow = ref(0);
 
 /** Active parameter lane tab. */
 const paramTab = ref<StepParamKind>('velocity');
-
-/** Root pitch for pitch-mode rows (lowest of the chromatic octave). */
-const rootPitch = ref(48);
 
 /** Euclidean fill popover state. */
 const euclidOpen = ref(false);
@@ -147,9 +88,20 @@ const status = ref('');
 /** Severity of the current status message, driving its tokenised color. */
 const statusType = ref<'info' | 'warning' | 'error'>('info');
 
-/** How Apply resolves a pattern whose span exceeds the audible clip window. */
-type OverflowPolicy = 'resize' | 'loop' | 'trim';
-const overflowPolicy = ref<OverflowPolicy>('trim');
+function report(text: string, type: 'info' | 'warning' | 'error'): void {
+  status.value = text;
+  statusType.value = type;
+}
+
+const {
+  overflowPolicy,
+  overflowPolicyOptions,
+  contentReadOnly,
+  pullBlocked,
+  applyBlocked,
+  applyToClip,
+  pullFromClip,
+} = useStepClipBake({ pattern, setPattern, report });
 
 /**
  * Step under the playhead while the transport rolls through the active clip.
@@ -164,30 +116,6 @@ const playingStep = computed<number | null>(() => {
   const { stepCount, resolution } = pattern.value;
   return stepIndexAtPpq(sourcePpq, clip.sourceOffsetPpq, stepCount, resolution);
 });
-
-/** True when the active clip exists and holds MIDI content. */
-const canTargetClip = computed(() => {
-  const clip = store.activeClip;
-  return clip !== null && clipKind(clip) === 'midi';
-});
-
-/** Frozen content remains available to Pull, but Apply cannot mutate it. */
-const contentReadOnly = computed(() => {
-  const clip = store.activeClip;
-  return (
-    clip !== null && store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined
-  );
-});
-const pullBlocked = computed(() => firstBlock([!canTargetClip.value, t.value.reasons.noMidiClip]));
-const applyBlocked = computed(() =>
-  firstBlock(pullBlocked.value, [contentReadOnly.value, t.value.reasons.trackFrozen]),
-);
-const undoBlocked = computed(() =>
-  firstBlock([undoStack.value.length === 0, t.value.reasons.nothingToUndo]),
-);
-const redoBlocked = computed(() =>
-  firstBlock([redoStack.value.length === 0, t.value.reasons.nothingToRedo]),
-);
 
 const selectedRowSteps = computed(() => pattern.value.rows[selectedRow.value]?.steps ?? []);
 const selectedRowMuted = computed(() => pattern.value.rows[selectedRow.value]?.muted === true);
@@ -206,14 +134,6 @@ const stepCountOptions = computed(() =>
 /** Step-resolution choices. */
 const resolutionOptions = computed(() =>
   STEP_RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution })),
-);
-
-const overflowPolicyOptions = computed<ReadonlyArray<{ value: OverflowPolicy; label: string }>>(
-  () => [
-    { value: 'resize', label: t.value.shell.stepSequencer.overflow.resize },
-    { value: 'loop', label: t.value.shell.stepSequencer.overflow.loop },
-    { value: 'trim', label: t.value.shell.stepSequencer.overflow.trim },
-  ],
 );
 
 // Keep the selected row valid when rows are rebuilt (mode switch / pull).
@@ -365,112 +285,6 @@ function applyFill(): void {
 }
 
 // --- Bake / unbake -----------------------------------------------------------
-
-async function applyToClip(): Promise<void> {
-  const clip = store.activeClip;
-  if (!clip || !canTargetClip.value) {
-    status.value = t.value.shell.stepSequencer.status.noActiveApply;
-    statusType.value = 'warning';
-    return;
-  }
-  if (contentReadOnly.value) {
-    status.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
-    statusType.value = 'warning';
-    return;
-  }
-  const spanPpq = patternLengthPpq(pattern.value.stepCount, pattern.value.resolution);
-  const sourceWindow = audibleMidiSourceWindow(clip);
-  const overflows = spanPpq > sourceWindow.lengthPpq + 1e-9;
-  let baked = bakePattern(pattern.value, { basePpq: clip.sourceOffsetPpq });
-  let clipWindow: Parameters<typeof applyNoteEdits>[0]['clipWindow'];
-  if (overflows) {
-    const policyLabel = overflowPolicyOptions.value.find(
-      (option) => option.value === overflowPolicy.value,
-    )?.label;
-    const proceed = await confirmDialog({
-      title: t.value.shell.stepSequencer.overflow.confirmTitle,
-      message: formatMessage(t.value.shell.stepSequencer.overflow.confirmMessage, {
-        pattern: spanPpq,
-        clip: sourceWindow.lengthPpq,
-        policy: policyLabel ?? overflowPolicy.value,
-      }),
-      confirmLabel: t.value.common.apply,
-    });
-    if (!proceed) {
-      status.value = t.value.shell.stepSequencer.overflow.cancelled;
-      statusType.value = 'warning';
-      return;
-    }
-    if (overflowPolicy.value === 'resize') {
-      clipWindow = {
-        lengthPpq: Math.max(clip.lengthPpq, spanPpq),
-        loopEnabled: false,
-      };
-    } else {
-      baked = trimBakedNotesToWindow(baked, sourceWindow.startPpq, sourceWindow.lengthPpq);
-      if (overflowPolicy.value === 'loop') {
-        clipWindow = {
-          lengthPpq: Math.max(clip.lengthPpq, spanPpq),
-          loopEnabled: true,
-          loopLengthPpq: sourceWindow.lengthPpq,
-        };
-      }
-    }
-  }
-  const plan = {
-    ...planNoteReplacement(store.notes, baked),
-    ...(clipWindow ? { clipWindow } : {}),
-  };
-  if (isEmptyPlan(plan) && !clipWindow) {
-    status.value = t.value.shell.stepSequencer.status.alreadyMatches;
-    statusType.value = 'info';
-    return;
-  }
-  try {
-    applyNoteEdits(plan);
-  } catch (err) {
-    status.value = describeError(err, t.value.notices.errors);
-    statusType.value = 'error';
-    return;
-  }
-  status.value = formatMessage(t.value.shell.stepSequencer.status.applied, {
-    count: baked.length,
-    name: clip.name,
-  });
-  statusType.value = 'info';
-}
-
-function pullFromClip(): void {
-  const clip = store.activeClip;
-  if (!clip || !canTargetClip.value) {
-    status.value = t.value.shell.stepSequencer.status.noActivePull;
-    statusType.value = 'warning';
-    return;
-  }
-  let result: ReturnType<typeof patternFromNotes>;
-  try {
-    result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
-  } catch (err) {
-    status.value = describeError(err, t.value.notices.errors);
-    statusType.value = 'error';
-    return;
-  }
-  setPattern(result.pattern);
-  const captured = store.notes.length - result.droppedNotes;
-  if (result.droppedNotes > 0) {
-    status.value = formatMessage(t.value.shell.stepSequencer.status.pulledDropped, {
-      count: captured,
-      dropped: result.droppedNotes,
-    });
-    statusType.value = 'warning';
-  } else {
-    status.value = formatMessage(t.value.shell.stepSequencer.status.pulled, {
-      count: captured,
-      name: clip.name,
-    });
-    statusType.value = 'info';
-  }
-}
 
 defineExpose({
   pattern,
