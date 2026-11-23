@@ -12,7 +12,7 @@ import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
 import { clearProjectClipWarp } from '../warp';
-import { execute, executeAtomic } from './history';
+import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { setStripPan } from './mixer-strip';
 import { requireEditableTrack, requireTrack } from './utils';
 
@@ -103,22 +103,23 @@ export function addAudioTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
 /**
  * Removes a track and its clips, dropping its automation lanes and clearing any
  * group memberships / sidechain keys sourced from it, then refreshes the mirror.
- * Performs exactly one wasm-Project edit (`removeTrack`) and must run inside an
- * `execute` boundary that accounts for it — {@link removeTrack} wraps a single
- * call, while the batch generator composes it with a fresh track's creation.
+ * Only the native `removeTrack` is reported through `edit`, so a mirror step
+ * that throws rolls the removal back with the rest of the transaction.
  *
  * @param store The project store to mutate.
  * @param trackId Id of the track to remove.
+ * @param edit The enclosing atomic transaction's edit reporter.
  */
-export function applyTrackRemoval(
+function applyTrackRemoval(
   store: ReturnType<typeof useProjectStore>,
   trackId: number,
+  edit: AtomicProjectEdit,
 ): void {
   const project = getProject();
   const removedClipIds = store.clips
     .filter((clip) => clip.trackId === trackId)
     .map((clip) => clip.id);
-  project.removeTrack(trackId);
+  edit(1, () => project.removeTrack(trackId));
   pruneClipScoreAnnotations(store, removedClipIds);
   pruneTrackTargetReferences(store, trackId);
   applyTrackRemovalMirror(store, trackId);
@@ -148,7 +149,7 @@ export function removeTrack(trackId: number): void {
     for (const clip of store.clips.filter((entry) => entry.trackId === trackId)) {
       clearProjectClipWarp(project, clip.id, (mutation) => edit(1, mutation));
     }
-    edit(1, () => applyTrackRemoval(store, trackId));
+    applyTrackRemoval(store, trackId, edit);
   });
 }
 
@@ -164,7 +165,7 @@ export function removeTracks(trackIds: Iterable<number>): void {
     for (const clip of store.clips.filter((entry) => selected.has(entry.trackId))) {
       clearProjectClipWarp(project, clip.id, (mutation) => edit(1, mutation));
     }
-    for (const id of ids) edit(1, () => applyTrackRemoval(store, id));
+    for (const id of ids) applyTrackRemoval(store, id, edit);
   });
   store.trackSelection = new Set(store.activeTrackId >= 0 ? [store.activeTrackId] : []);
 }
