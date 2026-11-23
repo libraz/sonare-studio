@@ -234,22 +234,29 @@ export function useMasteringPreviewAnalysis(
     if (checkingTargets.value) return;
     checkingTargets.value = true;
     error.value = '';
-    try {
-      const platforms = normalizeStreamingPlatforms(streamingPlatforms.value);
+    // Read on both sides of the render: the list stays editable while it runs.
+    const validPlatforms = (): StreamingPlatform[] | null => {
       if (invalidStreamingPlatformCount(streamingPlatforms.value) > 0) {
         error.value = t.value.shell.mastering.streaming.invalidTargets;
-        return;
+        return null;
       }
+      const platforms = normalizeStreamingPlatforms(streamingPlatforms.value);
       if (platforms.length === 0) {
         error.value = t.value.shell.mastering.streaming.noTargets;
-        return;
+        return null;
       }
+      return platforms;
+    };
+    try {
+      if (validPlatforms() === null) return;
       if (!previewState.value?.processed || previewStale.value) await onPreview();
       const source = previewState.value?.processed;
-      if (!source) {
+      if (!source || previewStale.value) {
         if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
         return;
       }
+      const platforms = validPlatforms();
+      if (platforms === null) return;
       const reportTargets = streamingTargetsFromReport(source.report, platforms);
       if (reportTargets) {
         streamingTargets.value = reportTargets;
