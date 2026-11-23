@@ -215,7 +215,8 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
   animation: view-enter var(--dur-2) var(--ease-out);
 }
 
-.repair-channels {
+.repair-channels,
+.room-estimate-grid {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: var(--sp-1) var(--sp-4);
@@ -223,7 +224,8 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
   font-variant-numeric: tabular-nums;
 }
 
-.repair-channels dt {
+.repair-channels dt,
+.room-estimate-grid dt {
   color: var(--text-3);
   font-weight: var(--fw-semibold);
 }
@@ -232,6 +234,11 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-1) var(--sp-5);
+  margin: 0;
+  color: var(--text-1);
+}
+
+.room-estimate-grid dd {
   margin: 0;
   color: var(--text-1);
 }
