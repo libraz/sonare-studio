@@ -54,6 +54,52 @@ Open the **Lists** tab, choose **Chords** and press **Estimate progression**. Th
 
 Generated progressions land on the same chord track and are described in [Composing](composing.md). The chord track also follows a duplicated section.
 
+## Place and edit markers
+
+1. Right-click the ruler at the position you want and choose **Add marker here…**.
+2. Type a name in the prompt and press **Add**.
+
+The marker is stored in the project at the clicked position. Open the **Lists** tab and choose **Markers** to edit it:
+
+- Change the **Name** field of its row to rename it.
+- Change the **Position** field to move it. Positions are written as bars.beats, so `5.1` is the first beat of bar 5.
+- Press the seek button at the start of the row to move the playhead onto the marker.
+- Press the delete button at the end of the row to remove it.
+
+## Change the time signature
+
+1. Open the **Lists** tab and choose **Time Sig**.
+2. Set **Beats** of the first row to the number of beats per bar.
+3. Press **Apply**.
+
+With **Beats** set to 3 the meter is 3/4. A bar is three beats long, bar 2 starts after three beats, and the **Insert time…** prompt of the ruler menu offers a three-beat default length. The playhead position field refuses beat 4 of a bar. One **Undo** restores the previous meter.
+
+## Edit the tempo map
+
+1. Open the **Lists** tab and choose **Tempo**.
+2. Press **Add tempo** to add a row.
+3. Set **Position** and **BPM** of the new row, then press **Apply**.
+
+An entry at position `1.3` with **BPM** 60 halves the tempo from the third beat. The playhead then advances at the new rate, and the rendered audio of a four-beat range that crosses the entry lasts one second longer. One **Undo** restores the previous tempo map.
+
+## Make audio follow the tempo
+
+1. Select an audio clip and open the **Sample** tab.
+2. In the **Warp** row, press **Follow tempo**.
+3. Change the project tempo in the **Tempo** field of the transport bar.
+
+With **Follow tempo** on, the beats of the clip stay on the beat grid after the tempo changes. Press **Follow tempo** again to turn it off: the clip then plays at its recorded rate and its beats leave the grid.
+
+## Freeze a track and bounce it in place
+
+Press **More actions** on a track header to open its panel, then press the snowflake toggle to freeze the track. The track is baked to audio and the master level does not change.
+
+A frozen track refuses edits. **Split here** in its clip menu is disabled, and `Delete` leaves the selected clip in place.
+
+Right-click the header and choose **Unfreeze** to bring the live render back at the same level.
+
+To bounce, turn on the loop region, right-click the header and choose **Bounce in place**. The loop region is rendered onto a new track, and the original track keeps playing. Over the loop region the two tracks sound together, about 6 dB louder than the original alone.
+
 ## Mute during playback
 
 Open the **Mixer** tab and press **Mute** on every strip while the project plays. The master output goes silent at once, without stopping playback.

@@ -26,9 +26,28 @@ A MIDI file can carry GS EFX SysEx messages. Before pressing **Use SoundFont**, 
 
 The same notes render audibly differently without GS messages, with Modern and with Classic. The choice is saved with the instrument and shows again when the picker is reopened.
 
+## Use a built-in GM voice
+
+1. Open the instrument picker and choose the **GM** tab.
+2. Choose a program in the **Program** list.
+3. Press **Use GM voice**.
+
+The track's instrument becomes that GM program, and the same notes render differently from the previous instrument.
+
 ## Drum kits
 
 Import a MIDI file with **Import MIDI file...** on the start screen. A part on MIDI channel 10 becomes a track with a drum kit instrument. Notes added to that track in the piano roll stay on channel 10.
+
+On a drum track the program list of the **GM** tab is labelled **Kit**. Choose a kit and press **Use GM voice**. The track plays the chosen kit, and two kits render the same notes differently.
+
+## Play each channel with its own program
+
+1. In the **SF2** tab, load a font file or choose a stored one, then press **Use SoundFont**.
+2. Open the picker again and turn on **Multi-timbral**. The **Channel map** lists the 16 MIDI channels, and **Ch 10** is tagged **Drums**.
+3. Tick a channel such as **Ch 2** and set its program. Tick **Ch 10** to give the drum channel a kit.
+4. Press **Use SoundFont**.
+
+Notes on the ticked channels play their own programs, and the render differs from the single-timbral one.
 
 ## Start from an organ template
 

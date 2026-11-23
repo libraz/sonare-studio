@@ -49,6 +49,24 @@ From the piano roll, select notes, right-click a note, open the **Quantize** sub
 
 `Mod+Z` takes an applied groove back to the straight onsets.
 
+## Draw a controller curve
+
+1. Open the **Piano Roll** tab and make sure **Lane** is on.
+2. Open the lane selector under the keyboard and choose **CC · CC11**.
+3. Drag across the lane to draw a curve.
+
+The points are stored on the clip as the CC11 lane of its MIDI channel. A curve drawn low in the lane lowers the level of the clip's notes in the rendered audio.
+
+## Transform notes with MIDI FX
+
+Press **MIDI FX** in the piano roll toolbar to open the **MIDI Transform** panel, set its controls and press **Apply**. The panel closes and the notes of the active clip change.
+
+- **Transpose.** Set the slider to a number of semitones. Every note moves by that interval.
+- **Quantize.** Choose a grid such as **1/8** and set **Strength** to 100%. Note starts move onto the grid.
+- **Harmonize.** Choose a chord such as **Major**. Every note gains the chord's other voices.
+
+Each transform is one edit: one **Undo** restores the notes as they were before it.
+
 ## Enter notes from the keyboard
 
 1. Turn on **Music typing** in the piano roll toolbar. On its own it writes nothing.
