@@ -202,6 +202,7 @@ export {
   setTrackInstrument,
   setTrackInstruments,
   setTrackSoloSafe,
+  setTracksVca,
   setTrackVca,
   setVcaGroupGain,
   setVcaGroupMute,
@@ -320,6 +321,8 @@ export {
   setTrackSolo,
   setTracksColor,
   setTracksGroup,
+  setTracksRecordInputChannel,
+  setTracksRecordInputDeviceId,
   setTrackVolume,
 } from './command/tracks';
 export { type TuneToMidiOutcome, tuneAudioClipToMidiTrack } from './command/tune';

@@ -176,15 +176,21 @@ function withVcaFlag(group: VcaGroup, key: 'mute' | 'solo', value: boolean): Vca
  * @param groupId Target VCA group id, or null to unassign.
  */
 export function setTrackVca(trackId: number, groupId: string | null): void {
+  setTracksVca([trackId], groupId);
+}
+
+/** Assigns several tracks to one VCA group (or clears them) in one undo step. */
+export function setTracksVca(trackIds: Iterable<number>, groupId: string | null): void {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
+  const ids = new Set(trackIds);
+  const tracks = [...ids].map((id) => requireTrack(store, id));
   if (groupId !== null && !(store.mixer.vcaGroups ?? []).some((group) => group.id === groupId)) {
     throw new RangeError(`Unknown VCA group id: ${groupId}`);
   }
-  if ((track.vcaId ?? null) === groupId) return;
+  if (tracks.length === 0 || tracks.every((track) => (track.vcaId ?? null) === groupId)) return;
   executeApp(() => {
     store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
+      if (!ids.has(t.id)) return t;
       const next = { ...t };
       if (groupId === null) delete next.vcaId;
       else next.vcaId = groupId;

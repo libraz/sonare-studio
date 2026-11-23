@@ -15,6 +15,7 @@ import {
   addNote,
   addNotes,
   addTrack,
+  addVcaGroup,
   applyGrooveToActiveClip,
   applyGrooveToSelection,
   applyKeyChangeMarkers,
@@ -107,6 +108,9 @@ import {
   setTrackSolo,
   setTracksColor,
   setTracksGroup,
+  setTracksRecordInputChannel,
+  setTracksRecordInputDeviceId,
+  setTracksVca,
   setTrackVolume,
   snapSelectionToScale,
   splitClip,
@@ -285,6 +289,44 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.tracks.map((track) => track.id)).toEqual([third, group]);
       expect(undo()).toBe(true);
       expect(store.tracks.map((track) => track.id)).toEqual([first, second, third, group]);
+    });
+
+    it('plural routing setters apply to every track in one undo step and reject mixed kinds', () => {
+      const first = addTrack({ name: 'In 1', kind: 'audio' });
+      const second = addTrack({ name: 'In 2', kind: 'audio' });
+      const midi = addTrack({ name: 'Keys' });
+      const vca = addVcaGroup({ name: 'Bus' });
+      clearHistory();
+      const byId = (id: number) => store.tracks.find((track) => track.id === id);
+
+      setTracksVca([first, second, midi], vca);
+      expect([first, second, midi].map((id) => byId(id)?.vcaId)).toEqual([vca, vca, vca]);
+      expect(undo()).toBe(true);
+      expect([first, second, midi].map((id) => byId(id)?.vcaId)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      expect(() => setTracksVca([first, second], 'missing')).toThrow('Unknown VCA group');
+
+      setTracksRecordInputChannel([first, second], 3);
+      expect([first, second].map((id) => byId(id)?.recordInputChannel)).toEqual([3, 3]);
+      expect(undo()).toBe(true);
+      expect(byId(first)?.recordInputChannel).toBeUndefined();
+
+      setTracksRecordInputDeviceId([first, second], ' mic-2 ');
+      expect([first, second].map((id) => byId(id)?.recordInputDeviceId)).toEqual([
+        'mic-2',
+        'mic-2',
+      ]);
+      expect(undo()).toBe(true);
+      expect(byId(second)?.recordInputDeviceId).toBeUndefined();
+
+      expect(() => setTracksRecordInputChannel([first, midi], 1)).toThrow('audio tracks');
+      expect(() => setTracksRecordInputDeviceId([first, midi], 'mic-2')).toThrow('audio tracks');
+      expect(byId(first)?.recordInputChannel).toBeUndefined();
+      expect(byId(first)?.recordInputDeviceId).toBeUndefined();
+      expect(canUndo()).toBe(false);
     });
 
     it('setTrackVolume and setTrackPan validate their ranges', () => {

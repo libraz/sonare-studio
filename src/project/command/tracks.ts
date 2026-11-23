@@ -468,16 +468,30 @@ export function setTrackPan(trackId: number, pan: number): void {
  * @param channel Zero-based input channel, or null for automatic assignment.
  */
 export function setTrackRecordInputChannel(trackId: number, channel: number | null): void {
+  setTracksRecordInputChannel([trackId], channel);
+}
+
+/** Sets one record input channel on several audio tracks in one undo step; any non-audio id rejects the whole edit. */
+export function setTracksRecordInputChannel(
+  trackIds: Iterable<number>,
+  channel: number | null,
+): void {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.kind !== 'audio') {
+  const ids = new Set(trackIds);
+  const tracks = [...ids].map((id) => requireTrack(store, id));
+  if (tracks.some((track) => track.kind !== 'audio')) {
     throw new RangeError('Recording input channel can only be set on audio tracks');
   }
   if (channel !== null && (!Number.isInteger(channel) || channel < 0)) {
     throw new RangeError(`Recording input channel must be a non-negative integer, got ${channel}`);
   }
-  if ((track.recordInputChannel ?? null) === channel) return;
-  patchTracks(store, new Set([trackId]), 'recordInputChannel', channel ?? undefined);
+  if (
+    tracks.length === 0 ||
+    tracks.every((track) => (track.recordInputChannel ?? null) === channel)
+  ) {
+    return;
+  }
+  patchTracks(store, ids, 'recordInputChannel', channel ?? undefined);
 }
 
 /**
@@ -489,14 +503,28 @@ export function setTrackRecordInputChannel(trackId: number, channel: number | nu
  * @param deviceId Audioinput device id, or null/empty for the global input.
  */
 export function setTrackRecordInputDeviceId(trackId: number, deviceId: string | null): void {
+  setTracksRecordInputDeviceId([trackId], deviceId);
+}
+
+/** Sets one record input device on several audio tracks in one undo step; any non-audio id rejects the whole edit. */
+export function setTracksRecordInputDeviceId(
+  trackIds: Iterable<number>,
+  deviceId: string | null,
+): void {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.kind !== 'audio') {
+  const ids = new Set(trackIds);
+  const tracks = [...ids].map((id) => requireTrack(store, id));
+  if (tracks.some((track) => track.kind !== 'audio')) {
     throw new RangeError('Recording input device can only be set on audio tracks');
   }
   const next = deviceId?.trim() ? deviceId.trim() : null;
-  if ((track.recordInputDeviceId ?? null) === next) return;
-  patchTracks(store, new Set([trackId]), 'recordInputDeviceId', next ?? undefined);
+  if (
+    tracks.length === 0 ||
+    tracks.every((track) => (track.recordInputDeviceId ?? null) === next)
+  ) {
+    return;
+  }
+  patchTracks(store, ids, 'recordInputDeviceId', next ?? undefined);
 }
 
 /**

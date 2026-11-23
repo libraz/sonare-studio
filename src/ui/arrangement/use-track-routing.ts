@@ -11,6 +11,9 @@ import {
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTracksGroup,
+  setTracksRecordInputChannel,
+  setTracksRecordInputDeviceId,
+  setTracksVca,
   setTrackVca,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -103,7 +106,10 @@ export function useTrackRouting(options: UseTrackRoutingOptions): TrackRouting {
 
   function onVcaChange(track: EditorTrack, value: string): void {
     try {
-      setTrackVca(track.id, value === VCA_NONE ? null : value);
+      const ids = selectedTrackIds(track.id);
+      const groupId = value === VCA_NONE ? null : value;
+      if (ids.length === 1) setTrackVca(track.id, groupId);
+      else setTracksVca(ids, groupId);
       error.value = '';
     } catch (err) {
       error.value = describeError(err, t.value.notices.errors);
@@ -126,7 +132,10 @@ export function useTrackRouting(options: UseTrackRoutingOptions): TrackRouting {
 
   function onRecordInputChannelChange(track: EditorTrack, value: number): void {
     try {
-      setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
+      const ids = selectedTrackIds(track.id);
+      const channel = value === RECORD_INPUT_AUTO ? null : value;
+      if (ids.length === 1) setTrackRecordInputChannel(track.id, channel);
+      else setTracksRecordInputChannel(ids, channel);
       error.value = '';
     } catch (err) {
       error.value = describeError(err, t.value.notices.errors);
@@ -149,7 +158,10 @@ export function useTrackRouting(options: UseTrackRoutingOptions): TrackRouting {
 
   function onRecordInputDeviceChange(track: EditorTrack, value: string): void {
     try {
-      setTrackRecordInputDeviceId(track.id, value === RECORD_DEVICE_DEFAULT ? null : value);
+      const ids = selectedTrackIds(track.id);
+      const deviceId = value === RECORD_DEVICE_DEFAULT ? null : value;
+      if (ids.length === 1) setTrackRecordInputDeviceId(track.id, deviceId);
+      else setTracksRecordInputDeviceId(ids, deviceId);
       error.value = '';
     } catch (err) {
       error.value = describeError(err, t.value.notices.errors);

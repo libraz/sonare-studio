@@ -73,6 +73,7 @@ export {
   addVcaGroup,
   removeVcaGroup,
   renameVcaGroup,
+  setTracksVca,
   setTrackVca,
   setVcaGroupGain,
   setVcaGroupMute,
