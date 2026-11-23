@@ -1,6 +1,7 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import { validateClipFadePair } from '../clip-fades';
 import { assertCanAddTracks } from '../mixer';
+import { StaleProjectOperationError } from '../operation';
 import {
   getAudioSourceId,
   getProject,
@@ -138,6 +139,7 @@ export interface AddAudioClipInput {
 export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   const store = useProjectStore();
   const project = getProject();
+  const documentGeneration = store.documentGeneration;
   requireEditableTrack(store, input.trackId);
   if (typeof input.assetId !== 'string' || input.assetId.length === 0) {
     throw new RangeError('Audio clip assetId must not be empty');
@@ -152,6 +154,11 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
     // Default length: preserve the asset duration at this timeline position,
     // including any later tempo-map segment or ramp.
     const meta = await loadAssetMeta(input.assetId);
+    // The metadata read yields: the document or the track may have changed meanwhile.
+    if (getProject() !== project || store.documentGeneration !== documentGeneration) {
+      throw new StaleProjectOperationError();
+    }
+    requireEditableTrack(store, input.trackId);
     const tempoMap = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
     const startSeconds = ppqToSeconds(tempoMap, startPpq);
     lengthPpq = secondsToPpq(tempoMap, startSeconds + meta.numFrames / meta.sampleRate) - startPpq;
