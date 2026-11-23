@@ -62,36 +62,48 @@ export const DEFAULT_MIDI_FX_CONFIG: MidiFxConfig = {
   arpeggiatorGate: 1,
 };
 
+/** Identifier of a harmonize preset; also the key of its UI label. */
+export type ChordPresetId =
+  | 'off'
+  | 'octave'
+  | 'fifth'
+  | 'major'
+  | 'minor'
+  | 'sus4'
+  | 'major7'
+  | 'minor7'
+  | 'dom7'
+  | 'spread';
+
 /** One harmonize preset offered by the transform panel. */
 export interface ChordPreset {
   /** Stable identifier. */
-  id: string;
-  /** Short menu label. */
-  label: string;
+  id: ChordPresetId;
   /** Semitone offsets applied per note (0 keeps the original note). */
   intervals: number[];
 }
 
 /** Harmonize presets, in menu order. "Off" is the empty-interval entry. */
 export const MIDI_FX_CHORD_PRESETS: readonly ChordPreset[] = [
-  { id: 'off', label: 'Off', intervals: [] },
-  { id: 'octave', label: 'Octave', intervals: [0, 12] },
-  { id: 'fifth', label: '5th', intervals: [0, 7] },
-  { id: 'major', label: 'Major', intervals: [0, 4, 7] },
-  { id: 'minor', label: 'Minor', intervals: [0, 3, 7] },
-  { id: 'sus4', label: 'Sus4', intervals: [0, 5, 7] },
-  { id: 'major7', label: 'Maj7', intervals: [0, 4, 7, 11] },
-  { id: 'minor7', label: 'Min7', intervals: [0, 3, 7, 10] },
-  { id: 'dom7', label: 'Dom7', intervals: [0, 4, 7, 10] },
-  { id: 'spread', label: 'Spread', intervals: [-12, 0, 12] },
+  { id: 'off', intervals: [] },
+  { id: 'octave', intervals: [0, 12] },
+  { id: 'fifth', intervals: [0, 7] },
+  { id: 'major', intervals: [0, 4, 7] },
+  { id: 'minor', intervals: [0, 3, 7] },
+  { id: 'sus4', intervals: [0, 5, 7] },
+  { id: 'major7', intervals: [0, 4, 7, 11] },
+  { id: 'minor7', intervals: [0, 3, 7, 10] },
+  { id: 'dom7', intervals: [0, 4, 7, 10] },
+  { id: 'spread', intervals: [-12, 0, 12] },
 ];
+
+/** Identifier of an arpeggio pattern; also the key of its UI label. */
+export type ArpPresetId = 'off' | 'octave' | 'up' | 'upOctave' | 'minor' | 'octaves' | 'updown';
 
 /** One arpeggio pattern offered by the transform panel. */
 export interface ArpPreset {
   /** Stable identifier. */
-  id: string;
-  /** Short menu label. */
-  label: string;
+  id: ArpPresetId;
   /** Semitone offsets played one per step, in order (0 keeps the original note). */
   intervals: number[];
 }
@@ -102,13 +114,13 @@ export interface ArpPreset {
  * up/down patterns list the same interval more than once.
  */
 export const MIDI_FX_ARP_PRESETS: readonly ArpPreset[] = [
-  { id: 'off', label: 'Off', intervals: [] },
-  { id: 'octave', label: 'Octave', intervals: [0, 12] },
-  { id: 'up', label: 'Up', intervals: [0, 4, 7] },
-  { id: 'upOctave', label: 'Up+8ve', intervals: [0, 4, 7, 12] },
-  { id: 'minor', label: 'Minor', intervals: [0, 3, 7] },
-  { id: 'octaves', label: 'Octaves', intervals: [0, 12, 24] },
-  { id: 'updown', label: 'Up/Down', intervals: [0, 4, 7, 12, 7, 4] },
+  { id: 'off', intervals: [] },
+  { id: 'octave', intervals: [0, 12] },
+  { id: 'up', intervals: [0, 4, 7] },
+  { id: 'upOctave', intervals: [0, 4, 7, 12] },
+  { id: 'minor', intervals: [0, 3, 7] },
+  { id: 'octaves', intervals: [0, 12, 24] },
+  { id: 'updown', intervals: [0, 4, 7, 12, 7, 4] },
 ];
 
 /** One quantize grid offered by the transform panel. */

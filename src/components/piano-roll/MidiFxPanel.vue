@@ -268,7 +268,7 @@ function pct(value: number): string {
             :class="{ 'fx-chip-active': chordPresetId === preset.id }"
             @click="selectChord(preset.intervals)"
           >
-            {{ preset.label }}
+            {{ t.shell.pianoRoll.midiTransform.harmonizePresets[preset.id] }}
           </button>
         </div>
       </section>
@@ -288,7 +288,7 @@ function pct(value: number): string {
             :class="{ 'fx-chip-active': arpPresetId === preset.id }"
             @click="selectArp(preset.intervals)"
           >
-            {{ preset.label }}
+            {{ t.shell.pianoRoll.midiTransform.arpPresets[preset.id] }}
           </button>
         </div>
         <div

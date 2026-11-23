@@ -11,6 +11,7 @@ import {
   sanitizeChordIntervals,
   sanitizeMidiFxConfig,
 } from '@/project/midi-fx';
+import { MESSAGES } from '@/ui/i18n/messages';
 
 /** Builds a config from the identity defaults plus overrides. */
 function config(overrides: Partial<MidiFxConfig> = {}): MidiFxConfig {
@@ -160,6 +161,14 @@ describe('catalogs', () => {
   it('offers an Off harmonize preset and named chords', () => {
     expect(MIDI_FX_CHORD_PRESETS[0]).toMatchObject({ id: 'off', intervals: [] });
     expect(MIDI_FX_CHORD_PRESETS.find((p) => p.id === 'major')?.intervals).toEqual([0, 4, 7]);
+  });
+
+  it('gives every preset a label key in the UI messages', () => {
+    const m = MESSAGES.en.shell.pianoRoll.midiTransform;
+    expect(MIDI_FX_CHORD_PRESETS.map((p) => p.id).sort()).toEqual(
+      Object.keys(m.harmonizePresets).sort(),
+    );
+    expect(MIDI_FX_ARP_PRESETS.map((p) => p.id).sort()).toEqual(Object.keys(m.arpPresets).sort());
   });
 
   it('offers quantize grids from 1/4 down to 1/32', () => {
