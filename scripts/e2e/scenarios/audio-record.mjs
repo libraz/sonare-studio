@@ -94,6 +94,7 @@ export async function run(ctx) {
     timeout: 5000,
   });
   console.info('input level meter follows the engine input capture');
+  // Record one second of the tone.
   await page.waitForTimeout(1000);
   await page.click('.transport-bar .record-button');
   try {

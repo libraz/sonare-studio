@@ -93,13 +93,13 @@ function stripForName(page, name) {
   });
 }
 
-async function setReadout(page, strip, selector, value) {
+async function setReadout(strip, selector, value) {
   await strip.locator(selector).click();
   const input = strip.locator('input.numeric-readout-input');
   await input.waitFor({ state: 'visible' });
   await input.fill(String(value));
   await input.press('Enter');
-  await page.waitForTimeout(80);
+  await input.waitFor({ state: 'hidden' });
 }
 
 async function configureMixer(page) {
@@ -111,8 +111,8 @@ async function configureMixer(page) {
   for (const track of TRACKS) {
     const strip = stripForName(page, track.name).first();
     await strip.waitFor({ state: 'visible', timeout: 20000 });
-    await setReadout(page, strip, '.strip-readout', track.gainDb);
-    await setReadout(page, strip, '.strip-pan .numeric-readout', track.pan);
+    await setReadout(strip, '.strip-readout', track.gainDb);
+    await setReadout(strip, '.strip-pan .numeric-readout', track.pan);
     await page.waitForFunction(
       ({ name, gain, pan }) => {
         const strips = [...document.querySelectorAll('.mixer-strips .channel-strip')];

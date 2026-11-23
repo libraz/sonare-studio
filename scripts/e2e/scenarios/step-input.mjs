@@ -3,6 +3,7 @@
  * notes at the cursor, which advances by the grid step; Tab rests and
  * Shift+Tab steps back.
  */
+import { remainsFalse } from '../harness.mjs';
 export const name = 'step-input';
 
 const TOLERANCE_PPQ = 1e-6;
@@ -40,9 +41,17 @@ export async function run(ctx) {
 
   // Music typing alone only previews: nothing is written until step input is armed.
   await toggle(page, 'Music typing').click();
+  const notesBeforePreview = await page.evaluate(() => window.__sonareDebug.noteCount());
   await page.keyboard.press('d');
-  await page.waitForTimeout(150);
-  if ((await typedNotes(page)).length !== 0) fail('a typed key wrote a note with step input off');
+  const previewWrote = !(await remainsFalse(
+    page,
+    (before) => window.__sonareDebug.noteCount() !== before,
+    notesBeforePreview,
+    150,
+  ));
+  if (previewWrote || (await typedNotes(page)).length !== 0) {
+    fail('a typed key wrote a note with step input off');
+  }
 
   await toggle(page, 'Step input').click();
   const cursor = page.locator('.step-cursor');
@@ -99,8 +108,13 @@ export async function run(ctx) {
   await toggle(page, 'Step input').click();
   await toggle(page, 'Music typing').click();
   await page.keyboard.press('a');
-  await page.waitForTimeout(150);
-  if ((await page.evaluate(() => window.__sonareDebug.noteCount())) !== 7) {
+  const wroteAfterOff = !(await remainsFalse(
+    page,
+    () => window.__sonareDebug.noteCount() !== 7,
+    undefined,
+    150,
+  ));
+  if (wroteAfterOff) {
     fail('a typed key wrote a note after step input and music typing were switched off');
   }
 

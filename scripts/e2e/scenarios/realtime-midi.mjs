@@ -1,12 +1,17 @@
 /** Realtime MIDI: note edits play without a re-bounce. */
+import { APPLY_WATCH_MS, remainsFalse } from '../harness.mjs';
 export const name = 'realtime-midi';
 
 export async function run(ctx) {
   const { page, fail } = ctx;
 
   {
-    await page.waitForTimeout(400);
-    const stepsPending = await page.evaluate(() => window.__sonareDebug.applyPending());
+    const stepsPending = !(await remainsFalse(
+      page,
+      () => window.__sonareDebug.applyPending(),
+      undefined,
+      APPLY_WATCH_MS,
+    ));
     if (stepsPending) {
       fail('step bake caused an audio re-bounce (MIDI edits must be realtime)');
     }

@@ -67,6 +67,44 @@ export function laneMeterSampler(page, trackId) {
 }
 
 /**
+ * Watch window for "no audio re-schedule" checks. The app holds a requested apply
+ * pending for its 400 ms debounce, so a longer window sees any request made in it.
+ */
+export const APPLY_WATCH_MS = 600;
+
+/**
+ * Resolves after two animation frames, so a rAF-scheduled canvas redraw queued by
+ * the last state change has painted.
+ *
+ * @param page The page under test.
+ */
+export async function nextPaint(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+}
+
+/**
+ * Watches a page predicate every frame for a whole window and reports whether it
+ * stayed false, so a negative check cannot miss a state that rose and fell again.
+ *
+ * @param page The page under test.
+ * @param predicate Page function; truthy means the unwanted state was seen.
+ * @param arg Argument passed to the predicate.
+ * @param windowMs How long the state must stay absent.
+ * @returns True when the predicate never held during the window.
+ */
+export async function remainsFalse(page, predicate, arg, windowMs) {
+  try {
+    await page.waitForFunction(predicate, arg, { timeout: windowMs, polling: 'raf' });
+    return false;
+  } catch (error) {
+    if (error?.name === 'TimeoutError') return true;
+    throw error;
+  }
+}
+
+/**
  * Waits for an action to finish, accepting the app's own confirm dialogs on
  * the way.
  *

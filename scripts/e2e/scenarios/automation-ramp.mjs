@@ -1,6 +1,3 @@
-import { writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { laneMeterSampler, makeWavBytes } from '../harness.mjs';
 
 /** Automation volume ramp: a fader lane shapes the loop. */
@@ -11,14 +8,17 @@ export async function run(ctx) {
 
   {
     // A steady looping source: a 2 s tone spans exactly [0, 4) PPQ at 120 BPM.
-    const rampWavPath = join(tmpdir(), 'sonare-e2e-ramp-tone.wav');
-    writeFileSync(rampWavPath, makeWavBytes(2, 330));
+    const rampWav = {
+      name: 'sonare-e2e-ramp-tone.wav',
+      mimeType: 'audio/wav',
+      buffer: makeWavBytes(2, 330),
+    };
     const rulerBox = await page.locator('.arrangement-canvas').boundingBox();
     await page.mouse.click(rulerBox.x + 2, rulerBox.y + 14); // playhead to PPQ 0
     await page.click('.dock-tabs button:has-text("Media")');
     const tracksBeforeRamp = await page.evaluate(() => window.__sonareDebug.trackIds());
     const clipsBeforeRamp = await page.evaluate(() => window.__sonareDebug.clipCount());
-    await page.setInputFiles('.media-browser .file-input', rampWavPath);
+    await page.setInputFiles('.media-browser .file-input', rampWav);
     const rampRow = page.locator('.media-browser .asset-row', { hasText: 'sonare-e2e-ramp-tone' });
     await rampRow.first().waitFor({ state: 'visible', timeout: 20000 });
     await rampRow.first().locator('.add-button').click();
@@ -102,6 +102,7 @@ export async function run(ctx) {
       null,
       { timeout: 5000 },
     );
+    // Let the lane meter's ballistics settle at the restored fader level.
     await page.waitForTimeout(600);
     let restoredDb = -120;
     for (let i = 0; i < 10; i++) {

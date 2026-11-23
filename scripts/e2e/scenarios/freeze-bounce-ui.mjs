@@ -1,5 +1,6 @@
 import { openEmptyProject, openFreshPage, skipTour } from '../fresh-page.mjs';
 import { arrangementPoint } from '../geometry.mjs';
+import { remainsFalse } from '../harness.mjs';
 
 /**
  * Freeze and bounce from the track header: Freeze (More actions panel) bakes
@@ -81,7 +82,7 @@ async function exercise(page, fail) {
   await page.keyboard.press('Escape');
   await page.mouse.click(point.x, point.y);
   await page.keyboard.press('Delete');
-  await page.waitForTimeout(300);
+  await remainsFalse(page, (before) => window.__sonareDebug.clipCount() !== before, clipCount, 300);
   const clipsAfterDelete = await page.evaluate(() => window.__sonareDebug.clipCount());
   const editedFrozen = (await probe(page, 0, 4)).peakDb;
   if (!splitRefused || clipsAfterDelete !== clipCount || Math.abs(before - editedFrozen) > 1) {

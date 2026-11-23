@@ -5,7 +5,17 @@ export async function run(ctx) {
   const { page, fail } = ctx;
 
   {
-    await page.waitForTimeout(500);
+    // The previous scenario's tail decays on the master meter first.
+    await page
+      .waitForFunction(
+        () => {
+          const peak = window.__sonareDebug.meterPeakDb();
+          return peak === null || peak <= -90;
+        },
+        null,
+        { timeout: 3000 },
+      )
+      .catch(() => undefined);
     const idleBefore = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
     if (idleBefore !== null && idleBefore > -90) {
       fail(`engine not silent before the monitor check: peak ${idleBefore} dB`);

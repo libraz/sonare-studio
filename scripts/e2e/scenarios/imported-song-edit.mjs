@@ -1,4 +1,5 @@
 /** Import and edit a small multitrack MIDI song through the start screen. */
+import { nextPaint } from '../harness.mjs';
 export const name = 'imported-song-edit';
 
 const ascii = (value) => [...value].map((char) => char.charCodeAt(0));
@@ -133,7 +134,7 @@ async function setRowTint(page, on) {
   }
   await view.click();
   await page.locator('.view-popover').waitFor({ state: 'hidden' });
-  await page.waitForTimeout(120);
+  await nextPaint(page);
 }
 
 async function guidanceDeltas(page) {

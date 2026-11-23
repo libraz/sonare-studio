@@ -1,3 +1,4 @@
+import { nextPaint } from '../harness.mjs';
 import { pointForNote } from './imported-song-edit.mjs';
 
 /** Reharmonize a note already in the song and inspect its live theory warning. */
@@ -145,7 +146,7 @@ export async function run({ page, fail }) {
   await page.mouse.move(changedPoint.x, changedPoint.y);
   await page.locator('.note-grid-theory-card').waitFor({ state: 'visible' });
   // Canvas redraw is queued separately from the Vue card update.
-  await page.waitForTimeout(120);
+  await nextPaint(page);
   const afterSafety = await cardLines(page, 'Safety');
   const afterPixels = await warningPixels(page, changedPoint);
   console.info(`existing F4 after D7: ${afterSafety}, stripe ${JSON.stringify(afterPixels)}`);
@@ -162,7 +163,7 @@ export async function run({ page, fail }) {
   // already-open theory card must react to the restored harmony.
   await page.keyboard.press('Meta+z');
   await page.waitForFunction(() => window.__sonareDebug.chordCount() === 4);
-  await page.waitForTimeout(100);
+  await nextPaint(page);
   const undoneSafety = await cardLines(page, 'Safety');
   const undonePixels = await warningPixels(page, changedPoint);
   if (

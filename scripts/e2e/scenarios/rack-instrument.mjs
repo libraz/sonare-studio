@@ -1,4 +1,5 @@
 /** Device rack: changing the instrument re-bounces the project. */
+import { APPLY_WATCH_MS, remainsFalse } from '../harness.mjs';
 export const name = 'rack-instrument';
 
 export async function run(ctx) {
@@ -56,11 +57,15 @@ export async function run(ctx) {
       presetName,
       { timeout: 10000 },
     );
-    await page.waitForTimeout(400);
-    const instrumentState = await page.evaluate(() => ({
-      pending: window.__sonareDebug.applyPending(),
-      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
-    }));
+    const instrumentState = {
+      pending: !(await remainsFalse(
+        page,
+        () => window.__sonareDebug.applyPending(),
+        undefined,
+        APPLY_WATCH_MS,
+      )),
+      ids: await page.evaluate(() => JSON.stringify(window.__sonareDebug.scheduledClipIds())),
+    };
     if (instrumentState.pending || instrumentState.ids !== idsBeforeInstrument) {
       fail(`instrument change caused a re-schedule: pending=${instrumentState.pending}`);
     }

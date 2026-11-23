@@ -42,6 +42,9 @@ export async function run(ctx) {
     );
   }
   for (let i = 0; i < muteToggleCount; i++) await muteToggles.nth(i).click();
-  await page.waitForTimeout(200);
+  await page
+    .locator('.mixer-strips .channel-strip .toggle.mute[aria-pressed="true"]')
+    .first()
+    .waitFor({ state: 'detached' });
   console.info('realtime mute: master silenced without re-scheduling');
 }

@@ -2,6 +2,7 @@
  * Screen positions of timeline content, read from the mounted canvases so a
  * scenario can click what it means to rather than guessing pixels.
  */
+import { nextPaint } from './harness.mjs';
 
 /**
  * Viewport point of a piano-roll note, or the given pitch at its middle.
@@ -75,7 +76,7 @@ export async function arrangementPoint(page, trackId, ppq) {
     // Playback may have scrolled the view sideways; bring the position back first.
     if (!xVisible) await page.mouse.wheel(point.x - (point.left + point.width / 2), 0);
     else await page.mouse.wheel(0, (point.y > point.bottom ? 1 : -1) * 280);
-    await page.waitForTimeout(80);
+    await nextPaint(page);
   }
   throw new Error(`arrangement lane for track ${trackId} never scrolled into view`);
 }
@@ -107,7 +108,7 @@ export async function rulerPoint(page, ppq) {
     }
     await page.mouse.move(point.left + point.width / 2, point.y + 100);
     await page.mouse.wheel(point.x - (point.left + point.width / 2), 0);
-    await page.waitForTimeout(80);
+    await nextPaint(page);
   }
   throw new Error(`arrangement ruler never scrolled to ppq ${ppq}`);
 }

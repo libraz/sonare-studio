@@ -1,4 +1,5 @@
 /** Device rack: insert add/bypass are realtime (no re-schedule). */
+import { APPLY_WATCH_MS, remainsFalse } from '../harness.mjs';
 export const name = 'rack-inserts';
 
 export async function run(ctx) {
@@ -36,11 +37,15 @@ export async function run(ctx) {
       insertCountsBefore,
       { timeout: 10000 },
     );
-    await page.waitForTimeout(400);
-    const insertAddState = await page.evaluate(() => ({
-      pending: window.__sonareDebug.applyPending(),
-      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
-    }));
+    const insertAddState = {
+      pending: !(await remainsFalse(
+        page,
+        () => window.__sonareDebug.applyPending(),
+        undefined,
+        APPLY_WATCH_MS,
+      )),
+      ids: await page.evaluate(() => JSON.stringify(window.__sonareDebug.scheduledClipIds())),
+    };
     if (insertAddState.pending || insertAddState.ids !== idsBeforeInsert) {
       fail(`insert add caused a re-schedule: pending=${insertAddState.pending}`);
     }
@@ -55,11 +60,15 @@ export async function run(ctx) {
       statesBeforeBypass,
       { timeout: 10000 },
     );
-    await page.waitForTimeout(400);
-    const bypassState = await page.evaluate(() => ({
-      pending: window.__sonareDebug.applyPending(),
-      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
-    }));
+    const bypassState = {
+      pending: !(await remainsFalse(
+        page,
+        () => window.__sonareDebug.applyPending(),
+        undefined,
+        APPLY_WATCH_MS,
+      )),
+      ids: await page.evaluate(() => JSON.stringify(window.__sonareDebug.scheduledClipIds())),
+    };
     if (bypassState.pending || bypassState.ids !== idsBeforeInsert) {
       fail(`insert bypass caused a re-schedule: pending=${bypassState.pending}`);
     }

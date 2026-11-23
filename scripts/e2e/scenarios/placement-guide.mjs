@@ -9,6 +9,8 @@
  * status text) rather than assumed pixel math, so the scenario also carries
  * its own bootstrap and passes standalone under `--only=placement-guide`.
  */
+
+import { nextPaint } from '../harness.mjs';
 import * as boot from './boot.mjs';
 
 export const name = 'placement-guide';
@@ -151,7 +153,7 @@ async function locateRow(page, box, x, targetMidi) {
         : estimatedY - box.height + edge + rowHeight;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, deltaY);
-    await page.waitForTimeout(80);
+    await nextPaint(page);
   }
   throw new Error(`could not locate pitch ${targetMidi} within the piano roll viewport`);
 }
@@ -275,9 +277,8 @@ export async function run(ctx) {
       await page.mouse.wheel(0, delta);
       // The arrangement canvas repaints on its own rAF-scheduled painter, one
       // frame behind the (synchronous) DOM the header row's own box is read
-      // from; a too-short wait here reads a header position ahead of what a
-      // click would actually land on.
-      await page.waitForTimeout(250);
+      // from; reading before that paint lands a click ahead of the canvas.
+      await nextPaint(page);
     }
     throw new Error('could not scroll the track row into the arrangement viewport');
   }
@@ -376,7 +377,7 @@ export async function run(ctx) {
   await backingHeader.click({ button: 'right' });
   await page.click('.context-menu-item[data-menu-item-id="lead-follow"]');
   await page.locator('.context-submenu .context-menu-item', { hasText: 'E2E Melody' }).click();
-  await page.waitForTimeout(100);
+  await page.locator('.context-submenu').waitFor({ state: 'hidden' });
 
   // Switch to the melody clip; the shared TimelineRange keeps its horizontal
   // zoom/scroll, so the calibrated x is still valid.
@@ -387,11 +388,11 @@ export async function run(ctx) {
   // were measured first and used only afterwards.
   const f4 = await locateRow(page, box, cellX, 65);
   await page.mouse.move(box.x + cellX, box.y + f4.mid);
-  await page.waitForTimeout(80);
+  await nextPaint(page);
   const f4Status = await readHoverStatus(page);
   const g4Melody = await locateRow(page, box, cellX, 67);
   await page.mouse.move(box.x + cellX, box.y + g4Melody.mid);
-  await page.waitForTimeout(80);
+  await nextPaint(page);
   const g4Status = await readHoverStatus(page);
   console.info(
     `hovered F4 (${f4Status?.pitchName}) and G4 (${g4Status?.pitchName}) on the placement column`,
@@ -457,7 +458,7 @@ export async function run(ctx) {
   const awayY =
     g4MelodyRecheck.top - 20 >= 0 ? g4MelodyRecheck.top - 20 : g4MelodyRecheck.bottom + 20;
   await page.mouse.move(box.x + cellX, box.y + awayY);
-  await page.waitForTimeout(80);
+  await nextPaint(page);
   const afterToggleColors = await sampleRowColors(page, dpr, x0, x1, g4MelodyRecheck, cellX);
   const stillTinted = [...afterToggleColors].some((c) => g4Colors.has(c) && c !== '0,0,0,0');
   if (stillTinted) {

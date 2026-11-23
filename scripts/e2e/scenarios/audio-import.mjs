@@ -1,6 +1,3 @@
-import { writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { makeWavBytes } from '../harness.mjs';
 
 /** Audio: import a generated WAV through the media browser. */
@@ -9,11 +6,14 @@ export const name = 'audio-import';
 export async function run(ctx) {
   const { page, fail } = ctx;
 
-  const wavPath = join(tmpdir(), 'sonare-e2e-tone.wav');
-  writeFileSync(wavPath, makeWavBytes(0.5, 440));
+  const wav = {
+    name: 'sonare-e2e-tone.wav',
+    mimeType: 'audio/wav',
+    buffer: makeWavBytes(0.5, 440),
+  };
 
   await page.click('.dock-tabs button:has-text("Media")');
-  await page.setInputFiles('.media-browser .file-input', wavPath);
+  await page.setInputFiles('.media-browser .file-input', wav);
   const assetRow = page.locator('.media-browser .asset-row', { hasText: 'sonare-e2e-tone' });
   await assetRow.first().waitFor({ state: 'visible', timeout: 20000 });
   console.info('audio asset imported: media browser row visible');
