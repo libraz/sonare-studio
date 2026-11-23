@@ -58,6 +58,13 @@ export function useChordRangeSelection(onRegenerate: () => void) {
     selectionAnchor.value = null;
   }
 
+  // The selection holds row indices, so a chord added or removed elsewhere would
+  // shift it onto other rows; respelling a chord in place keeps the rows.
+  watch(
+    () => store.chords.map((chord) => `${chord.startPpq}:${chord.endPpq}`).join('|'),
+    clearSelection,
+  );
+
   /** The selected chords in track order. */
   const selectedChords = computed(() =>
     [...selectedIndices.value]
