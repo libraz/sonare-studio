@@ -397,6 +397,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     if (midiSyncTimer !== null) {
       clearTimeout(midiSyncTimer);
       midiSyncTimer = null;
+      void syncMidiState();
     }
     startApply();
   }
