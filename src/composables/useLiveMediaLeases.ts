@@ -48,7 +48,9 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
   // the live-document lease can acquire the same ids. This is deliberately
   // safer than dropping protection during a concurrent tab's delete intent.
   const pendingBundleRestoreLeases = new Set<ProjectBundleRestoreLease>();
-  let bundleLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  // Set while the live lease lags the document; the retry runs until it catches up.
+  let liveLeaseStale = false;
+  let leaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
   function updateLiveMediaLeases(): void {
     const fontIds = new Set<string>();
@@ -68,32 +70,42 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
   function releasePendingBundleRestoreLeases(): void {
     for (const lease of pendingBundleRestoreLeases) lease.release();
     pendingBundleRestoreLeases.clear();
-    if (bundleLeaseRetryTimer !== undefined) {
-      clearTimeout(bundleLeaseRetryTimer);
-      bundleLeaseRetryTimer = undefined;
+    if (leaseRetryTimer !== undefined) {
+      clearTimeout(leaseRetryTimer);
+      leaseRetryTimer = undefined;
     }
   }
 
-  function scheduleBundleLeaseRetry(): void {
-    if (pendingBundleRestoreLeases.size === 0 || bundleLeaseRetryTimer !== undefined) return;
+  /** Brings the live lease up to the document, then drops the bundle leases it now covers. */
+  function syncLiveMediaLeases(): void {
+    try {
+      updateLiveMediaLeases();
+      liveLeaseStale = false;
+      releasePendingBundleRestoreLeases();
+    } catch (error) {
+      // A live document reference must never be silently abandoned. Existing
+      // pending bundle leases remain held and the retry path keeps trying.
+      liveLeaseStale = true;
+      errorMessage.value = describeError(error, t.value.notices.errors);
+      scheduleLeaseRetry();
+    }
+  }
+
+  function scheduleLeaseRetry(): void {
+    if (leaseRetryTimer !== undefined) return;
+    if (!liveLeaseStale && pendingBundleRestoreLeases.size === 0) return;
     // GC waits at most one known-peer lease-synchronization interval before
     // completing its intent, so retry after that window while the temporary
     // bundle lease remains continuously advertised.
-    bundleLeaseRetryTimer = setTimeout(() => {
-      bundleLeaseRetryTimer = undefined;
-      try {
-        updateLiveMediaLeases();
-        releasePendingBundleRestoreLeases();
-      } catch (error) {
-        errorMessage.value = describeError(error, t.value.notices.errors);
-        scheduleBundleLeaseRetry();
-      }
+    leaseRetryTimer = setTimeout(() => {
+      leaseRetryTimer = undefined;
+      syncLiveMediaLeases();
     }, 1_100);
   }
 
   function holdBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
     pendingBundleRestoreLeases.add(lease);
-    scheduleBundleLeaseRetry();
+    scheduleLeaseRetry();
   }
 
   function handOffBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
@@ -109,19 +121,9 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
     }
   }
 
-  watchEffect(() => {
-    try {
-      updateLiveMediaLeases();
-      releasePendingBundleRestoreLeases();
-    } catch (error) {
-      // A live document reference must never be silently abandoned. Existing
-      // pending bundle leases remain held and the retry path keeps trying.
-      errorMessage.value = describeError(error, t.value.notices.errors);
-      scheduleBundleLeaseRetry();
-    }
-  });
+  watchEffect(syncLiveMediaLeases);
   onScopeDispose(() => {
-    if (bundleLeaseRetryTimer !== undefined) clearTimeout(bundleLeaseRetryTimer);
+    if (leaseRetryTimer !== undefined) clearTimeout(leaseRetryTimer);
     for (const lease of pendingBundleRestoreLeases) lease.release();
     pendingBundleRestoreLeases.clear();
     liveAssetLease.release();
