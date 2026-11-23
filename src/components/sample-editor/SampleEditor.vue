@@ -23,7 +23,7 @@ const lastOpsGroup = moduleRef<OpsGroup>('edit');
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
-import ToggleButton from '@/components/shell/ToggleButton.vue';
+import SampleEditorAnalysisResults from './SampleEditorAnalysisResults.vue';
 import SampleEditorEditPanel from './SampleEditorEditPanel.vue';
 import SampleEditorMarkersPanel from './SampleEditorMarkersPanel.vue';
 import SampleEditorMatchPanel from './SampleEditorMatchPanel.vue';
@@ -32,6 +32,7 @@ import SampleEditorRepairPanel from './SampleEditorRepairPanel.vue';
 import SampleEditorRoomPanel from './SampleEditorRoomPanel.vue';
 import SampleEditorSpectralPanel from './SampleEditorSpectralPanel.vue';
 import SampleEditorTimePanel from './SampleEditorTimePanel.vue';
+import SampleEditorWarpPanel from './SampleEditorWarpPanel.vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
@@ -47,17 +48,11 @@ import {
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
 import { formatMidiNote } from '@/ui/sample-editor/note-names';
-import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repair-analysis';
-import { roomEstimateHasGeometry } from '@/ui/sample-editor/room-acoustics';
 import { rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleEditorAvailability } from '@/ui/sample-editor/use-sample-editor-availability';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
-import {
-  MATCH_EQ_CURVE_HEIGHT,
-  MATCH_EQ_CURVE_WIDTH,
-  useSampleOperations,
-} from '@/ui/sample-editor/use-sample-operations';
+import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import { useSampleSelection } from '@/ui/sample-editor/use-sample-selection';
 import { useSampleViewport } from '@/ui/sample-editor/use-sample-viewport';
 import { useSampleWarp } from '@/ui/sample-editor/use-sample-warp';
@@ -65,7 +60,6 @@ import {
   loadSampleEditorWasm,
   type SampleEditorWasmOps,
 } from '@/ui/sample-editor/wasm-ops';
-import type { MasteringRepairStageName } from '@libraz/libsonare';
 
 /**
  * Sample editor panel: shows the full waveform of one stored audio asset
@@ -270,28 +264,11 @@ const {
   onAnalyzeMatchEq,
 } = operations;
 
-const repairSummaries = computed(() =>
-  repairAnalysis.value ? repairChannelSummaries(repairAnalysis.value) : [],
-);
 const repairAnyChecked = computed(
   () =>
     repairAnalysis.value?.recommended.some((stage) => repairStageChecked.value[stage.stage]) ??
     false,
 );
-
-/** Tooltip of a repair stage toggle: the single-stage button's description. */
-function repairStageTitle(stage: MasteringRepairStageName): string {
-  const text = t.value.shell.sampleEditor;
-  const titles: Record<MasteringRepairStageName, string> = {
-    declip: text.declipTitle,
-    declick: text.declickTitle,
-    decrackle: text.decrackleTitle,
-    dehum: text.dehumTitle,
-    denoise: text.denoiseTitle,
-    dereverb: text.dereverbTitle,
-  };
-  return titles[stage];
-}
 
 const readout = computed(() => {
   const meta = asset.value?.meta;
@@ -759,158 +736,18 @@ onBeforeUnmount(() => {
     <p v-if="error" class="error">{{ error }}</p>
     <p v-for="notice in notices" :key="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="resultStatus" class="result-status" role="status">{{ resultStatus }}</p>
-    <div v-if="repairAnalysis" class="match-eq-analysis repair-analysis" role="status">
-      <div class="match-eq-head">
-        <span class="match-eq-title">{{ se.repairAnalysisTitle }}</span>
-        <span v-if="Number.isFinite(repairAnalysis.integratedLufs)" class="match-eq-loudness">
-          {{ repairAnalysis.integratedLufs.toFixed(1) }} LUFS
-        </span>
-      </div>
-      <dl class="repair-channels">
-        <template v-for="row in repairSummaries" :key="row.channel">
-          <dt>{{ row.channel }}</dt>
-          <dd>
-            <span v-for="item in row.items" :key="item.kind" class="repair-defect">
-              <span class="repair-defect-label">{{ se.repairDefects[item.kind] }}</span>
-              {{ item.value }}
-            </span>
-            <span v-if="row.items.length === 0">—</span>
-          </dd>
-        </template>
-      </dl>
-      <p v-if="declipWithheld(repairAnalysis)" class="repair-note">
-        {{ se.repairDeclipWithheld }}
-      </p>
-      <div
-        v-if="repairAnalysis.recommended.length > 0"
-        class="toolbar"
-        role="group"
-        :aria-label="se.repairStages"
-      >
-        <ToggleButton
-          v-for="stage in repairAnalysis.recommended"
-          :key="stage.stage"
-          :model-value="repairStageChecked[stage.stage] === true"
-          :label="se[stage.stage]"
-          :title="repairStageTitle(stage.stage)"
-          :reason="repairStagesBlocked"
-          size="sm"
-          @update:model-value="(checked: boolean) => setRepairStageChecked(stage.stage, checked)"
-        />
-        <button
-          type="button"
-          :disabled="!!applyRepairBlocked"
-          v-tooltip="{ text: se.repairApplyTitle, reason: applyRepairBlocked }"
-          @click="onApplyRepair"
-        >
-          {{ se.repairApply }}
-        </button>
-      </div>
-      <p v-else class="repair-note">{{ se.repairNoStages }}</p>
-    </div>
-    <div v-if="matchEqAnalysis" class="match-eq-analysis">
-      <div class="match-eq-head">
-        <span class="match-eq-title">{{ se.matchEqAnalysisTitle }}</span>
-        <span v-if="matchEqAnalysis.loudness" class="match-eq-loudness">
-          {{ se.matchEqLoudness }}:
-          {{ matchEqAnalysis.loudness.sourceLufs.toFixed(1) }} →
-          {{ matchEqAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS
-          ({{ matchEqAnalysis.loudness.gainToMatchDb >= 0 ? '+' : ''
-          }}{{ matchEqAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
-        </span>
-      </div>
-      <svg
-        v-if="matchEqCurvePoints"
-        class="match-eq-curve"
-        :viewBox="`0 0 ${MATCH_EQ_CURVE_WIDTH} ${MATCH_EQ_CURVE_HEIGHT}`"
-        preserveAspectRatio="none"
-        role="img"
-        :aria-label="se.matchEqCurveLabel"
-      >
-        <line
-          class="match-eq-zero"
-          x1="0"
-          :y1="MATCH_EQ_CURVE_HEIGHT / 2"
-          :x2="MATCH_EQ_CURVE_WIDTH"
-          :y2="MATCH_EQ_CURVE_HEIGHT / 2"
-        />
-        <polyline class="match-eq-line" :points="matchEqCurvePoints" />
-      </svg>
-      <ul v-if="matchEqAnalysis.tonalBalance.length > 0" class="match-eq-bands">
-        <li
-          v-for="(band, index) in matchEqAnalysis.tonalBalance"
-          :key="index"
-          :class="{ over: band.deviationDb > 0, under: band.deviationDb < 0 }"
-        >
-          <span class="match-eq-band-hz">{{ Math.round(band.lowHz) }}–{{ Math.round(band.highHz) }} Hz</span>
-          <span class="match-eq-band-db">
-            {{ band.deviationDb >= 0 ? '+' : '' }}{{ band.deviationDb.toFixed(1) }} dB
-          </span>
-        </li>
-      </ul>
-    </div>
-    <div v-if="roomEstimate" class="match-eq-analysis room-estimate" role="status">
-      <div class="match-eq-head">
-        <span class="match-eq-title">{{ se.roomEstimateTitle }}</span>
-        <span class="match-eq-loudness">
-          {{ se.roomEstimateConfidence }}:
-          {{ Math.round(roomEstimate.confidence * 100) }}%
-        </span>
-      </div>
-      <dl class="room-estimate-grid">
-        <dt>{{ se.roomEstimateSize }}</dt>
-        <dd v-if="roomEstimateHasGeometry(roomEstimate)">
-          {{ roomEstimate.length.toFixed(1) }} × {{ roomEstimate.width.toFixed(1) }} ×
-          {{ roomEstimate.height.toFixed(1) }} m
-        </dd>
-        <dd v-else>—</dd>
-        <dt>{{ se.roomEstimateVolume }}</dt>
-        <dd>
-          {{ Number.isFinite(roomEstimate.volume) ? roomEstimate.volume.toFixed(0) : '—' }} m³
-        </dd>
-        <dt>{{ se.roomEstimateRt60 }}</dt>
-        <dd>
-          {{ Number.isFinite(roomEstimate.rt60Mid) ? roomEstimate.rt60Mid.toFixed(2) : '—' }} s
-        </dd>
-        <dt>{{ se.roomEstimateDrr }}</dt>
-        <dd>{{ roomEstimate.drrDb.toFixed(1) }} dB</dd>
-      </dl>
-    </div>
-    <div v-if="acousticAnalysis" class="match-eq-analysis room-estimate" role="status">
-      <div class="match-eq-head">
-        <span class="match-eq-title">
-          {{
-            acousticAnalysis.kind === 'impulse'
-              ? se.impulseAnalysisTitle
-              : se.acousticAnalysisTitle
-          }}
-        </span>
-        <span class="match-eq-loudness">
-          {{ se.roomEstimateConfidence }}:
-          {{ Math.round(acousticAnalysis.confidence * 100) }}%
-        </span>
-      </div>
-      <dl class="room-estimate-grid">
-        <dt>{{ se.roomEstimateRt60 }}</dt>
-        <dd>
-          {{ Number.isFinite(acousticAnalysis.rt60) ? acousticAnalysis.rt60.toFixed(2) : '—' }} s
-        </dd>
-        <dt>{{ se.acousticEdt }}</dt>
-        <dd>
-          {{ Number.isFinite(acousticAnalysis.edt) ? acousticAnalysis.edt.toFixed(2) : '—' }} s
-        </dd>
-        <dt>{{ se.acousticClarity }}</dt>
-        <dd>
-          C50 {{ Number.isFinite(acousticAnalysis.c50) ? acousticAnalysis.c50.toFixed(1) : '—' }}
-          dB / C80
-          {{ Number.isFinite(acousticAnalysis.c80) ? acousticAnalysis.c80.toFixed(1) : '—' }} dB
-        </dd>
-        <dt>{{ se.acousticDefinition }}</dt>
-        <dd>
-          {{ Number.isFinite(acousticAnalysis.d50) ? Math.round(acousticAnalysis.d50 * 100) : '—' }}%
-        </dd>
-      </dl>
-    </div>
+    <SampleEditorAnalysisResults
+      :repair-analysis="repairAnalysis"
+      :repair-stage-checked="repairStageChecked"
+      :repair-stages-blocked="repairStagesBlocked"
+      :apply-repair-blocked="applyRepairBlocked"
+      :match-eq-analysis="matchEqAnalysis"
+      :match-eq-curve-points="matchEqCurvePoints"
+      :room-estimate="roomEstimate"
+      :acoustic-analysis="acousticAnalysis"
+      @set-repair-stage="setRepairStageChecked"
+      @apply-repair="onApplyRepair"
+    />
     <div
       ref="wrapRef"
       class="wave-wrap"
@@ -951,91 +788,21 @@ onBeforeUnmount(() => {
         {{ version.label }}
       </button>
     </div>
-    <div v-if="warpClip" class="warp">
-      <div class="toolbar">
-        <span class="warp-title">{{ se.warp }}</span>
-        <ToggleButton
-          :model-value="warpEnabled"
-          :label="se.followTempo"
-          :title="se.warpTitle"
-          size="sm"
-          @update:model-value="onToggleWarp"
-        />
-        <label v-tooltip="{ text: se.sourceBpmTitle, reason: warpOffBlocked }">
-          {{ se.sourceBpm }}
-          <input
-            v-model="warpBpmInput"
-            class="num warp-source-bpm"
-            type="number"
-            step="0.1"
-            min="1"
-            :disabled="!!warpOffBlocked"
-            @change="onWarpBpmChange"
-          />
-        </label>
-        <button
-          type="button"
-          class="warp-anchor-add"
-          :disabled="!!addAnchorBlocked"
-          v-tooltip="{ text: se.addAnchorTitle, reason: addAnchorBlocked }"
-          @click="onAddAnchor"
-        >
-          {{ se.addAnchor }}
-        </button>
-        <button
-          type="button"
-          class="warp-auto"
-          v-tooltip="se.autoWarpTitle"
-          @click="onAutoWarp"
-        >
-          {{ se.autoWarp }}
-        </button>
-        <span
-          v-if="warpRatioHint"
-          class="warp-segments"
-          v-tooltip="se.ratioTitle"
-        >
-          {{ warpRatioHint }}
-        </span>
-      </div>
-      <div
-        v-for="(anchor, index) in warpAnchors"
-        :key="`${index}-${anchor.ppq}`"
-        class="toolbar warp-anchor"
-      >
-        <label v-tooltip="{ reason: warpOffBlocked }">
-          {{ se.beat }}
-          <input
-            class="num"
-            type="number"
-            step="0.25"
-            :disabled="!!warpOffBlocked"
-            :value="anchor.ppq"
-            @change="onAnchorEdit(index, 'ppq', $event)"
-          />
-        </label>
-        <label v-tooltip="{ reason: warpOffBlocked }">
-          {{ se.sourceSeconds }}
-          <input
-            class="num"
-            type="number"
-            step="0.01"
-            :disabled="!!warpOffBlocked"
-            :value="anchor.sourceSeconds"
-            @change="onAnchorEdit(index, 'sourceSeconds', $event)"
-          />
-        </label>
-        <button
-          type="button"
-          class="warp-anchor-remove"
-          :disabled="!!warpOffBlocked"
-          v-tooltip="{ text: se.removeAnchorTitle, reason: warpOffBlocked }"
-          @click="onRemoveAnchor(index)"
-        >
-          {{ se.remove }}
-        </button>
-      </div>
-    </div>
+    <SampleEditorWarpPanel
+      v-if="warpClip"
+      v-model:warp-bpm-input="warpBpmInput"
+      :warp-enabled="warpEnabled"
+      :warp-anchors="warpAnchors"
+      :warp-ratio-hint="warpRatioHint"
+      :warp-off-blocked="warpOffBlocked"
+      :add-anchor-blocked="addAnchorBlocked"
+      @toggle-warp="onToggleWarp"
+      @warp-bpm-change="onWarpBpmChange"
+      @anchor-edit="onAnchorEdit"
+      @remove-anchor="onRemoveAnchor"
+      @add-anchor="onAddAnchor"
+      @auto-warp="onAutoWarp"
+    />
   </div>
 </template>
 
@@ -1150,116 +917,11 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
-/* Status lines and analysis cards mount in response to a finished job. */
+/* Status lines mount in response to a finished job. */
 .error,
 .notice,
-.result-status,
-.match-eq-analysis {
+.result-status {
   animation: view-enter var(--dur-2) var(--ease-out);
-}
-
-.repair-channels {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--sp-1) var(--sp-4);
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.repair-channels dt {
-  color: var(--text-3);
-  font-weight: var(--fw-semibold);
-}
-
-.repair-channels dd {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-5);
-  margin: 0;
-  color: var(--text-1);
-}
-
-.repair-defect-label {
-  color: var(--text-3);
-}
-
-.repair-note {
-  margin: 0;
-  color: var(--text-3);
-}
-
-.match-eq-analysis {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
-
-.match-eq-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--sp-4);
-  justify-content: space-between;
-}
-
-.match-eq-title {
-  font-weight: var(--fw-semibold);
-  color: var(--text-1);
-}
-
-.match-eq-loudness {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
-}
-
-.match-eq-curve {
-  width: 100%;
-  height: 64px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
-.match-eq-zero {
-  stroke: var(--border);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-}
-
-.match-eq-line {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.match-eq-bands {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-5);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.match-eq-bands li {
-  display: flex;
-  gap: var(--sp-2);
-  color: var(--text-3);
-}
-
-.match-eq-bands li.over .match-eq-band-db {
-  color: var(--warning);
-}
-
-.match-eq-bands li.under .match-eq-band-db {
-  color: var(--accent);
 }
 
 .wave-wrap {
@@ -1326,28 +988,5 @@ onBeforeUnmount(() => {
   color: var(--text-4);
   box-shadow: var(--control-edge);
   cursor: default;
-}
-
-.warp {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  border-top: 1px solid var(--border);
-  padding-top: var(--sp-3);
-}
-
-.warp-title {
-  color: var(--text-3);
-  font-weight: var(--fw-semibold);
-  margin-right: 2px;
-}
-
-.warp-segments {
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.warp-anchor {
-  padding-left: 14px;
 }
 </style>
