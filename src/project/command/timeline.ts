@@ -38,6 +38,7 @@ import {
   TRACK_COLOR_PALETTE,
 } from '../types';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
+import { audioAnalysisSourceRevision } from './audio-analysis-source';
 import { type LaneMove, moveClipsWithin } from './clip-lane';
 import {
   moveClipWithin,
@@ -49,31 +50,6 @@ import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { requireClip, requireEditableClip, validatePpq, withDerivedClipMetadata } from './utils';
 
 const sectionAnalysisOperations = new OperationGeneration();
-
-function sectionSourceRevision(
-  store: ReturnType<typeof useProjectStore>,
-  clipId: number,
-): string | null {
-  const clip = store.clips.find((entry) => entry.id === clipId);
-  if (!clip || clipKind(clip) !== 'audio') return null;
-  return JSON.stringify({
-    clip: {
-      id: clip.id,
-      trackId: clip.trackId,
-      assetId: clip.assetId,
-      startPpq: clip.startPpq,
-      lengthPpq: clip.lengthPpq,
-      sourceOffsetPpq: clip.sourceOffsetPpq,
-      loopEnabled: clip.loopEnabled,
-      loopLengthPpq: clip.loopLengthPpq,
-      takes: clip.takes,
-      compSegments: clip.compSegments,
-      warp: clip.warp,
-    },
-    tempoBpm: store.tempoBpm,
-    tempoSegments: store.tempoSegments,
-  });
-}
 
 function tempoSegmentChanged(
   current: ReadonlyArray<TempoSegment>,
@@ -388,7 +364,7 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
     sectionAnalysisOperations,
     store,
     targetId,
-    sectionSourceRevision(store, clipId),
+    audioAnalysisSourceRevision(store, clipId),
   );
   const assertCurrent = (): void =>
     assertProjectOperationCurrent(
@@ -396,7 +372,7 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
       operation,
       store,
       targetId,
-      sectionSourceRevision(store, clipId),
+      audioAnalysisSourceRevision(store, clipId),
     );
   try {
     const wasm = await ensureWasm();

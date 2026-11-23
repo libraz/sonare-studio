@@ -11,6 +11,7 @@ import {
   type TrackWithNotes,
   trackMidiNotes,
 } from '@/compose/tracks';
+import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
@@ -22,11 +23,19 @@ import {
   projectMidiClipNoteOccurrences,
   projectMidiNoteOccurrences,
 } from '../midi-projection';
+import {
+  assertProjectOperationCurrent,
+  beginProjectOperation,
+  StaleProjectOperationError,
+} from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { measureGrid, measureRangeAt, meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { clipKind, type EditorNote, type LeadFollowStashEntry } from '../types';
+import { audioAnalysisSourceRevision } from './audio-analysis-source';
 import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { requireClip } from './utils';
+
+const chordAnalysisOperations = new OperationGeneration();
 
 /** Measure length in PPQ at a position, from the active time signature. */
 function measureLengthAtPpq(store: ReturnType<typeof useProjectStore>, ppq: number): number {
@@ -429,33 +438,48 @@ export async function detectChordsFromAudioClip(
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = await ensureWasm();
-  signal?.throwIfAborted();
-  const detected = await analyzeAudioClipChords(
-    clip,
-    store.tempoBpm,
-    {
-      loadAudioAsset: loadAsset,
-      detectChords: wasm.detectChords,
-    },
-    store.tempoSegments,
+  const targetId = `chords:${clipId}`;
+  const operation = beginProjectOperation(
+    chordAnalysisOperations,
+    store,
+    targetId,
+    audioAnalysisSourceRevision(store, clipId),
   );
-  signal?.throwIfAborted();
-  const current = store.clips.find((entry) => entry.id === clipId);
-  if (
-    !current ||
-    clipKind(current) !== 'audio' ||
-    current.assetId !== clip.assetId ||
-    current.startPpq !== clip.startPpq ||
-    current.lengthPpq !== clip.lengthPpq ||
-    current.sourceOffsetPpq !== clip.sourceOffsetPpq
-  ) {
-    return 0;
+  const assertCurrent = (): void =>
+    assertProjectOperationCurrent(
+      chordAnalysisOperations,
+      operation,
+      store,
+      targetId,
+      audioAnalysisSourceRevision(store, clipId),
+    );
+  try {
+    const wasm = await ensureWasm();
+    signal?.throwIfAborted();
+    assertCurrent();
+    const detected = await analyzeAudioClipChords(
+      clip,
+      store.tempoBpm,
+      {
+        loadAudioAsset: loadAsset,
+        detectChords: wasm.detectChords,
+      },
+      store.tempoSegments,
+    );
+    signal?.throwIfAborted();
+    assertCurrent();
+    const clipEnd = clip.startPpq + clip.lengthPpq;
+    const kept = store.chords.filter(
+      (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEnd,
+    );
+    setProjectChords([...kept, ...detected]);
+    return detected.length;
+  } catch (error) {
+    if (error instanceof StaleProjectOperationError) return 0;
+    throw error;
+  } finally {
+    if (chordAnalysisOperations.isCurrent(operation.token)) {
+      chordAnalysisOperations.invalidate();
+    }
   }
-  const clipEnd = clip.startPpq + clip.lengthPpq;
-  const kept = store.chords.filter(
-    (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEnd,
-  );
-  setProjectChords([...kept, ...detected]);
-  return detected.length;
 }

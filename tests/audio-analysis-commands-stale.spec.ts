@@ -180,4 +180,45 @@ describe('audio analysis command stale clip guards', () => {
     await expect(detection).resolves.toBe(0);
     expect(store.sections).toEqual([]);
   });
+
+  it('does not merge audio chords into a replacement project with colliding ids', async () => {
+    const pending = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockReturnValueOnce(pending.promise);
+    Object.assign(wasmModule.current ?? {}, {
+      detectChords: () => ({
+        chords: [{ root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }],
+      }),
+    });
+    const clipId = await addSourceClip();
+    const detection = detectChordsFromAudioClip(clipId);
+
+    store.dispose();
+    await store.init();
+    const replacementClipId = await addSourceClip();
+    expect(replacementClipId).toBe(clipId);
+    pending.resolve(loadedAsset('asset-1'));
+
+    await expect(detection).resolves.toBe(0);
+    expect(store.chords).toEqual([]);
+  });
+
+  it('does not merge audio chords when the clip warp changes while loading', async () => {
+    const pending = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockReturnValueOnce(pending.promise);
+    Object.assign(wasmModule.current ?? {}, {
+      detectChords: () => ({
+        chords: [{ root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }],
+      }),
+    });
+    const clipId = await addSourceClip();
+
+    const detection = detectChordsFromAudioClip(clipId);
+    store.clips = store.clips.map((clip) =>
+      clip.id === clipId ? { ...clip, warp: { enabled: true, sourceBpm: 60 } } : clip,
+    );
+    pending.resolve(loadedAsset('asset-1'));
+    await expect(detection).resolves.toBe(0);
+
+    expect(store.chords).toEqual([]);
+  });
 });
