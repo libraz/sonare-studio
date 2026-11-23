@@ -45,7 +45,7 @@ import {
   insertTailResolverFromTiming,
 } from '@/export/audio-preflight';
 import { planAudioClipStreams } from '@/export/clip-page-plan';
-import { AudioClipStreamSession } from '@/export/clip-page-stream';
+import { AudioClipStreamSession, clipStreamResidentBytes } from '@/export/clip-page-stream';
 import {
   hasTimeVaryingPoints,
   type MasteringCapabilityLookup,
@@ -425,6 +425,10 @@ export async function renderProjectWithEngine(
         })
       : [];
   const streamedKeys = new Set(clipStreamPlans.map((plan) => plan.key));
+  const streamResidentBytes = clipStreamResidentBytes(
+    clipStreamPlans,
+    options.clipStreamResidentBudgetBytes,
+  );
   const audioMemory = loadAudioMeta
     ? await preflightAudioClipMemory(doc, {
         sampleRate,
@@ -465,7 +469,7 @@ export async function renderProjectWithEngine(
         transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
         sourceAudioBytes: audioMemory.sourceAudioBytes,
-        preparedClipBytes: audioMemory.preparedClipBytes,
+        preparedClipBytes: audioMemory.preparedClipBytes + streamResidentBytes,
       }),
       options.memoryBudgetBytes,
     );
@@ -502,7 +506,7 @@ export async function renderProjectWithEngine(
         transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
         sourceAudioBytes: audioMemory.sourceAudioBytes,
-        preparedClipBytes: audioMemory.preparedClipBytes,
+        preparedClipBytes: audioMemory.preparedClipBytes + streamResidentBytes,
         soundFontBytes,
       }),
       options.memoryBudgetBytes,
@@ -625,7 +629,7 @@ export async function renderProjectWithEngine(
     const preparedClipBytes = sourceAudioClips.reduce(
       (sum, clip) =>
         sum + clip.channels.reduce((channelSum, channel) => channelSum + channel.byteLength, 0),
-      0,
+      streamResidentBytes,
     );
     assertRenderPayloadMemory(
       estimateRenderPayloadMemory({

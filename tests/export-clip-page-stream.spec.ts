@@ -14,6 +14,7 @@ import {
   ClipPageReadError,
   clipStreamPageBudgetBytes,
   clipStreamPageFrames,
+  clipStreamResidentBytes,
   MAX_CLIP_STREAM_PAGE_BYTES,
   MIN_CLIP_STREAM_PAGE_BYTES,
 } from '@/export/clip-page-stream';
@@ -472,6 +473,13 @@ describe('AudioClipStreamSession', () => {
     expect(session.residentBytesUpperBound()).toBe(
       MIN_CLIP_STREAM_PAGE_BYTES * CLIP_STREAM_WINDOW_PAGES,
     );
+    session.close();
+  });
+
+  it('pages exactly the resident bytes the memory preflight counts', async () => {
+    const plans = [PAGE_PLAN, { ...PAGE_PLAN, key: 'b', numChannels: 1, frameCount: 40_000 }];
+    const session = await AudioClipStreamSession.open(plans, recordingFactory().factory);
+    expect(session.residentBytesUpperBound()).toBe(clipStreamResidentBytes(plans));
     session.close();
   });
 });

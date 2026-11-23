@@ -11,6 +11,7 @@ import {
 import { buildMidiSchedules } from '@/export/engine-render-context';
 import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
 import { MixdownCancelledError } from '@/export/mixdown';
+import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   insertAutomationParam,
@@ -6011,6 +6012,24 @@ describe('renderProjectWithEngine paged audio clips', () => {
         options(new PagingAudibilityEngine(), { createClipPageStream: factory }),
       ),
     ).rejects.toThrow('unreadable page');
+  });
+
+  it('counts the resident page window of streamed clips in the memory preflight', async () => {
+    const requiredBytes = async (residentBudgetBytes: number): Promise<number> => {
+      const error = await renderProjectWithEngine(
+        pagedDoc(),
+        options(new PagingAudibilityEngine(), {
+          createClipPageStream: pageStream().factory,
+          clipStreamResidentBudgetBytes: residentBudgetBytes,
+          memoryBudgetBytes: 1,
+        }),
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(PayloadMemoryLimitError);
+      return (error as PayloadMemoryLimitError).requiredBytes;
+    };
+    const smallWindow = await requiredBytes(3 * 256 * 1024);
+    const largeWindow = await requiredBytes(3 * 1024 * 1024);
+    expect(largeWindow - smallWindow).toBe(3 * (1024 - 256) * 1024);
   });
 
   it('decodes as before when no page stream is supplied', async () => {

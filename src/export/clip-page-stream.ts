@@ -94,6 +94,32 @@ export function clipStreamPageBudgetBytes(
   return Math.floor(residentBudgetBytes / (clipCount * CLIP_STREAM_WINDOW_PAGES));
 }
 
+/** Bytes one clip's window holds once full: up to {@link CLIP_STREAM_WINDOW_PAGES} pages. */
+function clipStreamWindowBytes(pageFrames: number, pageCount: number, numChannels: number): number {
+  return (
+    Math.min(pageCount, CLIP_STREAM_WINDOW_PAGES) * pageFrames * numChannels * BYTES_PER_SAMPLE
+  );
+}
+
+/**
+ * Resident PCM a render's streamed clips reach once every window is full, as
+ * {@link AudioClipStreamSession.open} would page them; the memory preflight
+ * counts it because the windows live in the engine for the whole render.
+ */
+export function clipStreamResidentBytes(
+  plans: ReadonlyArray<AudioClipStreamPlan>,
+  residentBudgetBytes = DEFAULT_CLIP_STREAM_RESIDENT_BUDGET_BYTES,
+): number {
+  const pageBudget = clipStreamPageBudgetBytes(plans.length, residentBudgetBytes);
+  return plans.reduce((sum, plan) => {
+    const pageFrames = clipStreamPageFrames(plan.numChannels, plan.frameCount, pageBudget);
+    return (
+      sum +
+      clipStreamWindowBytes(pageFrames, Math.ceil(plan.frameCount / pageFrames), plan.numChannels)
+    );
+  }, 0);
+}
+
 /** What a {@link ClipPageBindingFactory} needs to serve one clip's pages. */
 export interface ClipPageBindingRequest {
   /** Stored asset the pages are read from. */
@@ -228,10 +254,7 @@ export class AudioClipStreamSession {
     return this.streams.reduce(
       (sum, stream) =>
         sum +
-        Math.min(stream.lastPage + 1, CLIP_STREAM_WINDOW_PAGES) *
-          stream.pageFrames *
-          stream.plan.numChannels *
-          BYTES_PER_SAMPLE,
+        clipStreamWindowBytes(stream.pageFrames, stream.lastPage + 1, stream.plan.numChannels),
       0,
     );
   }
