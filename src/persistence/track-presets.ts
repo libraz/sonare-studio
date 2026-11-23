@@ -16,36 +16,50 @@ function presetsDirectory(): Promise<FileSystemDirectoryHandle> {
   return opfsDirectory(PRESETS_DIR);
 }
 
-/** Lists valid user presets in menu order. Invalid records are ignored, not executed. */
-export async function listTrackChannelPresets(): Promise<TrackChannelPreset[]> {
+interface StoredTrackChannelPresets {
+  /** Readable presets by display name; a later record of the same name wins. */
+  presets: Map<string, TrackChannelPreset>;
+  /** Records this build cannot read (for example a newer schema), kept verbatim on rewrite. */
+  unreadable: unknown[];
+}
+
+async function readTrackChannelPresets(): Promise<StoredTrackChannelPresets> {
   const directory = await presetsDirectory();
   let raw: unknown;
   try {
     const file = await (await directory.getFileHandle(PRESETS_FILE)).getFile();
     raw = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
   } catch (error) {
-    if (isNotFoundError(error)) return [];
-    if (error instanceof SyntaxError) return [];
+    if (isNotFoundError(error) || error instanceof SyntaxError) {
+      return { presets: new Map(), unreadable: [] };
+    }
     throw error;
   }
-  if (!Array.isArray(raw)) return [];
-  const byName = new Map<string, TrackChannelPreset>();
+  const stored: StoredTrackChannelPresets = { presets: new Map(), unreadable: [] };
+  if (!Array.isArray(raw)) return stored;
   for (const candidate of raw) {
     try {
       const preset = normalizeTrackChannelPreset(candidate);
-      byName.set(preset.name, preset);
+      stored.presets.set(preset.name, preset);
     } catch {
       // One corrupt/stale preset should not hide every valid saved preset.
+      stored.unreadable.push(candidate);
     }
   }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return stored;
 }
 
-async function writeTrackChannelPresets(presets: readonly TrackChannelPreset[]): Promise<void> {
+/** Lists valid user presets in menu order. Invalid records are ignored, not executed. */
+export async function listTrackChannelPresets(): Promise<TrackChannelPreset[]> {
+  const { presets } = await readTrackChannelPresets();
+  return [...presets.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function writeTrackChannelPresets(stored: StoredTrackChannelPresets): Promise<void> {
   await writeOpfsFile(
     await presetsDirectory(),
     PRESETS_FILE,
-    new TextEncoder().encode(JSON.stringify(presets)),
+    new TextEncoder().encode(JSON.stringify([...stored.unreadable, ...stored.presets.values()])),
   );
 }
 
@@ -57,11 +71,10 @@ export function saveTrackChannelPreset(preset: TrackChannelPreset): Promise<void
 /** Saves one preset while the caller owns the persistence mutation lock. */
 async function saveTrackChannelPresetUnlocked(preset: TrackChannelPreset): Promise<void> {
   const normalized = normalizeTrackChannelPreset(preset);
-  const existing = await listTrackChannelPresets();
-  await writeTrackChannelPresets([
-    ...existing.filter((entry) => entry.name !== normalized.name),
-    normalized,
-  ]);
+  const stored = await readTrackChannelPresets();
+  stored.presets.delete(normalized.name);
+  stored.presets.set(normalized.name, normalized);
+  await writeTrackChannelPresets(stored);
 }
 
 /** Deletes one named user preset. Missing names are a no-op. */
@@ -72,7 +85,7 @@ export function deleteTrackChannelPreset(name: string): Promise<void> {
 /** Deletes one preset while the caller owns the persistence mutation lock. */
 async function deleteTrackChannelPresetUnlocked(name: string): Promise<void> {
   const normalized = normalizeTrackChannelPresetName(name);
-  const existing = await listTrackChannelPresets();
-  if (!existing.some((entry) => entry.name === normalized)) return;
-  await writeTrackChannelPresets(existing.filter((entry) => entry.name !== normalized));
+  const stored = await readTrackChannelPresets();
+  if (!stored.presets.delete(normalized)) return;
+  await writeTrackChannelPresets(stored);
 }
