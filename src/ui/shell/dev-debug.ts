@@ -264,11 +264,13 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       range?: { startPpq: number; endPpq: number },
       stems = false,
       windows = 0,
+      busStems = false,
     ) => {
       const result = await renderMixdownInWorker(serializeProject(), {
         includeMasterChain,
         ...(range !== undefined ? { range } : {}),
         ...(stems ? { stems } : {}),
+        ...(busStems ? { busStems } : {}),
       }).result;
       const wav = encodeWav(result.channels, result.sampleRate, { bitDepth: 16 });
       return {

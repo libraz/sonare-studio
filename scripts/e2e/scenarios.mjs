@@ -21,6 +21,7 @@ import * as baroque_organ_compose from './scenarios/baroque-organ-compose.mjs';
 import * as boot from './scenarios/boot.mjs';
 import * as bus_master_sidechain from './scenarios/bus-master-sidechain.mjs';
 import * as bus_routing from './scenarios/bus-routing.mjs';
+import * as bus_strips from './scenarios/bus-strips.mjs';
 import * as cc_lane from './scenarios/cc-lane.mjs';
 import * as composition_flow from './scenarios/composition-flow.mjs';
 import * as cycle_recording from './scenarios/cycle-recording.mjs';
@@ -31,8 +32,10 @@ import * as export_dialog from './scenarios/export-dialog.mjs';
 import * as export_equivalence from './scenarios/export-equivalence.mjs';
 import * as export_midi from './scenarios/export-midi.mjs';
 import * as expression_maps from './scenarios/expression-maps.mjs';
+import * as first_play_mixer from './scenarios/first-play-mixer.mjs';
 import * as freeze_bounce from './scenarios/freeze-bounce.mjs';
 import * as freeze_bounce_ui from './scenarios/freeze-bounce-ui.mjs';
+import * as generation_seed from './scenarios/generation-seed.mjs';
 import * as gm_voice from './scenarios/gm-voice.mjs';
 import * as groove from './scenarios/groove.mjs';
 import * as gs_efx_sf2 from './scenarios/gs-efx-sf2.mjs';
@@ -45,7 +48,10 @@ import * as lane_meters from './scenarios/lane-meters.mjs';
 import * as language_ja from './scenarios/language-ja.mjs';
 import * as layouts from './scenarios/layouts.mjs';
 import * as long_master_export_preflight from './scenarios/long-master-export-preflight.mjs';
+import * as loudness from './scenarios/loudness.mjs';
+import * as master_fader from './scenarios/master-fader.mjs';
 import * as master_limiter from './scenarios/master-limiter.mjs';
+import * as master_meter_readouts from './scenarios/master-meter-readouts.mjs';
 import * as mastering_chain from './scenarios/mastering-chain.mjs';
 import * as meter_map from './scenarios/meter-map.mjs';
 import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
@@ -74,6 +80,7 @@ import * as realtime_mute from './scenarios/realtime-mute.mjs';
 import * as sample_editor_flow from './scenarios/sample-editor-flow.mjs';
 import * as score from './scenarios/score.mjs';
 import * as score_annotations from './scenarios/score-annotations.mjs';
+import * as score_chord_symbols from './scenarios/score-chord-symbols.mjs';
 import * as score_print_pdf from './scenarios/score-print-pdf.mjs';
 import * as secondary_dominant_guidance from './scenarios/secondary-dominant-guidance.mjs';
 import * as shortcut_help from './scenarios/shortcut-help.mjs';
@@ -83,6 +90,7 @@ import * as sidechain from './scenarios/sidechain.mjs';
 import * as stem_separation from './scenarios/stem-separation.mjs';
 import * as step_input from './scenarios/step-input.mjs';
 import * as step_sequencer from './scenarios/step-sequencer.mjs';
+import * as strip_sends from './scenarios/strip-sends.mjs';
 import * as tempo_map from './scenarios/tempo-map.mjs';
 import * as tempo_map_edit from './scenarios/tempo-map-edit.mjs';
 import * as theory_hover from './scenarios/theory-hover.mjs';
@@ -178,6 +186,14 @@ export const scenarios = [
   // Each opens its own browser context: they replace the project, install a
   // service worker or change the stored language.
   multi_timbral,
+  score_chord_symbols,
+  generation_seed,
+  strip_sends,
+  bus_strips,
+  master_meter_readouts,
+  first_play_mixer,
+  master_fader,
+  loudness,
   freeze_bounce_ui,
   musicxml_roundtrip,
   stem_separation,
