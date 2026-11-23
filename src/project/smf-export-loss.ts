@@ -127,6 +127,7 @@ export const SMF_TRACK_FIELDS: FieldDispositions<
   generated: 'not-content',
   // Folded into CC7.
   vcaId: 'written',
+  role: 'not-content',
   chordFollow: 'not-content',
   expressionMap: { lost: 'expressionMaps' },
   frozen: 'not-content',

@@ -25,7 +25,7 @@ Each part has a target menu. **New track** adds a track; **Replace: name** write
 
 ## Add a lead melody
 
-The completed generation dialog has **Compose lead melody**. It adds a MIDI track named **Lead** with a clip as long as the progression and opens that clip in the piano roll.
+The completed generation dialog has **Compose lead melody**. It adds a MIDI track named **Lead** with a clip as long as the progression and opens that clip in the piano roll. The track stays the lead target when you rename it, so a second request reuses it.
 
 Draw the melody with the pencil. Ghost notes of the accompaniment do not take over the editor: a click on a ghost note writes a note into the lead clip.
 

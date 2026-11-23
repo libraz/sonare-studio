@@ -109,6 +109,7 @@ const TRACK_FIELDS: FieldDispositions<
   percussion: 'written',
   generated: 'not-content',
   vcaId: 'not-content',
+  role: 'not-content',
   chordFollow: 'not-content',
   expressionMap: 'not-content',
   frozen: 'not-content',

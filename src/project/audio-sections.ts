@@ -15,6 +15,7 @@
  */
 
 import type { ChromaResult, Section, SectionAnalysis, SectionType } from '@libraz/libsonare';
+import { type SectionId, sectionKindForNameKey } from '@/compose/section-shaping';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { type DefaultNameKey, defaultName } from './default-names';
@@ -67,6 +68,7 @@ export type AudioChromaAnalyzer = (
 /** A detected section ready for `setSections` (id allocated by the command). */
 export interface DetectedSectionInput {
   name: string;
+  kind?: SectionId;
   color: string;
   startPpq: number;
   endPpq: number;
@@ -91,12 +93,17 @@ function sectionTypeIndex(type: SectionType): number {
   return SECTION_TYPE_ORDER.indexOf(type);
 }
 
+/** Name key of a section type; unknown types fall back to the generic section key. */
+function sectionNameKey(type: SectionType): DefaultNameKey {
+  return (
+    SECTION_TYPE_NAME_KEYS[sectionTypeIndex(type)] ??
+    SECTION_TYPE_NAME_KEYS[SECTION_TYPE_NAME_KEYS.length - 1]
+  );
+}
+
 /** Maps a section type to its stable label. */
 function sectionLabel(type: SectionType): string {
-  return defaultName(
-    SECTION_TYPE_NAME_KEYS[sectionTypeIndex(type)] ??
-      SECTION_TYPE_NAME_KEYS[SECTION_TYPE_NAME_KEYS.length - 1],
-  );
+  return defaultName(sectionNameKey(type));
 }
 
 /** Palette entry for a repeat group (or, without chroma, for a type). */
@@ -175,8 +182,10 @@ export async function analyzeAudioClipSections(
     const label = sectionLabel(section.type);
     const occurrence = (seenPerLabel.get(label) ?? 0) + 1;
     seenPerLabel.set(label, occurrence);
+    const kind = sectionKindForNameKey(sectionNameKey(section.type));
     return {
       name: chroma ? defaultName('sectionOccurrence', { label, number: occurrence }) : label,
+      ...(kind !== null ? { kind } : {}),
       color: groupColor(groups[index] ?? 0),
       startPpq,
       endPpq,

@@ -254,6 +254,7 @@ const TRACK_FIELDS: FieldDispositions<DocumentTrack, DawprojectExportLossKind, E
   percussion: { lost: 'percussionOverrides', count: (value) => advanced(value !== undefined) },
   generated: { lost: 'generatedTracks' },
   vcaId: 'sidecar',
+  role: 'sidecar',
   chordFollow: { lost: 'chordFollow' },
   expressionMap: { lost: 'expressionMaps' },
   frozen: { lost: 'frozenTracks' },

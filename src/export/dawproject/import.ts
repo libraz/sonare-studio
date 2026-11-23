@@ -170,6 +170,7 @@ function importDawprojectDocuments(
         ? { groupIndex: documentIndexByImportedIndex.get(track.groupIndex) as number }
         : {}),
       ...(track.vcaId !== undefined ? { vcaId: track.vcaId } : {}),
+      ...(track.trackRole !== undefined ? { role: track.trackRole } : {}),
       ...(track.automation.length > 0 ? { automation: track.automation } : {}),
       ...importedTrackMixer(track),
     })),

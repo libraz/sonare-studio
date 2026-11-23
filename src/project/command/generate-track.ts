@@ -17,7 +17,7 @@ import type { TrackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { assertCanAddTracks } from '../mixer';
 import { getProject, notesToProjectEvents, type useProjectStore } from '../store';
-import { type NewEditorNote, TRACK_COLOR_PALETTE } from '../types';
+import { type NewEditorNote, TRACK_COLOR_PALETTE, type TrackRole } from '../types';
 import { type AtomicProjectEdit, executeAtomic } from './history';
 
 /** The project store instance type (Pinia setup store). */
@@ -74,6 +74,8 @@ export interface GeneratedTrack {
   preset?: string;
   /** How the part was generated; recorded on the new track when given. */
   provenance?: TrackProvenance;
+  /** Recorded function of the new track. */
+  role?: TrackRole;
 }
 
 /**
@@ -113,6 +115,7 @@ export function addGeneratedTrack(
         ? { instrument: { kind: 'synth-preset' as const, preset: track.preset } }
         : {}),
       ...(track.provenance !== undefined ? { generated: { ...track.provenance } } : {}),
+      ...(track.role !== undefined ? { role: track.role } : {}),
     },
   ];
   const clipId = edit(1, () =>

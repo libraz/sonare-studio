@@ -434,6 +434,7 @@ export function hydrateProjectFromDocument(
     if (typeof track.percussion === 'boolean') mirrorEntry.percussion = track.percussion;
     const generated = sanitizeProvenance(track.generated);
     if (generated !== undefined) mirrorEntry.generated = generated;
+    if (track.role === 'lead') mirrorEntry.role = track.role;
     if (track.chordFollow === 'chordTones' || track.chordFollow === 'root') {
       mirrorEntry.chordFollow = track.chordFollow;
     }

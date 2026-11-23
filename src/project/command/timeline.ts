@@ -1,3 +1,4 @@
+import type { SectionId } from '@/compose/section-shaping';
 import { sectionsFromArrangement } from '@/compose/sections';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
@@ -305,6 +306,8 @@ export interface SectionInput {
   id?: number;
   /** Section display name. */
   name: string;
+  /** Shaping preset; omitted = the stored kind of the same id, if any. */
+  kind?: SectionId;
   /** Display color; defaults to the shared section color. */
   color?: string;
   /** Section start in PPQ (>= 0). */
@@ -330,15 +333,25 @@ export function setSections(sections: ReadonlyArray<SectionInput>): void {
       );
     }
   }
+  const storedKindById = new Map(
+    store.sections.flatMap((section) =>
+      section.kind !== undefined ? [[section.id, section.kind] as const] : [],
+    ),
+  );
   execute(0, () => {
     store.sections = sections
-      .map((section) => ({
-        id: section.id ?? allocateSectionId(),
-        name: section.name,
-        color: section.color ?? DEFAULT_SECTION_COLOR,
-        startPpq: section.startPpq,
-        endPpq: section.endPpq,
-      }))
+      .map((section) => {
+        const kind =
+          section.kind ?? (section.id !== undefined ? storedKindById.get(section.id) : undefined);
+        return {
+          id: section.id ?? allocateSectionId(),
+          name: section.name,
+          ...(kind !== undefined ? { kind } : {}),
+          color: section.color ?? DEFAULT_SECTION_COLOR,
+          startPpq: section.startPpq,
+          endPpq: section.endPpq,
+        };
+      })
       .sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq || a.id - b.id);
     store.refresh();
   });

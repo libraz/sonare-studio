@@ -6,6 +6,7 @@
  * schema-valid for other DAWs.
  */
 
+import { isSectionId } from '@/compose/section-shaping';
 import { MEBIBYTE } from '@/lib/bytes';
 import { isFiniteNumber } from '@/lib/math';
 import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
@@ -13,7 +14,7 @@ import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf-shared';
-import type { SmfSysExPacket } from '@/project/types';
+import type { SmfSysExPacket, TrackRole } from '@/project/types';
 import { busChannelId, MASTER_CHANNEL_ID } from './format';
 
 /** Vendor marker used for generic BuiltinDevice insert round-trips. */
@@ -28,6 +29,7 @@ export interface SonareTrackMetadata {
   kind?: 'aux';
   stripGainDb?: number;
   vcaId?: string;
+  role?: TrackRole;
   volume?: number;
 }
 
@@ -109,6 +111,7 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
     tracks[`track-${index}`] = {
       ...(track.kind === 'aux' ? { kind: 'aux' } : {}),
       ...(track.vcaId !== undefined ? { vcaId: track.vcaId } : {}),
+      ...(track.role !== undefined ? { role: track.role } : {}),
       ...(finite(track.volume) !== undefined ? { volume: track.volume } : {}),
       ...(finite(strip?.gainDb) !== undefined ? { stripGainDb: strip?.gainDb } : {}),
     };
@@ -194,7 +197,15 @@ function sections(value: unknown): DocumentSection[] {
     ) {
       return [];
     }
-    return [{ name, color, startPpq, endPpq }];
+    return [
+      {
+        name,
+        ...(isSectionId(section?.kind) ? { kind: section.kind } : {}),
+        color,
+        startPpq,
+        endPpq,
+      },
+    ];
   });
 }
 
@@ -378,6 +389,7 @@ export function parseSonareDawprojectMetadata(
           entry.vcaId.length <= MAX_METADATA_STRING_LENGTH
             ? { vcaId: entry.vcaId }
             : {}),
+          ...(entry.role === 'lead' ? { role: 'lead' } : {}),
           ...(optionalFinite(entry.volume) !== undefined ? { volume: entry.volume as number } : {}),
           ...(optionalFinite(entry.stripGainDb) !== undefined
             ? { stripGainDb: entry.stripGainDb as number }

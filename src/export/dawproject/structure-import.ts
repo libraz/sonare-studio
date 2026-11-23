@@ -18,7 +18,7 @@ import type {
   DocumentClip,
   ProjectDocument,
 } from '@/project/serialization';
-import { TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
+import { TRACK_COLOR_PALETTE, type TrackKind, type TrackRole } from '@/project/types';
 import type { DawprojectImportLoss } from './import-loss';
 import { SONARE_DEVICE_VENDOR, type SonareDawprojectMetadata } from './sonare-metadata';
 import { boolAttr, children, numberAttr } from './xml-read';
@@ -42,6 +42,8 @@ export interface ImportedTrack {
   clips: DocumentClip[];
   groupIndex?: number;
   vcaId?: string;
+  /** App-recorded track role from the Sonare sidecar (distinct from the DAWproject channel `role`). */
+  trackRole?: TrackRole;
   mixerOutputBusId?: string;
   sendRefs: DawprojectSendRef[];
   mixerSends?: StripSend[];
@@ -281,6 +283,7 @@ export function readTracks(
       automationRefs: readAutomationParameterRefs(channel, vcaOffsetDb),
       ...(groupIndex !== undefined ? { groupIndex } : {}),
       ...(vcaId !== undefined ? { vcaId } : {}),
+      ...(extension?.role !== undefined ? { trackRole: extension.role } : {}),
     });
     const currentIndex = tracks.length - 1;
     for (const child of children(track, 'Track')) {

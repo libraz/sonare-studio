@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef, watch } from 'vue';
 import { detectScaleHighlightFromTracks } from '@/compose/key';
+import { isSectionId } from '@/compose/section-shaping';
 import { ensureWasm } from '@/lib/wasm';
 import {
   createDefaultScoreDisplaySettings,
@@ -117,7 +118,7 @@ function isDocumentMarker(value: unknown): value is { ppq: number; name: string 
 
 function isDocumentSection(
   value: unknown,
-): value is { name: string; color: string; startPpq: number; endPpq: number } {
+): value is { name: string; kind?: unknown; color: string; startPpq: number; endPpq: number } {
   if (typeof value !== 'object' || value === null) return false;
   const section = value as Record<string, unknown>;
   return (
@@ -736,6 +737,7 @@ export const useProjectStore = defineStore('project', () => {
         .map((section) => ({
           id: allocateSectionId(),
           name: section.name,
+          ...(isSectionId(section.kind) ? { kind: section.kind } : {}),
           color: section.color || DEFAULT_SECTION_COLOR,
           startPpq: section.startPpq,
           endPpq: section.endPpq,

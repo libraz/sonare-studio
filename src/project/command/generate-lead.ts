@@ -11,7 +11,7 @@ import { maxOf, minOf } from '@/lib/math';
 import { MESSAGES } from '@/ui/i18n/messages';
 import { defaultName } from '../default-names';
 import { useProjectStore } from '../store';
-import { clipKind } from '../types';
+import { clipKind, type TrackRole } from '../types';
 import { addMidiClip } from './clips-create';
 import { setActiveClip } from './clips-state';
 import { addGeneratedTrack } from './generate-track';
@@ -47,11 +47,16 @@ function chordProgressionRange(
   return endPpq > startPpq ? { startPpq, endPpq, lengthPpq: endPpq - startPpq } : null;
 }
 
-function isLeadTrack(track: { name: string; kind: string; frozen?: unknown }): boolean {
+function isLeadTrack(track: {
+  name: string;
+  kind: string;
+  frozen?: unknown;
+  role?: TrackRole;
+}): boolean {
+  if (track.kind !== 'midi' || track.frozen !== undefined) return false;
   return (
-    track.kind === 'midi' &&
-    track.frozen === undefined &&
-    LEAD_NAMES.has(normalizedName(track.name))
+    track.role === 'lead' ||
+    (track.role === undefined && LEAD_NAMES.has(normalizedName(track.name)))
   );
 }
 
@@ -72,7 +77,10 @@ export function createLeadMelodyCommand(): number | null {
   const progression = chordProgressionRange(store);
   if (progression === null) return null;
 
-  const leadTracks = store.tracks.filter(isLeadTrack);
+  const nameOrRoleTracks = store.tracks.filter(isLeadTrack);
+  // A track carrying the lead role outranks every track matched only by name.
+  const roleTracks = nameOrRoleTracks.filter((track) => track.role === 'lead');
+  const leadTracks = roleTracks.length > 0 ? roleTracks : nameOrRoleTracks;
   const leadTrack =
     leadTracks.find((track) =>
       store.clips.some(
@@ -117,6 +125,7 @@ export function createLeadMelodyCommand(): number | null {
         notes: [],
         startPpq: progression.startPpq,
         lengthPpq: progression.lengthPpq,
+        role: 'lead',
       },
       edit,
     ),

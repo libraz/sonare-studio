@@ -4,6 +4,7 @@
  */
 
 import { namedScaleMask } from '@libraz/libcantus';
+import { sectionKindForNameKey } from '@/compose/section-shaping';
 import { makeDemoNotes } from '@/engine/instruments';
 import { type DefaultNameKey, defaultName } from './default-names';
 import { PITCH_RANGE_PRESETS, type PitchRange } from './pitch-range';
@@ -16,7 +17,7 @@ import type {
 } from './serialization';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './serialization';
 import { DEFAULT_TEMPO_BPM } from './tempo-map';
-import { TRACK_COLOR_PALETTE } from './types';
+import { TRACK_COLOR_PALETTE, type TrackRole } from './types';
 
 /**
  * NativeSynth preset names used by template instruments. The catalog is only
@@ -94,6 +95,7 @@ interface MidiTrackOptions {
   clipLengthPpq?: number;
   pitchRange?: PitchRange;
   percussion?: boolean;
+  role?: TrackRole;
 }
 
 function midiTrack(
@@ -115,6 +117,7 @@ function midiTrack(
   if (preset !== undefined) track.instrument = { kind: 'synth-preset', preset };
   if (options.pitchRange !== undefined) track.pitchRange = { ...options.pitchRange };
   if (options.percussion !== undefined) track.percussion = options.percussion;
+  if (options.role !== undefined) track.role = options.role;
   return track;
 }
 
@@ -154,8 +157,10 @@ interface SectionSpec {
 function makeSections(specs: ReadonlyArray<SectionSpec>): DocumentSection[] {
   let startPpq = 0;
   return specs.map((spec, index) => {
-    const section = {
+    const kind = sectionKindForNameKey(spec.name);
+    const section: DocumentSection = {
       name: defaultName(spec.name),
+      ...(kind !== null ? { kind } : {}),
       color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
       startPpq,
       endPpq: startPpq + spec.bars * 4,
@@ -233,6 +238,7 @@ export function createTemplate(name: TemplateName): ProjectDocument {
           midiTrack(defaultName('lead'), '#f472b6', PRESET.lead, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.soprano,
+            role: 'lead',
           }),
         ],
         { sections: makeSections(JPOP_SECTIONS) },

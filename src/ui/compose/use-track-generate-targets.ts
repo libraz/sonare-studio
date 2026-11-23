@@ -5,7 +5,7 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
-import { type SectionId, sectionIdFromName } from '@/compose/section-shaping';
+import { type SectionId, sectionKind } from '@/compose/section-shaping';
 import { editableDrumTracks } from '@/compose/tracks';
 import { minOf } from '@/lib/math';
 import type { BatchTarget, TrackPart } from '@/project/commands';
@@ -229,11 +229,11 @@ export function useTrackGenerateTargets(
     );
     if (section === undefined) return;
 
-    const sectionId = sectionIdFromName(section.name);
+    const sectionId = sectionKind(section);
     if (sectionId !== null) drumSection.value = sectionId;
 
     const next = store.sections.find((entry) => entry.startPpq === endPpq);
-    const nextId = next === undefined ? null : sectionIdFromName(next.name);
+    const nextId = next === undefined ? null : sectionKind(next);
     drumNextSection.value = nextId ?? (sectionId === 'prechorus' ? 'chorus' : 'same');
 
     const saved = savedDrumSections.value.find((entry) => entry.id === section.id);

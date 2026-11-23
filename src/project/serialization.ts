@@ -213,6 +213,7 @@ function serializeTrack(
   // The generation record says where the track came from, so it survives
   // renames and edits; it is dropped only when there was never one.
   if (track.generated !== undefined) out.generated = { ...track.generated };
+  if (track.role !== undefined) out.role = track.role;
   if (track.chordFollow !== undefined) out.chordFollow = track.chordFollow;
   if (track.expressionMap !== undefined) out.expressionMap = track.expressionMap;
   // VCA group ids are app-level strings, stable within a document, so they
@@ -310,6 +311,7 @@ export function serializeProject(): ProjectDocument {
     markers: store.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
     sections: store.sections.map((section) => ({
       name: section.name,
+      ...(section.kind !== undefined ? { kind: section.kind } : {}),
       color: section.color,
       startPpq: section.startPpq,
       endPpq: section.endPpq,

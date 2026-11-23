@@ -4,6 +4,7 @@
  * file). See serialization.ts for the converters.
  */
 
+import type { SectionId } from '@/compose/section-shaping';
 import type { DocumentNoteAnnotation, DocumentScoreSettings } from './annotations';
 import type { AutomationParam, AutomationPoint } from './automation';
 import type { EditorChordSymbol } from './chords';
@@ -28,6 +29,7 @@ import type {
   MidiClipTake,
   SmfSysExPacket,
   TrackKind,
+  TrackRole,
 } from './types';
 
 /**
@@ -336,6 +338,8 @@ export interface DocumentTrack {
   percussion?: boolean;
   /** How the track was generated; absent = no recorded generation origin. */
   generated?: TrackProvenance;
+  /** Recorded function of the track; absent = inferred from the name where supported. */
+  role?: TrackRole;
   /** Id of the VCA control group this track belongs to; absent = unassigned. */
   vcaId?: string;
   /** Chord-track follow mode; absent = the track ignores the chord track. */
@@ -381,6 +385,8 @@ export interface DocumentMarker {
 export interface DocumentSection {
   /** Section display name. */
   name: string;
+  /** Shaping preset the section denotes; absent = inferred from the name. */
+  kind?: SectionId;
   /** Display color as a CSS color string. */
   color: string;
   /** Section start in PPQ (>= 0). */

@@ -71,9 +71,16 @@ describe('analyzeAudioClipSections', () => {
       analyzeSections: an.fn,
     });
     expect(sections).toEqual([
-      { name: sectionName(0), color: TRACK_COLOR_PALETTE[0], startPpq: 8, endPpq: 12 },
+      {
+        name: sectionName(0),
+        kind: 'intro',
+        color: TRACK_COLOR_PALETTE[0],
+        startPpq: 8,
+        endPpq: 12,
+      },
       {
         name: sectionName(3),
+        kind: 'chorus',
         color: TRACK_COLOR_PALETTE[3 % TRACK_COLOR_PALETTE.length],
         startPpq: 12,
         endPpq: 16,
@@ -99,9 +106,16 @@ describe('analyzeAudioClipSections', () => {
       ],
     );
     expect(sections).toEqual([
-      { name: sectionName(0), color: TRACK_COLOR_PALETTE[0], startPpq: 0, endPpq: 4 },
+      {
+        name: sectionName(0),
+        kind: 'intro',
+        color: TRACK_COLOR_PALETTE[0],
+        startPpq: 0,
+        endPpq: 4,
+      },
       {
         name: sectionName(3),
+        kind: 'chorus',
         color: TRACK_COLOR_PALETTE[3 % TRACK_COLOR_PALETTE.length],
         startPpq: 4,
         endPpq: 8,
@@ -128,7 +142,13 @@ describe('analyzeAudioClipSections', () => {
       analyzeSections: an.fn,
     });
     expect(sections).toEqual([
-      { name: sectionName(1), color: TRACK_COLOR_PALETTE[1], startPpq: 0, endPpq: 16 },
+      {
+        name: sectionName(1),
+        kind: 'verse',
+        color: TRACK_COLOR_PALETTE[1],
+        startPpq: 0,
+        endPpq: 16,
+      },
     ]);
   });
 

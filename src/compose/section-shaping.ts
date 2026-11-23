@@ -43,3 +43,21 @@ export function sectionIdFromName(name: string): SectionId | null {
   }
   return null;
 }
+
+/** Every section kind, in matching order. */
+export const SECTION_IDS: ReadonlyArray<SectionId> = SECTION_NAME_KEYS.map(([id]) => id);
+
+/** True for a member of the closed section kind list. */
+export function isSectionId(value: unknown): value is SectionId {
+  return (SECTION_IDS as ReadonlyArray<unknown>).includes(value);
+}
+
+/** The section kind a default section name denotes, or null when it denotes none. */
+export function sectionKindForNameKey(key: DefaultNameKey): SectionId | null {
+  return SECTION_NAME_KEYS.find(([, keys]) => keys.includes(key))?.[0] ?? null;
+}
+
+/** A section's recorded kind, falling back to its name. */
+export function sectionKind(section: { name: string; kind?: SectionId }): SectionId | null {
+  return section.kind ?? sectionIdFromName(section.name);
+}

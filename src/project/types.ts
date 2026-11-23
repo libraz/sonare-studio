@@ -1,3 +1,4 @@
+import type { SectionId } from '@/compose/section-shaping';
 import type { MidiNote } from '@/engine/instruments';
 import type { ChordFollowMode } from './chord-follow';
 import type { TrackExpressionMap } from './expression-map';
@@ -122,6 +123,9 @@ export interface LeadFollowStashEntry {
   note: Omit<EditorNote, 'id'>;
 }
 
+/** App-recorded function of a track; the only value is the lead-melody target. */
+export type TrackRole = 'lead';
+
 /**
  * One track in the arrangement mirror.
  *
@@ -167,6 +171,11 @@ export interface EditorTrack {
    * it currently contains.
    */
   generated?: TrackProvenance;
+  /**
+   * Recorded function of the track (app-level); survives a rename. Absent = the
+   * function is inferred from the name where that is supported.
+   */
+  role?: TrackRole;
   /**
    * VCA control-group membership (app-level): id of the {@link VcaGroup} whose
    * fader offsets this track's gain. Absent = unassigned. The VCA fader makes
@@ -544,6 +553,8 @@ export interface EditorSection {
   id: number;
   /** Section display name. */
   name: string;
+  /** Shaping preset the section denotes; survives a rename. Absent = inferred from the name. */
+  kind?: SectionId;
   /** Display color as a CSS color string. */
   color: string;
   /** Section start in PPQ (>= 0). */
