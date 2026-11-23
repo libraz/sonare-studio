@@ -45,7 +45,8 @@ interface MediaLeaseStore {
   counts: Map<string, number>;
   deleting: Set<string>;
   remoteLeases: Map<string, RemoteLeaseSnapshot>;
-  remoteDeleting: Map<string, number>;
+  /** Ids a peer announced it is deleting, with the announcing session so its close can clear them. */
+  remoteDeleting: Map<string, { sessionId: string; expiresAt: number }>;
   deletionInProgress(id: string): Error;
   deleteUnlocked(id: string): Promise<void>;
   publishDeleteIntent(ids: string[]): void;
@@ -139,8 +140,8 @@ function pruneExpiredRemoteLeases(now = Date.now()): void {
     for (const [sessionId, snapshot] of store.remoteLeases) {
       if (snapshot.expiresAt <= now) store.remoteLeases.delete(sessionId);
     }
-    for (const [id, expiresAt] of store.remoteDeleting) {
-      if (expiresAt <= now) store.remoteDeleting.delete(id);
+    for (const [id, intent] of store.remoteDeleting) {
+      if (intent.expiresAt <= now) store.remoteDeleting.delete(id);
     }
   }
 }
@@ -154,7 +155,13 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
     return;
   }
   if (message.type === 'closed') {
-    for (const store of stores) store.remoteLeases.delete(message.sessionId);
+    for (const store of stores) {
+      store.remoteLeases.delete(message.sessionId);
+      // A peer that closed mid-delete will never send delete-complete.
+      for (const [id, intent] of store.remoteDeleting) {
+        if (intent.sessionId === message.sessionId) store.remoteDeleting.delete(id);
+      }
+    }
     return;
   }
   if (
@@ -162,9 +169,9 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
     isStringArray(message.assetIds) &&
     isStringArray(message.fontIds)
   ) {
-    const expiresAt = Date.now() + REMOTE_LEASE_TTL_MS;
-    for (const id of message.assetIds) audioStore.remoteDeleting.set(id, expiresAt);
-    for (const id of message.fontIds) fontStore.remoteDeleting.set(id, expiresAt);
+    const intent = { sessionId: message.sessionId, expiresAt: Date.now() + REMOTE_LEASE_TTL_MS };
+    for (const id of message.assetIds) audioStore.remoteDeleting.set(id, intent);
+    for (const id of message.fontIds) fontStore.remoteDeleting.set(id, intent);
     // This is the delete-intent acknowledgement: send our current lease
     // snapshot before the peer's final in-lock recheck.
     publishLocalLeases();
@@ -191,11 +198,13 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
 });
 
 if (typeof window !== 'undefined') {
-  window.addEventListener(
-    'pagehide',
-    () => postLeaseMessage({ type: 'closed', sessionId: leaseSessionId }),
-    { once: true },
+  window.addEventListener('pagehide', () =>
+    postLeaseMessage({ type: 'closed', sessionId: leaseSessionId }),
   );
+  // A page restored from the back/forward cache announced 'closed' when hidden: re-advertise.
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) publishLocalLeases();
+  });
 }
 publishLocalLeases();
 
