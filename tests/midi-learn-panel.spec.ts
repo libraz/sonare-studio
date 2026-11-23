@@ -5,6 +5,7 @@ import { ref } from 'vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
+import { sanitizeControlSurfaceSettings } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
@@ -230,7 +231,8 @@ describe('MidiLearnPanel control surface', () => {
     const store = useProjectStore();
     const input = (wrapper as VueWrapper).find<HTMLInputElement>('.ml-surface-bank-size');
     for (const [typed, expected] of [
-      ['20', 8],
+      ['40', 32],
+      ['20', 20],
       ['-3', 1],
       ['2.5', 3],
       ['', 3],
@@ -278,7 +280,11 @@ describe('MidiLearnPanel control surface', () => {
       pan: 0,
       order: index,
     }));
-    store.controlSurface = { ...store.controlSurface, protocol: 'mcu', bankSize: 16 };
+    store.controlSurface = sanitizeControlSurfaceSettings({
+      ...store.controlSurface,
+      protocol: 'mcu',
+      bankSize: 16,
+    });
     await (wrapper as VueWrapper).setProps({ tracks: store.tracks });
 
     const [, next] = (wrapper as VueWrapper).findAll('.ml-bank-step');

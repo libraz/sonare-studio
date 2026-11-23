@@ -21,7 +21,6 @@ import {
   parseMidiLearnInsertTargetId,
   parseMidiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
-import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
 import ControlSurfaceSettings from './ControlSurfaceSettings.vue';
 
 /**
@@ -187,9 +186,9 @@ const transportRows = computed(() =>
 
 // --- Control surface ---------------------------------------------------------
 
-/** Slots the bank grid exposes: the surface width, capped at one bank. */
+/** Slots the bank grid exposes: one per strip of the surface. */
 const bankSlots = computed(() =>
-  Array.from({ length: Math.min(SURFACE_STRIP_COUNT, store.controlSurface.bankSize) }, (_, i) => i),
+  Array.from({ length: store.controlSurface.bankSize }, (_, i) => i),
 );
 
 /**

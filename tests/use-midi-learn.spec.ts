@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
+import { sanitizeControlSurfaceSettings } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import {
@@ -344,12 +345,12 @@ describe('useMidiLearn', () => {
   it('pages a native-protocol surface by the strips it addresses, reaching every track', () => {
     const store = useProjectStore();
     store.tracks = trackList(20);
-    store.controlSurface = {
+    store.controlSurface = sanitizeControlSurfaceSettings({
       ...store.controlSurface,
       protocol: 'mcu',
       bankSize: 16,
       bankOffset: 0,
-    };
+    });
     const learn = useMidiLearn();
     learn.armId(midiLearnBankActionTargetId('next'));
     learn.handleCc({ channel: 0, controller: 47, value: 127 });

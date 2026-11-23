@@ -30,11 +30,19 @@ export const CONTROL_SURFACE_PROTOCOLS: ReadonlyArray<ControlSurfaceProtocol> = 
 /** Default number of physical strips assumed for a surface. */
 export const DEFAULT_CONTROL_SURFACE_BANK_SIZE = 8;
 
+/**
+ * Widest bank a surface may declare: an MCU/HUI surface addresses
+ * {@link SURFACE_STRIP_COUNT} strips on its port, a learned-CC surface any slot.
+ */
+export function maxControlSurfaceBankSize(protocol: ControlSurfaceProtocol): number {
+  return protocol === 'none' ? MAX_CONTROL_SURFACE_SLOTS : SURFACE_STRIP_COUNT;
+}
+
 /** Persisted control-surface configuration. */
 export interface ControlSurfaceSettings {
   /** Native protocol to decode, or `none` for plain learned CC. */
   protocol: ControlSurfaceProtocol;
-  /** Physical strips on the surface (1..{@link MAX_CONTROL_SURFACE_SLOTS}). */
+  /** Physical strips on the surface (1..{@link maxControlSurfaceBankSize} of its protocol). */
   bankSize: number;
   /** Index of the track shown on slot 0. */
   bankOffset: number;
@@ -86,11 +94,17 @@ export function sanitizeControlSurfaceSettings(value: unknown): ControlSurfaceSe
   const defaults = defaultControlSurfaceSettings();
   if (typeof value !== 'object' || value === null) return defaults;
   const record = value as Record<string, unknown>;
+  const protocol = CONTROL_SURFACE_PROTOCOLS.includes(record.protocol as ControlSurfaceProtocol)
+    ? (record.protocol as ControlSurfaceProtocol)
+    : defaults.protocol;
   return {
-    protocol: CONTROL_SURFACE_PROTOCOLS.includes(record.protocol as ControlSurfaceProtocol)
-      ? (record.protocol as ControlSurfaceProtocol)
-      : defaults.protocol,
-    bankSize: clampInt(Number(record.bankSize), 1, MAX_CONTROL_SURFACE_SLOTS, defaults.bankSize),
+    protocol,
+    bankSize: clampInt(
+      Number(record.bankSize),
+      1,
+      maxControlSurfaceBankSize(protocol),
+      defaults.bankSize,
+    ),
     bankOffset: clampInt(
       Number(record.bankOffset),
       0,
@@ -119,18 +133,6 @@ export function clampBankOffset(offset: number, trackCount: number, bankSize: nu
   return Math.min(highest, Math.max(0, Math.floor(offset)));
 }
 
-/**
- * Tracks one bank step moves over: the full bank size without a protocol, but
- * never more than the strips an MCU/HUI surface physically addresses.
- */
-export function bankPagingSize(
-  surface: Pick<ControlSurfaceSettings, 'protocol' | 'bankSize'>,
-): number {
-  return surface.protocol === 'none'
-    ? surface.bankSize
-    : Math.min(SURFACE_STRIP_COUNT, surface.bankSize);
-}
-
 /** Offset after paging one bank towards the end of the track list. */
 export function nextBankOffset(offset: number, trackCount: number, bankSize: number): number {
   const size = Math.max(1, Math.floor(bankSize));
@@ -143,17 +145,16 @@ export function previousBankOffset(offset: number, trackCount: number, bankSize:
   return clampBankOffset(clampBankOffset(offset, trackCount, size) - size, trackCount, size);
 }
 
-/** Bank offset after a bank navigation action, paging by {@link bankPagingSize}. */
+/** Bank offset after a bank navigation action, paging by the bank size. */
 export function bankOffsetAfter(
   action: MidiLearnBankAction,
-  surface: Pick<ControlSurfaceSettings, 'protocol' | 'bankSize' | 'bankOffset'>,
+  surface: Pick<ControlSurfaceSettings, 'bankSize' | 'bankOffset'>,
   trackCount: number,
 ): number {
   if (action === 'home') return 0;
-  const size = bankPagingSize(surface);
   return action === 'next'
-    ? nextBankOffset(surface.bankOffset, trackCount, size)
-    : previousBankOffset(surface.bankOffset, trackCount, size);
+    ? nextBankOffset(surface.bankOffset, trackCount, surface.bankSize)
+    : previousBankOffset(surface.bankOffset, trackCount, surface.bankSize);
 }
 
 /**

@@ -26,12 +26,7 @@ import {
   setVcaGroupMute,
   setVcaGroupSolo,
 } from '@/project/commands';
-import {
-  bankOffsetAfter,
-  bankPagingSize,
-  bankSlotTrackId,
-  clampBankOffset,
-} from '@/project/control-surface';
+import { bankOffsetAfter, bankSlotTrackId, clampBankOffset } from '@/project/control-surface';
 import {
   DEFAULT_DUAL_PAN,
   MAX_CHANNEL_DELAY_SAMPLES,
@@ -267,7 +262,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       bankOffset: clampBankOffset(
         surface.bankOffset + Math.round(delta),
         store.tracks.length,
-        bankPagingSize(surface),
+        surface.bankSize,
       ),
     };
   }

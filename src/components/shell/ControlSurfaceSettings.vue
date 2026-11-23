@@ -3,15 +3,14 @@ import { computed } from 'vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import {
   bankOffsetAfter,
-  bankPagingSize,
   CONTROL_SURFACE_PROTOCOLS,
   type ControlSurfaceProtocol,
+  maxControlSurfaceBankSize,
   sanitizeControlSurfaceSettings,
 } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
 import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 
 /**
@@ -43,7 +42,7 @@ function onBankSizeChange(event: Event): void {
     restoreInputValue(event, surfaceSettings.value.bankSize);
     return;
   }
-  updateSurface({ bankSize: Math.min(SURFACE_STRIP_COUNT, bankSize) });
+  updateSurface({ bankSize });
 }
 
 const protocolChoices = computed(() =>
@@ -58,10 +57,7 @@ const bankRange = computed(() => {
   const total = props.trackCount;
   if (total === 0) return '';
   const from = Math.min(total, surfaceSettings.value.bankOffset + 1);
-  const to = Math.min(
-    total,
-    surfaceSettings.value.bankOffset + bankPagingSize(surfaceSettings.value),
-  );
+  const to = Math.min(total, surfaceSettings.value.bankOffset + surfaceSettings.value.bankSize);
   return formatMessage(t.value.shell.midiLearn.surfaceBankRange, {
     from: String(from),
     to: String(to),
@@ -191,7 +187,7 @@ function moveBank(action: 'prev' | 'next'): void {
         type="number"
         class="ml-number ml-surface-bank-size"
         min="1"
-        :max="SURFACE_STRIP_COUNT"
+        :max="maxControlSurfaceBankSize(surfaceSettings.protocol)"
         :value="surfaceSettings.bankSize"
         @change="onBankSizeChange"
       />
