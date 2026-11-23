@@ -477,16 +477,23 @@ const { sf2ManifestProbe, sf2ManifestPresets } = useSoundFontManifestProbe({
   sf2Selection,
 });
 
+/** Bumped per refresh; only the newest listing may write the list or clear the loading flag. */
+let fontsGeneration = 0;
+
 async function refreshFonts(): Promise<void> {
+  const generation = ++fontsGeneration;
   fontsLoading.value = true;
   try {
-    fonts.value = await listFonts();
+    const listed = await listFonts();
+    if (disposed || generation !== fontsGeneration) return;
+    fonts.value = listed;
     error.value = '';
   } catch (err) {
+    if (disposed || generation !== fontsGeneration) return;
     fonts.value = [];
     error.value = describeError(err, t.value.notices.errors);
   } finally {
-    fontsLoading.value = false;
+    if (generation === fontsGeneration) fontsLoading.value = false;
   }
 }
 
