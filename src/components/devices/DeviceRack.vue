@@ -7,69 +7,31 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
-import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
 import { describeError } from '@/lib/errors';
-import { deleteSoundFontIfUnreferenced } from '@/persistence/gc';
-import { readFileBytesBounded } from '@/persistence/local-file';
-import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import {
   addInsert,
   removeInsert,
   reorderInsert,
   setInsertEnabled,
-  setProjectExternalMidiDefault,
-  setProjectExternalMidiDefaultForTracks,
-  setTrackExternalMidiMode,
   setTrackInstrument,
 } from '@/project/commands';
-import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
-import {
-  DEFAULT_SYNTH_PRESET,
-  type ExternalMidiInstrument,
-  effectiveTrackInstrument,
-  GM2_DRUM_BANK,
-  gmProgramForPreset,
-  type Sf2ChannelProgram,
-} from '@/project/instrument';
+import { effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
-import {
-  collectActiveSoundFontUsage,
-  hasSoundFontSlotConflict,
-} from '@/project/soundfont-conflicts';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { createPatchAudition, type PatchAudition } from '@/ui/devices/audition';
 import { instrumentLabel, patchBaseLabel } from '@/ui/devices/device-labels';
-import {
-  gm2ProgramName,
-  gmCatalog,
-  gmFamilies,
-  gmProgramName,
-  trackIsDrums,
-} from '@/ui/devices/gm-catalog';
+import { gm2ProgramName, gmCatalog, gmProgramName } from '@/ui/devices/gm-catalog';
 import { patchEditCount } from '@/ui/devices/patch-draft';
 import { groupPresets, type PresetCategory } from '@/ui/devices/preset-filter';
-import {
-  buildSf2Instrument,
-  clampBank,
-  clampChannel,
-  clampGain,
-  clampPolyphony,
-  clampProgram,
-  createSf2Selection,
-  MAX_SF2_GAIN,
-  MAX_SF2_POLYPHONY,
-  MIN_SF2_POLYPHONY,
-} from '@/ui/devices/sf2-model';
-import {
-  type Sf2ManifestPreset,
-  useSoundFontManifestProbe,
-} from '@/ui/devices/use-sound-font-manifest-probe';
-import { firstBlock } from '@/ui/disabled-reason';
+import { MAX_SF2_GAIN, MAX_SF2_POLYPHONY, MIN_SF2_POLYPHONY } from '@/ui/devices/sf2-model';
+import { useExternalMidiPicker } from '@/ui/devices/use-external-midi-picker';
+import { useGmProgramPicker } from '@/ui/devices/use-gm-program-picker';
+import { useSoundFontPicker } from '@/ui/devices/use-sound-font-picker';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
-import { readInputNumber, restoreUnreadableInput } from '@/ui/numeric-input';
+import { restoreUnreadableInput } from '@/ui/numeric-input';
 import { formatSize } from '@/ui/shell/format';
 import StripAutomationControls from '../mixer/StripAutomationControls.vue';
 import AmpSimEditor from './AmpSimEditor.vue';
@@ -181,27 +143,7 @@ function audition(candidate: NonNullable<typeof instrument.value>): void {
 
 // --- Instrument label / font name resolution ----------------------------------
 
-/** Cached display names of stored fonts, by font id. */
-const fontNames = ref<Record<string, string>>({});
 let disposed = false;
-
-watch(
-  instrument,
-  (current) => {
-    if (current?.kind !== 'sf2') return;
-    const fontId = current.fontId;
-    if (fontNames.value[fontId] !== undefined) return;
-    loadFontMeta(fontId)
-      .then((meta) => {
-        if (disposed) return;
-        fontNames.value = { ...fontNames.value, [fontId]: meta.name };
-      })
-      .catch(() => {
-        // Missing fonts keep the shortened-id fallback label.
-      });
-  },
-  { immediate: true },
-);
 
 const instrumentCaption = computed(() => {
   const current = instrument.value;
@@ -281,109 +223,18 @@ const filteredPresetCount = computed(() =>
   presetGroups.value.reduce((sum, group) => sum + group.presets.length, 0),
 );
 
-const gmProgram = ref(0);
-const gmBank = ref(0);
-const gmIsDrums = computed(() => {
-  const track = activeTrack.value;
-  return trackIsDrums(track, () =>
-    track ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes) : [],
-  );
-});
-
-/** NativeSynth reads GS variations from CC0, or GM2 variations from CC32 with MSB 121. */
-function gmEffectiveBank(bank: number): number {
-  const msb = bank >> 7;
-  return msb === 121 ? bank & 0x7f : msb;
-}
-
-function gmVariationLabel(bank: number, program: number): string {
-  const name = gm2ProgramName(bank, program);
-  const base = gmProgramName(program);
-  return name && name !== base ? `${bank} · ${name}` : String(bank);
-}
-const gmProgramOptions = computed(() => {
-  const catalog = gmCatalog();
-  return Array.from({ length: 128 }, (_, program) => {
-    const name = gmIsDrums.value ? catalog?.synthGsDrumKitName?.(program) : gmProgramName(program);
-    if (name === null || name === undefined) return null;
-    const sameAsStandard =
-      gmIsDrums.value && program !== 0
-        ? catalog?.synthGsDrumKitIsVoicedApart?.(program) === false
-        : false;
-    const option: { value: number; label: string; disabled: boolean; detail?: string } = {
-      value: program,
-      label: `${String(program + 1).padStart(3, '0')} · ${name}`,
-      disabled: sameAsStandard,
-    };
-    if (sameAsStandard) option.detail = t.value.shell.devicesPanel.reasons.kitSameAsStandard;
-    return option;
-  }).filter(
-    (option): option is { value: number; label: string; disabled: boolean; detail?: string } =>
-      option !== null,
-  );
-});
-
-const gmUseBlocked = computed(() =>
-  firstBlock([gmProgramOptions.value.length === 0, t.value.shell.devicesPanel.reasons.noGmCatalog]),
-);
-const gmBankOptions = computed(() => {
-  const catalog = gmCatalog();
-  const options: { value: number; label: string }[] = [
-    { value: 0, label: t.value.shell.devicesPanel.gmStandard },
-  ];
-  if (gmIsDrums.value) return options;
-  if (catalog?.synthGsVariationIsVoicedApart) {
-    for (let bank = 1; bank < 128; bank++) {
-      if (catalog.synthGsVariationIsVoicedApart(bank, gmProgram.value) !== true) continue;
-      options.push({ value: bank << 7, label: gmVariationLabel(bank, gmProgram.value) });
-    }
-  }
-  // Keep an imported GM2 or GS bank selectable without rewriting its original CC bytes.
-  const current = instrument.value;
-  if (current?.kind === 'synth-preset' && current.useGmPrograms && current.gmBank) {
-    const bank = gmEffectiveBank(current.gmBank);
-    if (!options.some((option) => option.value === current.gmBank)) {
-      options.push({ value: current.gmBank, label: gmVariationLabel(bank, gmProgram.value) });
-    }
-  }
-  return options;
-});
-
-function seedGmSelection(): void {
-  const current = instrument.value;
-  gmBank.value =
-    current?.kind === 'synth-preset' && current.useGmPrograms ? (current.gmBank ?? 0) : 0;
-  if (current?.kind === 'synth-preset' && current.useGmPrograms) {
-    gmProgram.value = current.gmProgram ?? 0;
-  } else if (current?.kind === 'synth-preset') {
-    gmProgram.value = gmIsDrums.value ? 0 : gmProgramForPreset(current.preset);
-  } else {
-    gmProgram.value = 0;
-  }
-  if (!gmBankOptions.value.some((option) => option.value === gmBank.value)) gmBank.value = 0;
-}
-
-function selectGmProgram(program: number): void {
-  gmProgram.value = program;
-  if (!gmBankOptions.value.some((option) => option.value === gmBank.value)) gmBank.value = 0;
-}
-
-function useGmInstrument(): void {
-  const track = activeTrack.value;
-  if (!track) return;
-  const current = instrument.value;
-  const preset = current?.kind === 'synth-preset' ? current.preset : DEFAULT_SYNTH_PRESET;
-  run(() =>
-    setTrackInstrument(track.id, {
-      kind: 'synth-preset',
-      preset,
-      useGmPrograms: true,
-      gmBank: gmIsDrums.value ? GM2_DRUM_BANK : gmBank.value,
-      gmProgram: gmProgram.value,
-    }),
-  );
-  pickerOpen.value = false;
-}
+const {
+  gmProgram,
+  gmBank,
+  gmIsDrums,
+  gmEffectiveBank,
+  gmProgramOptions,
+  gmUseBlocked,
+  gmBankOptions,
+  seedGmSelection,
+  selectGmProgram,
+  useGmInstrument,
+} = useGmProgramPicker({ activeTrack, instrument, run, pickerOpen });
 
 function presetCategoryLabel(category: PresetCategory): string {
   return t.value.shell.devicesPanel.presetCategories[category];
@@ -406,8 +257,7 @@ function openInstrumentPicker(): void {
   pickerOpen.value = true;
   refreshPresetCatalog();
   seedGmSelection();
-  sf2Selection.value = createSf2Selection(instrument.value);
-  sf2MultiTimbral.value = sf2Selection.value.channelMap.length > 0;
+  seedSf2Selection();
   syncExternalSelection();
   if (instrument.value?.kind === 'synth-preset' && instrument.value.useGmPrograms)
     pickerTab.value = 'gm';
@@ -465,340 +315,61 @@ function choosePreset(preset: string): void {
 
 // --- SF2 tab ---------------------------------------------------------------------
 
-const fonts = ref<SoundFontMeta[]>([]);
-const fontsLoading = ref(false);
-const sf2Selection = ref(createSf2Selection(null));
-// Whether the SF2 tab shows the multi-timbral channel map. Seeded from the
-// loaded instrument so a saved channel map reopens expanded.
-const sf2MultiTimbral = ref(false);
+// --- External MIDI tab -------------------------------------------------------------
 
-const { sf2ManifestProbe, sf2ManifestPresets } = useSoundFontManifestProbe({
-  pickerOpen,
-  pickerTab,
+// --- SF2 tab ---------------------------------------------------------------------
+
+const {
+  fonts,
+  fontsLoading,
   sf2Selection,
-});
-
-/** Bumped per refresh; only the newest listing may write the list or clear the loading flag. */
-let fontsGeneration = 0;
-
-async function refreshFonts(): Promise<void> {
-  const generation = ++fontsGeneration;
-  fontsLoading.value = true;
-  try {
-    const listed = await listFonts();
-    if (disposed || generation !== fontsGeneration) return;
-    fonts.value = listed;
-    error.value = '';
-  } catch (err) {
-    if (disposed || generation !== fontsGeneration) return;
-    fonts.value = [];
-    error.value = describeError(err, t.value.notices.errors);
-  } finally {
-    if (generation === fontsGeneration) fontsLoading.value = false;
-  }
-}
-
-function selectFont(id: string): void {
-  sf2Selection.value = { ...sf2Selection.value, fontId: id };
-}
-
-function fontIsReferenced(fontId: string): boolean {
-  return store.tracks.some(
-    (track) => track.instrument?.kind === 'sf2' && track.instrument.fontId === fontId,
-  );
-}
-
-/** A SoundFont a track plays from cannot be deleted from storage. */
-function fontRemoveBlocked(fontId: string): string | null {
-  return firstBlock([fontIsReferenced(fontId), t.value.shell.devicesPanel.reasons.fontInUse]);
-}
-
-const useSf2Blocked = computed(() =>
-  firstBlock([sf2Selection.value.fontId === null, t.value.shell.devicesPanel.reasons.noFont]),
-);
-
-async function removeFont(fontId: string): Promise<void> {
-  try {
-    const removed = await deleteSoundFontIfUnreferenced(fontId, () => fontIsReferenced(fontId));
-    if (!removed) {
-      error.value = t.value.shell.devicesPanel.reasons.fontInUse;
-      return;
-    }
-    if (sf2Selection.value.fontId === fontId) {
-      sf2Selection.value = { ...sf2Selection.value, fontId: null };
-    }
-    await refreshFonts();
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
-
-function onBankInput(event: Event): void {
-  const raw = readInputNumber(event);
-  if (raw === null) return;
-  sf2Selection.value = { ...sf2Selection.value, bank: clampBank(raw) };
-}
-
-function onProgramInput(event: Event): void {
-  const raw = readInputNumber(event);
-  if (raw === null) return;
-  sf2Selection.value = { ...sf2Selection.value, program: clampProgram(raw) };
-}
-
-function selectSf2Program(program: number): void {
-  sf2Selection.value = { ...sf2Selection.value, program: clampProgram(program) };
-  const candidate = buildSf2Instrument(sf2Selection.value);
-  if (candidate) audition(candidate);
-}
-
-function setMultiTimbral(enabled: boolean): void {
-  sf2MultiTimbral.value = enabled;
-  // Turning the map off drops every per-channel override so the instrument
-  // returns to single-timbral rendering.
-  if (!enabled && sf2Selection.value.channelMap.length > 0) {
-    sf2Selection.value = { ...sf2Selection.value, channelMap: [] };
-  }
-}
-
-function onChannelMapUpdate(channelMap: Sf2ChannelProgram[]): void {
-  sf2Selection.value = { ...sf2Selection.value, channelMap };
-}
-
-function onGainInput(event: Event): void {
-  const raw = readInputNumber(event);
-  if (raw === null) return;
-  sf2Selection.value = { ...sf2Selection.value, gain: clampGain(raw) };
-}
-
-function onPolyphonyInput(event: Event): void {
-  const raw = readInputNumber(event);
-  if (raw === null) return;
-  sf2Selection.value = { ...sf2Selection.value, polyphony: clampPolyphony(raw) };
-}
-
-function onPreferModelInput(event: Event): void {
-  const checked = (event.target as HTMLInputElement).checked;
-  sf2Selection.value = { ...sf2Selection.value, preferModel: checked };
-}
-
-function onSf2EfxRealizationInput(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value;
-  sf2Selection.value = {
-    ...sf2Selection.value,
-    gsEfxRealization: value === 'classic' ? 'classic' : 'modern',
-  };
-}
-
-function useSf2(): void {
-  const track = activeTrack.value;
-  const next = buildSf2Instrument(sf2Selection.value);
-  if (!track || !next) return;
-  run(() => setTrackInstrument(track.id, next));
-  pickerOpen.value = false;
-}
-
-function soundFontDisplayName(fontId: string): string {
-  return fonts.value.find((font) => font.id === fontId)?.name ?? fontNames.value[fontId] ?? fontId;
-}
-
-const soundFontSlotWarning = computed(() => {
-  const track = activeTrack.value;
-  if (!track || pickerTab.value !== 'sf2') return '';
-  const selected = buildSf2Instrument(sf2Selection.value);
-  const tracks = selected
-    ? store.tracks.map((candidate) =>
-        candidate.id === track.id ? { ...candidate, instrument: selected } : candidate,
-      )
-    : store.tracks;
-  const usage = collectActiveSoundFontUsage(tracks, (candidate) =>
-    effectiveTrackInstrument(candidate, store.projectExternalMidi),
-  );
-  if (!hasSoundFontSlotConflict(usage) || usage.winningFontId === undefined) return '';
-  return formatMessage(t.value.shell.devicesPanel.soundFontSlotWarning, {
-    count: String(usage.fontIds.length),
-    font: soundFontDisplayName(usage.winningFontId),
-  });
-});
-
-// --- SF2 GM / GM2 program browser ---------------------------------------------
-
-const gmFamilyList = computed(() => gmFamilies());
-
-const selectedGmFamily = computed(() => Math.floor(sf2Selection.value.program / 8));
-
-const gmFamilyOptions = computed(() =>
-  gmFamilyList.value.map((family) => ({
-    value: String(family.index),
-    label: `${family.index + 1}. ${family.name}`,
-  })),
-);
-
-function onGmFamilyChange(value: string): void {
-  const family = Number(value);
-  if (!Number.isInteger(family)) return;
-  const firstProgram = gmFamilyList.value.find((entry) => entry.index === family)?.firstProgram;
-  if (firstProgram !== undefined) selectSf2Program(firstProgram);
-}
-
-function gmInstrumentName(program: number): string {
-  return gmProgramName(program) ?? `Program ${program}`;
-}
-
-const sf2ProgramName = computed(() => {
-  const { bank, program } = sf2Selection.value;
-  return gm2ProgramName(bank, program) ?? gmInstrumentName(program);
-});
-
-const sf2ProgramOptions = computed(() => {
-  const first = selectedGmFamily.value * 8;
-  return Array.from({ length: 8 }, (_, offset) => {
-    const program = first + offset;
-    return {
-      program,
-      gmName: gmInstrumentName(program),
-      gm2Name: gm2ProgramName(sf2Selection.value.bank, program),
-    };
-  });
-});
-
-function selectSf2ManifestPreset(preset: Sf2ManifestPreset): void {
-  sf2Selection.value = {
-    ...sf2Selection.value,
-    bank: preset.bank,
-    program: preset.program,
-  };
-}
-
-async function onSf2FileChange(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  try {
-    const data = await readFileBytesBounded(file, MAX_SOUNDFONT_FILE_BYTES);
-    const meta = await saveFont({ name: file.name }, data);
-    fontNames.value = { ...fontNames.value, [meta.id]: meta.name };
-    await refreshFonts();
-    selectFont(meta.id);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
+  sf2MultiTimbral,
+  fontNames,
+  sf2ManifestProbe,
+  sf2ManifestPresets,
+  refreshFonts,
+  selectFont,
+  fontRemoveBlocked,
+  useSf2Blocked,
+  removeFont,
+  onBankInput,
+  onProgramInput,
+  selectSf2Program,
+  setMultiTimbral,
+  onChannelMapUpdate,
+  onGainInput,
+  onPolyphonyInput,
+  onPreferModelInput,
+  onSf2EfxRealizationInput,
+  useSf2,
+  soundFontSlotWarning,
+  selectedGmFamily,
+  gmFamilyOptions,
+  onGmFamilyChange,
+  sf2ProgramName,
+  sf2ProgramOptions,
+  selectSf2ManifestPreset,
+  onSf2FileChange,
+  seedSf2Selection,
+} = useSoundFontPicker({ activeTrack, instrument, run, error, pickerOpen, pickerTab, audition });
 
 // --- External MIDI tab -------------------------------------------------------------
 
-const webMidiOutputs = useWebMidiOutputs();
-
-interface ExternalSelection {
-  outputPortId: string;
-  channel: number;
-  sendClock: boolean;
-}
-
-const externalSelection = ref<ExternalSelection>({
-  outputPortId: '',
-  channel: 0,
-  sendClock: false,
-});
-
-const externalBlocked = computed(() =>
-  firstBlock([
-    externalSelection.value.outputPortId.length === 0,
-    t.value.shell.devicesPanel.reasons.noMidiPort,
-  ]),
-);
-
-/** Output ports as SelectMenu options (empty placeholder while none chosen). */
-const externalPortOptions = computed<{ value: string; label: string }[]>(() => [
-  { value: '', label: t.value.shell.devicesPanel.externalMidiPort },
-  ...webMidiOutputs.outputs.value.map((port) => ({ value: port.id, label: port.name })),
-]);
-
-/** Seeds the external selection from the current instrument (or sane defaults). */
-function syncExternalSelection(): void {
-  const track = activeTrack.value;
-  const current =
-    track?.externalMidiMode === 'project'
-      ? store.projectExternalMidi
-      : track?.instrument?.kind === 'external-midi'
-        ? track.instrument
-        : store.projectExternalMidi;
-  externalSelection.value =
-    current?.kind === 'external-midi'
-      ? {
-          outputPortId: current.outputPortId,
-          channel: current.channel,
-          sendClock: current.sendClock === true,
-        }
-      : { outputPortId: '', channel: 0, sendClock: false };
-}
-
-function onExternalPortChange(portId: string): void {
-  externalSelection.value = { ...externalSelection.value, outputPortId: portId };
-}
-
-function onExternalChannelInput(event: Event): void {
-  const raw = readInputNumber(event);
-  if (raw === null) return;
-  const channel = clampChannel(raw - 1);
-  externalSelection.value = { ...externalSelection.value, channel };
-}
-
-function onExternalClockToggle(event: Event): void {
-  externalSelection.value = {
-    ...externalSelection.value,
-    sendClock: (event.target as HTMLInputElement).checked,
-  };
-}
-
-function selectedExternalInstrument(): ExternalMidiInstrument | null {
-  const sel = externalSelection.value;
-  if (sel.outputPortId.length === 0) return null;
-  return {
-    kind: 'external-midi',
-    outputPortId: sel.outputPortId,
-    channel: sel.channel,
-    ...(sel.sendClock ? { sendClock: true } : {}),
-  };
-}
-
-function useExternalMidi(): void {
-  const track = activeTrack.value;
-  const next = selectedExternalInstrument();
-  if (!track || !next) return;
-  run(() => setTrackInstrument(track.id, next));
-  pickerOpen.value = false;
-}
-
-function saveProjectExternalMidi(): void {
-  const next = selectedExternalInstrument();
-  if (!next) return;
-  run(() => setProjectExternalMidiDefault(next));
-}
-
-function useProjectExternalMidi(): void {
-  const track = activeTrack.value;
-  const next = selectedExternalInstrument();
-  if (!track || !next) return;
-  run(() => setProjectExternalMidiDefaultForTracks(next, [track.id]));
-  pickerOpen.value = false;
-}
-
-function useProjectExternalMidiForAll(): void {
-  const next = selectedExternalInstrument();
-  if (!next) return;
-  const trackIds = store.tracks.filter((track) => track.kind === 'midi').map((track) => track.id);
-  if (trackIds.length === 0) return;
-  run(() => setProjectExternalMidiDefaultForTracks(next, trackIds));
-  pickerOpen.value = false;
-}
-
-function leaveProjectExternalMidi(): void {
-  const track = activeTrack.value;
-  if (!track) return;
-  run(() => setTrackExternalMidiMode(track.id, null));
-}
+const {
+  webMidiOutputs,
+  externalSelection,
+  externalBlocked,
+  externalPortOptions,
+  syncExternalSelection,
+  onExternalPortChange,
+  onExternalChannelInput,
+  onExternalClockToggle,
+  useExternalMidi,
+  saveProjectExternalMidi,
+  useProjectExternalMidi,
+  useProjectExternalMidiForAll,
+  leaveProjectExternalMidi,
+} = useExternalMidiPicker({ activeTrack, run, pickerOpen });
 
 // --- Patch tab / editor ------------------------------------------------------------
 
