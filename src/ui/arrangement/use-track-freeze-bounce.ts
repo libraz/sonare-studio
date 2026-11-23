@@ -76,6 +76,7 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
       unfreezeTrack(track.id);
       return;
     }
+    if (renderInFlight()) return;
     freezingIds.value.add(track.id);
     try {
       await freezeTrack(track.id);
@@ -92,12 +93,19 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
     return store.clips.some((clip) => clip.trackId === track.id);
   }
 
-  function freezeBlocked(track: EditorTrack): string | null {
-    return firstBlock([isFreezing(track), t.value.reasons.busy]);
+  /** Freeze and bounce share one operation generation, so a second start would abort the first. */
+  function renderInFlight(): boolean {
+    return freezingIds.value.size + bouncingIds.value.size > 0;
   }
 
-  function bounceBlocked(track: EditorTrack): string | null {
-    return firstBlock([isBouncing(track), t.value.reasons.busy]);
+  function freezeBlocked(track: EditorTrack): string | null {
+    // Unfreezing a frozen track never touches the render generation.
+    const busy = track.frozen ? isFreezing(track) : renderInFlight();
+    return firstBlock([busy, t.value.reasons.busy]);
+  }
+
+  function bounceBlocked(_track: EditorTrack): string | null {
+    return firstBlock([renderInFlight(), t.value.reasons.busy]);
   }
 
   /**
@@ -120,7 +128,7 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
 
   /** Bounces the track in place over the range from {@link bounceRangeFor}. */
   async function onBounce(track: EditorTrack): Promise<void> {
-    if (bouncingIds.value.has(track.id)) return;
+    if (renderInFlight()) return;
     const range = bounceRangeFor(track);
     if (range === null) return;
     bouncingIds.value.add(track.id);
