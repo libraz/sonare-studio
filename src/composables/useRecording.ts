@@ -669,6 +669,7 @@ export function useRecording(
     state.value = 'requesting';
     const fail = (message?: string): false => {
       if (activeOperation === operation) {
+        finishCountIn();
         if (message && operationIsCurrent(operation)) error.value = message;
         finishOperation(operation);
       }
@@ -704,10 +705,6 @@ export function useRecording(
     }
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     const ownsTransport = plan.transportOwner !== 'midi';
-    if (ownsTransport && plan.startedFromRest) {
-      if (plan.countInPpq > 0) countIn.forceMetronome();
-      transport.seekPpq(plan.countInStartPpq);
-    }
     const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm, tempoMap };
     if (endPpq !== undefined) {
       const startSeconds = ppqToSecondsMap(tempoMap, startPpq);
@@ -733,7 +730,16 @@ export function useRecording(
       );
     }
     if (captureSource.value === 'input') {
-      startOptions.playbackLatencySamples = await playbackPdcSamples(operation.handle);
+      try {
+        startOptions.playbackLatencySamples = await playbackPdcSamples(operation.handle);
+      } catch (err) {
+        return fail(messageOf(err));
+      }
+      if (!operationIsCurrent(operation)) return fail();
+    }
+    if (ownsTransport && plan.startedFromRest) {
+      if (plan.countInPpq > 0) countIn.forceMetronome();
+      transport.seekPpq(plan.countInStartPpq);
     }
     try {
       rec.arm(targetTrackIds[0]);
@@ -742,7 +748,6 @@ export function useRecording(
       // part of the captured audio.
       await rec.start(startOptions);
     } catch (err) {
-      finishCountIn();
       return fail(messageOf(err));
     }
     if (!operationIsCurrent(operation)) {
@@ -770,7 +775,6 @@ export function useRecording(
     // therefore never starts or seeks transport here.
     if (ownsTransport && plan.startedFromRest && !transport.play()) {
       await rec.stop().catch(() => undefined);
-      finishCountIn();
       return fail(t.value.notices.recording.transportRejected);
     }
     if (ownsTransport && plan.countInPpq > 0) {
