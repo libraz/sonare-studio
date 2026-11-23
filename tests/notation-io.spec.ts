@@ -103,9 +103,13 @@ function printScore(svgPages: string[], layout: PageLayout): void {
 async function exportPdf(
   svgPages: string[],
   layout: PageLayout,
-  metadata: PdfMetadata = {},
+  metadata: Partial<PdfMetadata> = {},
 ): Promise<Blob> {
-  const writer = await createPdfPageWriter(svgPages.length, layout, metadata);
+  const writer = await createPdfPageWriter(svgPages.length, layout, {
+    title: '',
+    subject: '',
+    ...metadata,
+  });
   for (let i = 0; i < svgPages.length; i++) await writer.addPage(svgPages[i], i + 1);
   return writer.close();
 }
@@ -246,9 +250,9 @@ describe('exportPdf', () => {
     expect(doc.options).toEqual({ unit: 'mm', format: [210, 297], orientation: 'portrait' });
     expect(doc.propertiesCalls).toEqual([
       {
-        title: 'score',
+        title: '',
         author: 'sonare studio',
-        subject: 'Engraved score',
+        subject: '',
         creator: 'sonare studio',
       },
     ]);

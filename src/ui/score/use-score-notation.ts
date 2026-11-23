@@ -805,7 +805,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     if (loading.value || !artifactForCurrentState()) return;
     void runExport(async () => {
       const settings = structuredClone(options.getLayoutSettings());
-      const title = store.projectName.trim() || 'score';
+      const title = store.projectName.trim() || t.value.shell.score.engravedScore;
       const layout = scorePageDimsMm(settings);
       const pdf: { writer: Awaited<ReturnType<typeof createPdfPageWriter>> | null } = {
         writer: null,

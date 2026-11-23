@@ -17,11 +17,11 @@ export interface PageLayout {
   pageHeightMm: number;
 }
 
-/** Optional PDF document metadata. */
+/** PDF document metadata; the caller supplies the reader-facing title and subject. */
 export interface PdfMetadata {
-  title?: string;
+  title: string;
   author?: string;
-  subject?: string;
+  subject: string;
   /** Optional title drawn at the top of every exported PDF page. */
   headerTitle?: string;
   /** Whether to draw "Page X / N" at the bottom of each PDF page. Defaults to true. */
@@ -267,7 +267,7 @@ export function createPrintPageWriter(
 export async function createPdfPageWriter(
   pageCount: number,
   layout: PageLayout,
-  metadata: PdfMetadata = {},
+  metadata: PdfMetadata,
 ): Promise<PdfPageWriter> {
   if (!Number.isInteger(pageCount) || pageCount <= 0) {
     throw new TypeError('PDF page writer requires at least one page');
@@ -282,12 +282,12 @@ export async function createPdfPageWriter(
   const orientation = layout.pageWidthMm > layout.pageHeightMm ? 'landscape' : 'portrait';
   const doc = new jsPDF({ unit: 'mm', format, orientation });
   doc.setProperties?.({
-    title: metadata.title?.trim() || 'score',
+    title: metadata.title.trim(),
     author: metadata.author?.trim() || 'sonare studio',
-    subject: metadata.subject?.trim() || 'Engraved score',
+    subject: metadata.subject.trim(),
     creator: 'sonare studio',
   });
-  const headerTitle = metadata.headerTitle?.trim() || metadata.title?.trim() || '';
+  const headerTitle = metadata.headerTitle?.trim() || metadata.title.trim();
   const pageNumbers = metadata.pageNumbers !== false;
   const meter = new PayloadMemoryMeter({
     operation: 'score-export',

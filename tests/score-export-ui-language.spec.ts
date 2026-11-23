@@ -120,12 +120,13 @@ describe('score and stem exports in the UI language', () => {
     expect(stemEntryName('Bass', 0, 2, '.wav', 'トラック 1')).toBe('01 Bass.wav');
   });
 
-  it('writes the PDF subject in the UI language', async () => {
+  it('writes the PDF subject, and the title of an unnamed project, in the UI language', async () => {
     setActivePinia(createPinia());
     const store = useProjectStore();
     store.dispose();
     clearHistory();
     await store.init();
+    store.projectName = '';
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     const client = {
       failed: false,
@@ -157,6 +158,7 @@ describe('score and stem exports in the UI language', () => {
     notation.onExportPdf();
     await vi.waitFor(() => expect(notation.exporting.value).toBe(false));
     expect(pdfMetadata.map((metadata) => metadata.subject)).toEqual(['譜面']);
+    expect(pdfMetadata.map((metadata) => metadata.title)).toEqual(['譜面']);
     store.dispose();
   });
 });
