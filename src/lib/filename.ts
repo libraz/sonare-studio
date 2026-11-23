@@ -1,10 +1,11 @@
-/** Characters that are unsafe in download filenames across common platforms. */
-const UNSAFE_FILENAME_CHARS = /[\\/:*?"<>|]/g;
+/** Control characters and the characters unsafe in filenames across common platforms. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are unsafe in filenames
+export const UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\\/:*?"<>|]/g;
 
-/** Replaces filesystem-hostile characters and supplies a non-empty base name. */
+/** Replaces filesystem-hostile characters and supplies a non-empty, non-dot-only base name. */
 export function sanitizeFilenameBase(name: string, fallback = 'project'): string {
-  const sanitized = name.replace(UNSAFE_FILENAME_CHARS, '_').trim();
-  return sanitized.length > 0 ? sanitized : fallback;
+  const sanitized = name.trim().replace(UNSAFE_FILENAME_CHARS, '_').trim();
+  return sanitized.length > 0 && !/^\.+$/.test(sanitized) ? sanitized : fallback;
 }
 
 /** Appends an extension only when the filename does not already carry it. */

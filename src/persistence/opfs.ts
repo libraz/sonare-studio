@@ -8,6 +8,7 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
+import { UNSAFE_FILENAME_CHARS } from '@/lib/filename';
 import { FNV1A_OFFSET_BASIS, FNV1A_PRIME } from '@/lib/fnv1a';
 import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
@@ -147,8 +148,7 @@ export function sanitizeProjectName(name: string): string {
   const cleaned = name
     .trim()
     .replace(/\.szd$/i, '')
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are unsafe in filenames
-    .replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_')
+    .replace(UNSAFE_FILENAME_CHARS, '_')
     .trim();
   if (cleaned.length === 0 || cleaned === '.' || cleaned === '..') {
     throw new InvalidProjectNameError(name);
