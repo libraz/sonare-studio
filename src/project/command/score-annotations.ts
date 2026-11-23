@@ -230,6 +230,14 @@ export function setNoteAnnotation(
       const [primary, ...additional] = spans;
       next.lineSpan = primary.lineSpan;
       next.lineSpanToNoteId = primary.lineSpanToNoteId;
+      // The primary span's style lives on the annotation's top-level fields.
+      if (primary.pedalStyle !== undefined) next.pedalStyle = primary.pedalStyle;
+      else delete next.pedalStyle;
+      if (primary.glissandoLineType !== undefined)
+        next.glissandoLineType = primary.glissandoLineType;
+      else delete next.glissandoLineType;
+      if (primary.glissandoText !== undefined) next.glissandoText = primary.glissandoText;
+      else delete next.glissandoText;
       if (additional.length > 0) next.lineSpans = additional;
       else delete next.lineSpans;
     }
