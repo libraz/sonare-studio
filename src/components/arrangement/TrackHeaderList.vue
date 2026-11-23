@@ -208,6 +208,12 @@ function selectedTrackIds(fallbackTrackId: number): number[] {
   return store.trackSelection.has(fallbackTrackId) ? [...store.trackSelection] : [fallbackTrackId];
 }
 
+/** Row of the shift-click anchor, or -1 when unset or no longer displayed. */
+function anchorIndex(): number {
+  const anchorId = selectionAnchorTrackId.value;
+  return anchorId === null ? -1 : displayTracks.value.findIndex((entry) => entry.id === anchorId);
+}
+
 function activate(track: EditorTrack, event?: MouseEvent): void {
   if (editingTrackId.value === track.id) return;
   const index = displayTracks.value.findIndex((entry) => entry.id === track.id);
@@ -216,10 +222,8 @@ function activate(track: EditorTrack, event?: MouseEvent): void {
     if (next.has(track.id)) next.delete(track.id);
     else next.add(track.id);
     setTrackSelection(next, next.has(track.id) ? track.id : undefined);
-  } else if (event?.shiftKey && selectionAnchorTrackId.value !== null) {
-    const anchor = displayTracks.value.findIndex(
-      (entry) => entry.id === selectionAnchorTrackId.value,
-    );
+  } else if (event?.shiftKey && anchorIndex() >= 0 && index >= 0) {
+    const anchor = anchorIndex();
     const [start, end] = anchor <= index ? [anchor, index] : [index, anchor];
     setTrackSelection(
       displayTracks.value.slice(start, end + 1).map((entry) => entry.id),
