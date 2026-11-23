@@ -140,13 +140,21 @@ export function projectWarpMapDesc(
       sourceSeconds: sourceEndSeconds,
     },
   ];
-  const anchors = points.map((anchor) => ({
-    warpSample: Math.max(
+  const anchors: WarpAnchorFrames[] = [];
+  for (const point of points) {
+    const warpSample = Math.max(
       0,
-      ppqToSamples(tempo, clipStartPpq + anchor.ppq, sampleRate) - clipStartSample,
-    ),
-    sourceSample: Math.max(0, Math.round(anchor.sourceSeconds * sampleRate)),
-  }));
+      ppqToSamples(tempo, clipStartPpq + point.ppq, sampleRate) - clipStartSample,
+    );
+    const sourceSample = Math.max(0, Math.round(point.sourceSeconds * sampleRate));
+    const previous = anchors[anchors.length - 1];
+    // The engine needs strictly increasing pairs, as warpedClipSource and warpSegments keep them.
+    if (previous && (warpSample <= previous.warpSample || sourceSample <= previous.sourceSample)) {
+      continue;
+    }
+    anchors.push({ warpSample, sourceSample });
+  }
+  if (anchors.length < 2) return null;
   return { id: clip.id, name: `clip-${clip.id}-warp`, anchors };
 }
 
