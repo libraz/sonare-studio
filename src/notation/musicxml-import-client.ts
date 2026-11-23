@@ -6,7 +6,9 @@ import {
   type MusicXmlImportLimits,
   type MusicXmlImportResult,
 } from '@/notation/musicxml-import';
+import { defaultNameTable } from '@/project/default-names';
 import type {
+  MusicXmlImportWorkerInit,
   MusicXmlImportWorkerRequest,
   MusicXmlImportWorkerResponse,
 } from '@/workers/musicxml-import.worker';
@@ -32,6 +34,8 @@ export function importMusicXmlInWorker(
     abortMessage: 'MusicXML import cancelled.',
     failMessage: 'MusicXML import worker failed',
     post(worker) {
+      const init: MusicXmlImportWorkerInit = { type: 'init', defaultNames: defaultNameTable() };
+      worker.postMessage(init);
       const request: MusicXmlImportWorkerRequest = { type: 'import', xml, fileName };
       if (limits !== undefined) request.limits = limits;
       worker.postMessage(request);

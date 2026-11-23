@@ -5,6 +5,7 @@ import {
   parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
+import { defaultName } from '@/project/default-names';
 import { isAutomatableSynthParam } from '@/project/instrument';
 import type {
   DocumentAutomationLane,
@@ -67,7 +68,7 @@ function readArrangementMidiExpressionClip(
     if (time !== null && time >= 0) lengthPpq = Math.max(lengthPpq, time);
   }
   const clip: DocumentClip = {
-    name: `${track.name} MIDI expression`,
+    name: defaultName('midiExpression', { name: track.name }),
     startPpq: 0,
     lengthPpq,
     sourceOffsetPpq: 0,
@@ -96,7 +97,8 @@ export function attachArrangementClips(
     const clipsTimeline = children(lane, 'Clips')[0];
     const clips = children(clipsTimeline, 'Clip');
     if (!track) {
-      if (clips.length > 0) losses.push({ kind: 'orphan-lane', track: trackId || 'Lanes' });
+      if (clips.length > 0)
+        losses.push({ kind: 'orphan-lane', track: trackId || defaultName('lossLanes') });
       continue;
     }
     const clipsUnit = nonBeatTimeUnit(clipsTimeline);
@@ -125,7 +127,7 @@ export function attachArrangementClips(
           // would land them at the wrong position.
           losses.push({
             kind: 'unsupported-time-unit',
-            clipName: leaf.placement.name,
+            clipName: leaf.placement.name ?? defaultName('lossClip'),
             attribute: contentUnit !== null ? 'contentTimeUnit' : 'timeUnit',
             unit: contentUnit ?? timelineUnit ?? '',
           });
@@ -138,7 +140,7 @@ export function attachArrangementClips(
           // A MIDI expression on a non-MIDI track has no faithful Sonare
           // destination. Report it rather than manufacture an audio clip or
           // silently discard its non-empty timeline.
-          const clipName = leaf.placement.name;
+          const clipName = leaf.placement.name ?? defaultName('lossClip');
           for (const entry of points.filter(isPotentialMidiExpressionPoints)) {
             midiExpressionLoss(
               { name: clipName },
@@ -193,7 +195,12 @@ export function attachArrangementMidiExpressions(
       continue;
     }
     if (!track) {
-      midiExpressionLoss({ name: 'MIDI expression' }, name, 'missing-track', losses);
+      midiExpressionLoss(
+        { name: defaultName('lossMidiExpression') },
+        name,
+        'missing-track',
+        losses,
+      );
       continue;
     }
     if (track.kind !== 'midi') {
@@ -303,7 +310,7 @@ export function attachArrangementAutomation(
         const automation = readAutomationLane(entry, master.automationRefs);
         if (automation) masterAutomation.push(automation);
         else if (hasPoints) {
-          losses.push({ kind: 'unmapped-automation', trackName: 'Master', parameter });
+          losses.push({ kind: 'unmapped-automation', trackName: defaultName('master'), parameter });
         }
       } else if (hasPoints) {
         losses.push({ kind: 'orphan-lane', track: laneTrackId });
@@ -317,7 +324,7 @@ export function readMarkers(project: Document): ProjectDocument['markers'] {
   return Array.from(project.querySelectorAll('Arrangement > Markers > Marker'))
     .map((marker) => ({
       ppq: numberAttr(marker, 'time') ?? 0,
-      name: marker.getAttribute('name') || 'Marker',
+      name: marker.getAttribute('name') || defaultName('marker'),
     }))
     .sort((a, b) => a.ppq - b.ppq);
 }

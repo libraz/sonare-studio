@@ -23,6 +23,7 @@ import {
   MAX_AUDIO_SAMPLES,
   MAX_EXTERNAL_AUDIO_FILE_BYTES,
 } from '@/persistence/resource-limits';
+import { defaultName } from '@/project/default-names';
 import { analyzeAudioTagsInWorker } from './audio-analysis-client';
 import { type AnalysisProgress, type AudioAnalysisFunctions, analyzeAudioTags } from './audio-tags';
 
@@ -181,7 +182,7 @@ export async function decodeAudioFile(
     options.name ??
     (typeof File !== 'undefined' && file instanceof File
       ? stripExtension(file.name)
-      : 'Imported audio');
+      : defaultName('importedAudio'));
   const OfflineCtx = globalThis.OfflineAudioContext;
   if (typeof OfflineCtx !== 'function') {
     throw new Error('Audio decoding is unavailable: OfflineAudioContext is not supported');

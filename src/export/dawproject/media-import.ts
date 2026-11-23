@@ -1,6 +1,7 @@
 /** Resolves and ingests the audio files a DAWproject's clips reference. */
 
 import { errorMessage } from '@/lib/errors';
+import { defaultName } from '@/project/default-names';
 import { audioFileRef } from './clip-import';
 import type { DawprojectMediaIssue } from './import-loss';
 
@@ -21,7 +22,7 @@ function fileNameFromPath(path: string): string {
   const slash = clean.lastIndexOf('/');
   const name = slash >= 0 ? clean.slice(slash + 1) : clean;
   const dot = name.lastIndexOf('.');
-  return dot > 0 ? name.slice(0, dot) : name || 'Imported audio';
+  return dot > 0 ? name.slice(0, dot) : name || defaultName('importedAudio');
 }
 
 export async function ingestEmbeddedAudio(

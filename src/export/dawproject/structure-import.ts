@@ -2,6 +2,7 @@
 
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { type AutomationParam, insertAutomationParam } from '@/project/automation';
+import { defaultName } from '@/project/default-names';
 import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import {
   createDefaultStrip,
@@ -251,7 +252,7 @@ export function readTracks(
     const vcaOffsetDb = vcaId === undefined ? 0 : (vcaGainDbById.get(vcaId) ?? 0);
     const sonareVolume = extension?.volume ?? numberAttr(track, 'sonareVolume');
     const sonareStripGainDb = extension?.stripGainDb ?? numberAttr(track, 'sonareStripGainDb');
-    const name = track.getAttribute('name') || `Track ${tracks.length + 1}`;
+    const name = track.getAttribute('name') || defaultName('track', { number: tracks.length + 1 });
     tracks.push({
       id: track.getAttribute('id') || `track-${index}`,
       channelId: channel?.getAttribute('id') || `channel-${index}`,
@@ -309,7 +310,7 @@ export function readMaster(
   if (pan !== null) strip.pan = panFromNormalized(pan);
   strip.inserts = readInsertDevices(
     masterChannel,
-    masterTrack?.getAttribute('name') || 'Master',
+    masterTrack?.getAttribute('name') || defaultName('master'),
     losses,
     true,
     new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),

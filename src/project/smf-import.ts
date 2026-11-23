@@ -3,6 +3,7 @@ import { keyMarkerName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { DEBUG_SURFACE_ENABLED } from '@/lib/debug-surface';
 import { ensureWasm } from '@/lib/wasm';
+import { defaultName } from '@/project/default-names';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './document-schema';
 import { GM2_DRUM_BANK, isGm2DrumBank, presetForGmProgram } from './instrument';
 import { pairEventsIntoNotes, projectMidiContent, type SerializedMidiEvent } from './midi-events';
@@ -41,8 +42,8 @@ interface TrackGroupKey {
 
 function projectNameFromFileName(fileName?: string): string {
   const trimmed = (fileName ?? '').trim();
-  if (!trimmed) return 'Imported MIDI';
-  return trimmed.replace(/\.(midi?|smf)$/i, '') || 'Imported MIDI';
+  if (!trimmed) return defaultName('importedMidi');
+  return trimmed.replace(/\.(midi?|smf)$/i, '') || defaultName('importedMidi');
 }
 
 function readSmfVlq(bytes: Uint8Array, offset: number, end: number): [number, number] | null {
@@ -433,7 +434,7 @@ function trackDocument(
       }
     : {};
   return {
-    name: `${track.name || `MIDI ${index + 1}`}${nameSuffix}`,
+    name: `${track.name || defaultName('midiTrack', { number: index + 1 })}${nameSuffix}`,
     color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
     kind: 'midi',
     mute: false,
@@ -441,7 +442,7 @@ function trackDocument(
     volume: 1,
     pan: 0,
     ...instrument,
-    clips: [clipFromEvents(track.name || 'MIDI Clip', clip.lengthPpq, events)],
+    clips: [clipFromEvents(track.name || defaultName('midiClip'), clip.lengthPpq, events)],
   };
 }
 
@@ -504,14 +505,14 @@ function documentFromProject(
       ? tracks
       : [
           {
-            name: 'MIDI',
+            name: defaultName('midiFallbackTrack'),
             color: TRACK_COLOR_PALETTE[0],
             kind: 'midi',
             mute: false,
             solo: false,
             volume: 1,
             pan: 0,
-            clips: [clipFromEvents('MIDI Clip', 1, [])],
+            clips: [clipFromEvents(defaultName('midiClip'), 1, [])],
           },
         ];
   if (sysEx.length > 0) {
@@ -520,7 +521,7 @@ function documentFromProject(
       if (packet.ppq > lastPpq) lastPpq = packet.ppq;
     }
     documentTracks.push({
-      name: 'SMF SysEx',
+      name: defaultName('smfSysex'),
       color: TRACK_COLOR_PALETTE[documentTracks.length % TRACK_COLOR_PALETTE.length],
       kind: 'midi',
       mute: false,
@@ -529,7 +530,11 @@ function documentFromProject(
       pan: 0,
       clips: [
         {
-          ...clipFromEvents('SMF SysEx', Math.max(DEFAULT_CLIP_LENGTH_PPQ, lastPpq + 1), []),
+          ...clipFromEvents(
+            defaultName('smfSysex'),
+            Math.max(DEFAULT_CLIP_LENGTH_PPQ, lastPpq + 1),
+            [],
+          ),
           smfSysEx: sysEx.map((packet) => ({ ...packet, data: packet.data.slice() })),
         },
       ],

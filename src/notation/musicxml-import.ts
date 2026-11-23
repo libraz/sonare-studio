@@ -54,6 +54,8 @@ export {
   type MusicXmlImportLimits,
 } from './musicxml-import-xml';
 
+import { defaultName } from '@/project/default-names';
+
 /** Sample rate assigned to imported projects (matches the SMF importer). */
 const DEFAULT_SAMPLE_RATE = 48000;
 
@@ -127,7 +129,7 @@ function projectName(root: XmlElement, fileName?: string): string {
     const trimmed = (slash >= 0 ? base.slice(slash + 1) : base).trim();
     if (trimmed !== '') return trimmed;
   }
-  return 'Imported MusicXML';
+  return defaultName('importedMusicXml');
 }
 
 /**
@@ -168,7 +170,7 @@ export function importMusicXmlWithReport(
       lossWalker,
     );
     if (index === 0) canonicalTempos = tempoSegments(global.tempos);
-    const name = info.name || `Part ${index + 1}`;
+    const name = info.name || defaultName('part', { number: index + 1 });
     loss.add('extra-instruments', extraInstrumentCount(info), name);
     const primaryInstrument = info.instruments.values().next().value as
       | InstrumentMapping

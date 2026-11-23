@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MusicXmlImportError } from '@/notation/musicxml-import';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
+import { defaultNameTable } from '@/project/default-names';
 import type {
+  MusicXmlImportWorkerInit,
   MusicXmlImportWorkerRequest,
   MusicXmlImportWorkerResponse,
 } from '@/workers/musicxml-import.worker';
 
 class MockWorker {
-  posted: MusicXmlImportWorkerRequest[] = [];
+  posted: (MusicXmlImportWorkerInit | MusicXmlImportWorkerRequest)[] = [];
   terminated = false;
   private listeners = new Map<string, Set<(event: unknown) => void>>();
 
@@ -21,7 +23,7 @@ class MockWorker {
     this.listeners.get(type)?.delete(listener);
   }
 
-  postMessage(request: MusicXmlImportWorkerRequest): void {
+  postMessage(request: MusicXmlImportWorkerInit | MusicXmlImportWorkerRequest): void {
     this.posted.push(request);
   }
 
@@ -44,6 +46,7 @@ describe('importMusicXmlInWorker', () => {
       () => worker as unknown as Worker,
     );
     expect(worker.posted).toEqual([
+      { type: 'init', defaultNames: defaultNameTable() },
       { type: 'import', xml: '<score-partwise/>', fileName: 'score.musicxml' },
     ]);
     worker.respond({
@@ -91,6 +94,7 @@ describe('importMusicXmlInWorker', () => {
     );
 
     expect(worker.posted).toEqual([
+      { type: 'init', defaultNames: defaultNameTable() },
       {
         type: 'import',
         xml: '<score-partwise/>',
@@ -115,5 +119,59 @@ describe('importMusicXmlInWorker', () => {
 
     await expect(promise).rejects.toBeInstanceOf(MusicXmlImportError);
     expect(worker.terminated).toBe(true);
+  });
+
+  it('sends the init message before the import request', () => {
+    const worker = new MockWorker();
+    void importMusicXmlInWorker(
+      '<score-partwise/>',
+      undefined,
+      undefined,
+      () => worker as unknown as Worker,
+    );
+    expect(worker.posted.map((message) => message.type)).toEqual(['init', 'import']);
+  });
+});
+
+describe('MusicXML import worker handler', () => {
+  async function replyTo(...messages: unknown[]): Promise<unknown[]> {
+    vi.resetModules();
+    const replies: unknown[] = [];
+    const listeners: EventListener[] = [];
+    const add = self.addEventListener.bind(self);
+    vi.spyOn(self, 'addEventListener').mockImplementation(((
+      type: string,
+      listener: EventListener,
+    ) => {
+      if (type === 'message') listeners.push(listener);
+      add(type, listener);
+    }) as typeof self.addEventListener);
+    const post = vi.spyOn(globalThis, 'postMessage').mockImplementation((reply: unknown) => {
+      replies.push(reply);
+    });
+    await import('@/workers/musicxml-import.worker');
+    for (const data of messages) self.dispatchEvent(new MessageEvent('message', { data }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    post.mockRestore();
+    vi.mocked(self.addEventListener).mockRestore();
+    for (const listener of listeners) self.removeEventListener('message', listener);
+    return replies;
+  }
+
+  const xml = `<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1"><measure number="1"/></part></score-partwise>`;
+
+  it('replies with an error when an import arrives before init', async () => {
+    const replies = await replyTo({ type: 'import', xml });
+    expect(replies).toMatchObject([{ type: 'error', error: { kind: 'unknown' } }]);
+  });
+
+  it('names the import with the table received in init', async () => {
+    const replies = await replyTo(
+      { type: 'init', defaultNames: { ...defaultNameTable(), importedMusicXml: 'imported-here' } },
+      { type: 'import', xml },
+    );
+    expect(replies).toMatchObject([
+      { type: 'imported', result: { document: { name: 'imported-here' } } },
+    ]);
   });
 });

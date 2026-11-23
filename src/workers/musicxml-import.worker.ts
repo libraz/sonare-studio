@@ -7,7 +7,14 @@ import {
   type MusicXmlImportLimits,
   type MusicXmlImportResult,
 } from '@/notation/musicxml-import';
+import { type DefaultNameTable, registerDefaultNames } from '@/project/default-names';
 import { isRecord, serveWorkerRequests } from './worker-request';
+
+/** First message of a worker: the default-name table of the language current on the main thread. */
+export interface MusicXmlImportWorkerInit {
+  type: 'init';
+  defaultNames: DefaultNameTable;
+}
 
 export interface MusicXmlImportWorkerRequest {
   type: 'import';
@@ -20,9 +27,12 @@ export type MusicXmlImportWorkerResponse =
   | { type: 'imported'; result: MusicXmlImportResult }
   | { type: 'error'; error: { message: string; kind: 'musicxml-import' | 'unknown' } };
 
-function validRequest(value: unknown): value is MusicXmlImportWorkerRequest {
+type MusicXmlImportWorkerMessage = MusicXmlImportWorkerInit | MusicXmlImportWorkerRequest;
+
+function validRequest(value: unknown): value is MusicXmlImportWorkerMessage {
+  if (!isRecord(value)) return false;
+  if (value.type === 'init') return isRecord(value.defaultNames);
   return (
-    isRecord(value) &&
     value.type === 'import' &&
     typeof value.xml === 'string' &&
     (value.fileName === undefined || typeof value.fileName === 'string') &&
@@ -30,7 +40,7 @@ function validRequest(value: unknown): value is MusicXmlImportWorkerRequest {
   );
 }
 
-serveWorkerRequests<MusicXmlImportWorkerRequest, MusicXmlImportWorkerResponse>({
+serveWorkerRequests<MusicXmlImportWorkerMessage, MusicXmlImportWorkerResponse>({
   validate: validRequest,
   invalidMessage: 'MusicXML import worker received an invalid request',
   errorReply: (error) => ({
@@ -41,6 +51,11 @@ serveWorkerRequests<MusicXmlImportWorkerRequest, MusicXmlImportWorkerResponse>({
     },
   }),
   handle: (request, post) => {
+    if (request.type === 'init') {
+      const table = request.defaultNames;
+      registerDefaultNames(() => table);
+      return;
+    }
     post({
       type: 'imported',
       result: importMusicXmlWithReport(request.xml, request.fileName, request.limits),

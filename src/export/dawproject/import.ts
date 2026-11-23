@@ -55,6 +55,9 @@ export {
   type DawprojectImportLossKind,
   type DawprojectMediaIssue,
 } from './import-loss';
+
+import { defaultName } from '@/project/default-names';
+
 export type { DawprojectAudioMedia } from './media-import';
 
 /** Options for {@link importDawprojectWithMedia}. */
@@ -84,7 +87,7 @@ function readTitle(project: Document, metadata: Document | null): string {
   const fromMeta = metadata?.querySelector('MetaData > Title')?.textContent?.trim();
   if (fromMeta) return fromMeta;
   const application = project.querySelector('Project > Application');
-  return application?.getAttribute('name')?.trim() || 'Imported DAWproject';
+  return application?.getAttribute('name')?.trim() || defaultName('importedDawproject');
 }
 
 /** Restores clip expression by the Structure track id, not traversal order. */

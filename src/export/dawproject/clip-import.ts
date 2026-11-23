@@ -1,4 +1,5 @@
 import { clampInt } from '@/lib/math';
+import { defaultName } from '@/project/default-names';
 import type { DocumentClip } from '@/project/serialization';
 import type { NormalizedTempoMap } from '@/project/tempo-map';
 import {
@@ -18,7 +19,8 @@ export interface FlattenedClipPlacement {
   /** Visible start in this clip's content coordinate. */
   contentWindowStart: number;
   contentTimeUnit: string;
-  name: string;
+  /** Nearest name up the placement chain; absent when every level is unnamed. */
+  name?: string;
   loopEnabled?: boolean;
   loopLengthPpq?: number;
   fadeElement: Element;
@@ -133,7 +135,10 @@ export function flattenClipLeaves(
   losses: DawprojectImportLoss[],
 ): FlattenedClipLeaf[] {
   if (!clipEnabled(root)) {
-    losses.push({ kind: 'disabled-clip', clipName: root.getAttribute('name') || 'Clip' });
+    losses.push({
+      kind: 'disabled-clip',
+      clipName: root.getAttribute('name') || defaultName('lossClip'),
+    });
     return [];
   }
   const rootStart = numberAttr(root, 'time') ?? 0;
@@ -141,7 +146,7 @@ export function flattenClipLeaves(
     MIN_IMPORTED_LENGTH_PPQ,
     numberAttr(root, 'duration') ?? DEFAULT_IMPORTED_CLIP_LENGTH_PPQ,
   );
-  const rootName = root.getAttribute('name') || 'Audio clip';
+  const rootName = root.getAttribute('name') || undefined;
   const rootUnit = root.getAttribute('contentTimeUnit')?.trim() || 'beats';
   const rootLoop = clipLoopState(root);
   const initial: FlattenedClipPlacement = {
@@ -164,7 +169,7 @@ export function flattenClipLeaves(
     if (placement.contentTimeUnit !== 'beats') {
       losses.push({
         kind: 'unsupported-nested-clip',
-        clipName: placement.name,
+        clipName: placement.name ?? defaultName('lossClip'),
         reason: 'mixed-time-units',
       });
       return [];
@@ -172,7 +177,7 @@ export function flattenClipLeaves(
     if (placement.loopEnabled && nested.length > 1) {
       losses.push({
         kind: 'unsupported-nested-clip',
-        clipName: placement.name,
+        clipName: placement.name ?? defaultName('lossClip'),
         reason: 'loop-with-multiple-events',
       });
     }
@@ -183,7 +188,7 @@ export function flattenClipLeaves(
       if (!clipEnabled(child)) {
         losses.push({
           kind: 'disabled-clip',
-          clipName: child.getAttribute('name') || placement.name,
+          clipName: child.getAttribute('name') || placement.name || defaultName('lossClip'),
         });
         return [];
       }
@@ -222,7 +227,7 @@ export function readMidiClip(
 ): DocumentClip {
   const window = readContentWindow(clip);
   const { loopStart, loopEnd } = window;
-  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'MIDI clip';
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? defaultName('midiClip');
   const playStart = alignLoopStart(
     placement?.contentWindowStart ?? window.playStart ?? 0,
     loopStart,
@@ -293,7 +298,7 @@ function reportUnknownTimeUnit(
   if (unit !== null && !supported.includes(unit)) {
     losses.push({
       kind: 'unsupported-time-unit',
-      clipName: clip.getAttribute('name') || 'Audio clip',
+      clipName: clip.getAttribute('name') || defaultName('audioClip'),
       attribute,
       unit,
     });
@@ -388,7 +393,7 @@ export function readAudioClip(
     fadeTimeUnit,
   );
   const warp = readAudioWarp(clip, placement, playStartValue, lengthPpq, losses);
-  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'Audio clip';
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? defaultName('audioClip');
   return {
     name: clipName,
     startPpq,
@@ -425,7 +430,7 @@ function readAudioWarp(
   if (!warps) return null;
   const timeUnit = warps.getAttribute('timeUnit')?.trim() || 'beats';
   const contentTimeUnit = warps.getAttribute('contentTimeUnit')?.trim() || 'seconds';
-  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'Audio clip';
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? defaultName('audioClip');
   if (timeUnit !== 'beats' || contentTimeUnit !== 'seconds') {
     losses.push({
       kind: 'unsupported-warp',
