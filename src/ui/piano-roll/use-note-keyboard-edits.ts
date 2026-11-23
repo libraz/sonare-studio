@@ -75,6 +75,7 @@ export function useNoteKeyboardEdits(options: NoteKeyboardEditsOptions): NoteKey
     setSelection([note.id]);
     if (payload.kind === 'select' || contentReadOnly.value) return;
     const minimum = sourceWindowStartPpq.value;
+    // The navigator's controls carry a finite max, so its edits stay in the window instead of growing the clip.
     const maximum = sourceWindowEndPpq.value;
     if (payload.kind === 'set') {
       if (payload.controlId === 'pitch') {
