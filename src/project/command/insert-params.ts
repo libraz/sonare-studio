@@ -1,5 +1,11 @@
-import { type InsertParamValue, isInsertParamValue } from '../mixer';
+import type { SoloProcessor } from '@libraz/libsonare';
+import { type InsertParamValue, isInsertParamValue, isSoloProcessor } from '../mixer';
 import { editedProcessorParams } from '../processor-controls';
+
+/** Throws RangeError unless the engine knows the processor a slot would place. */
+export function assertKnownProcessor(processor: string): asserts processor is SoloProcessor {
+  if (!isSoloProcessor(processor)) throw new RangeError(`Unknown insert processor: ${processor}`);
+}
 
 /** Throws RangeError when an insert params record carries bad values. */
 export function validateInsertParams(params: Record<string, InsertParamValue>): void {

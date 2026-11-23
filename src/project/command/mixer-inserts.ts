@@ -9,7 +9,6 @@ import {
   createProcessorId,
   type InsertParamValue,
   type InsertSlot,
-  isSoloProcessor,
   type MixerSidechainSource,
 } from '../mixer';
 import { useProjectStore } from '../store';
@@ -19,7 +18,12 @@ import {
   reorderInsertProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
-import { editDropsOtherParams, paramsAfterEdit, validateInsertParams } from './insert-params';
+import {
+  assertKnownProcessor,
+  editDropsOtherParams,
+  paramsAfterEdit,
+  validateInsertParams,
+} from './insert-params';
 import {
   currentStrip,
   isMixerBusStripTarget,
@@ -232,7 +236,7 @@ export function addInsert(
   if (typeof processor !== 'string' || processor.length === 0) {
     throw new RangeError('Insert processor name must not be empty');
   }
-  if (!isSoloProcessor(processor)) throw new RangeError(`Unknown insert processor: ${processor}`);
+  assertKnownProcessor(processor);
   validateInsertParams(params);
   return executeApp(() => {
     const next = cloneStrip(strip);
@@ -333,6 +337,7 @@ export function replaceInsert(
   const destination = requireInsert(strip, index);
   if (source.processor.length === 0)
     throw new RangeError('Insert processor name must not be empty');
+  assertKnownProcessor(source.processor);
   validateInsertParams(source.params);
   const normalizedSource = sidechainSourceFromSlot(source);
   validateInsertSidechainSource(store, target, normalizedSource, destination);

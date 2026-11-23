@@ -15,7 +15,12 @@ import {
   reorderMasteringProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
-import { editDropsOtherParams, paramsAfterEdit, validateInsertParams } from './insert-params';
+import {
+  assertKnownProcessor,
+  editDropsOtherParams,
+  paramsAfterEdit,
+  validateInsertParams,
+} from './insert-params';
 import { patchMixerMirror } from './mixer-internal';
 
 /** Returns a working copy of the current mastering chain (default = empty). */
@@ -137,6 +142,7 @@ export function addMasteringProcessor(
   if (typeof processor !== 'string' || processor.length === 0) {
     throw new RangeError('Mastering processor name must not be empty');
   }
+  assertKnownProcessor(processor);
   validateInsertParams(params);
   const chain = currentMasteringChain(store);
   return executeApp(() => {
