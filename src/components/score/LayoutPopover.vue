@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { DISPLAY_TRANSPOSE_MAX, DISPLAY_TRANSPOSE_MIN } from '@/project/annotations';
+import {
+  DISPLAY_TRANSPOSE_MAX,
+  DISPLAY_TRANSPOSE_MIN,
+  SCORE_LAYOUT_BOUNDS,
+  type ScoreLayoutNumberKey,
+} from '@/project/annotations';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { SCORE_PAGE_FORMATS, type ScorePageFormatKey } from '@/ui/score/layout';
@@ -72,33 +77,35 @@ const pageFormatModel = computed<ScorePageFormatKey>({
   set: (value) => emit('update:pageFormat', value),
 });
 
-/** Margin proxy for the numeric input binding. */
-const pageMarginModel = computed<number>({
-  get: () => props.pageMarginMm,
-  set: (value) => emit('update:pageMarginMm', value),
-});
+/**
+ * Numeric layout proxy for a `v-model.number` input. A blank or out-of-range
+ * entry is not emitted, so the project only ever holds a value a reload keeps.
+ */
+function layoutNumberModel(key: ScoreLayoutNumberKey, update: (value: number) => void) {
+  return computed<number>({
+    get: () => props[key],
+    set: (value) => {
+      const { min, max, integer } = SCORE_LAYOUT_BOUNDS[key];
+      if (typeof value !== 'number' || !Number.isFinite(value)) return;
+      if (value < min || value > max || (integer && !Number.isInteger(value))) return;
+      update(value);
+    },
+  });
+}
 
-/** Scale proxy for the numeric input binding. */
-const scaleModel = computed<number>({
-  get: () => props.scalePercent,
-  set: (value) => emit('update:scalePercent', value),
-});
-
-/** Staff spacing proxy for the numeric input binding. */
-const spacingModel = computed<number>({
-  get: () => props.spacingStaff,
-  set: (value) => emit('update:spacingStaff', value),
-});
-
-const barsPerSystemModel = computed<number>({
-  get: () => props.barsPerSystem,
-  set: (value) => emit('update:barsPerSystem', value),
-});
-
-const barsPerPageModel = computed<number>({
-  get: () => props.barsPerPage,
-  set: (value) => emit('update:barsPerPage', value),
-});
+const pageMarginModel = layoutNumberModel('pageMarginMm', (value) =>
+  emit('update:pageMarginMm', value),
+);
+const scaleModel = layoutNumberModel('scalePercent', (value) => emit('update:scalePercent', value));
+const spacingModel = layoutNumberModel('spacingStaff', (value) =>
+  emit('update:spacingStaff', value),
+);
+const barsPerSystemModel = layoutNumberModel('barsPerSystem', (value) =>
+  emit('update:barsPerSystem', value),
+);
+const barsPerPageModel = layoutNumberModel('barsPerPage', (value) =>
+  emit('update:barsPerPage', value),
+);
 
 const grandStaffSplitPitchModel = computed<number>({
   get: () => props.grandStaffSplitPitch,
@@ -137,23 +144,23 @@ const transposeOptions = computed(() =>
     </label>
     <label class="layout-row">
       {{ t.shell.score.margin }}
-      <input v-model.number="pageMarginModel" type="number" min="0" max="40" step="1" />
+      <input v-model.number="pageMarginModel" type="number" :min="SCORE_LAYOUT_BOUNDS.pageMarginMm.min" :max="SCORE_LAYOUT_BOUNDS.pageMarginMm.max" step="1" />
     </label>
     <label class="layout-row">
       {{ t.shell.score.scale }}
-      <input v-model.number="scaleModel" type="number" min="20" max="100" step="5" />
+      <input v-model.number="scaleModel" type="number" :min="SCORE_LAYOUT_BOUNDS.scalePercent.min" :max="SCORE_LAYOUT_BOUNDS.scalePercent.max" step="5" />
     </label>
     <label class="layout-row">
       {{ t.shell.score.staffSpacing }}
-      <input v-model.number="spacingModel" type="number" min="0" max="48" step="1" />
+      <input v-model.number="spacingModel" type="number" :min="SCORE_LAYOUT_BOUNDS.spacingStaff.min" :max="SCORE_LAYOUT_BOUNDS.spacingStaff.max" step="1" />
     </label>
     <label class="layout-row">
       {{ t.shell.score.barsPerSystem }}
-      <input v-model.number="barsPerSystemModel" type="number" min="0" max="12" step="1" />
+      <input v-model.number="barsPerSystemModel" type="number" :min="SCORE_LAYOUT_BOUNDS.barsPerSystem.min" :max="SCORE_LAYOUT_BOUNDS.barsPerSystem.max" step="1" />
     </label>
     <label class="layout-row">
       {{ t.shell.score.barsPerPage }}
-      <input v-model.number="barsPerPageModel" type="number" min="0" max="48" step="1" />
+      <input v-model.number="barsPerPageModel" type="number" :min="SCORE_LAYOUT_BOUNDS.barsPerPage.min" :max="SCORE_LAYOUT_BOUNDS.barsPerPage.max" step="1" />
     </label>
     <label class="layout-row" v-tooltip="t.shell.score.grandStaffSplitTitle">
       {{ t.shell.score.grandStaffSplit }}

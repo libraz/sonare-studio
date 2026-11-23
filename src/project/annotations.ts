@@ -373,6 +373,25 @@ export const SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ: Readonly<
   '16t': 1 / 6,
 };
 
+/** Numeric score layout settings with an editable range. */
+export type ScoreLayoutNumberKey =
+  | 'pageMarginMm'
+  | 'scalePercent'
+  | 'spacingStaff'
+  | 'barsPerSystem'
+  | 'barsPerPage';
+
+/** Inclusive range of each numeric layout setting; `integer` ones take whole values only. */
+export const SCORE_LAYOUT_BOUNDS: Readonly<
+  Record<ScoreLayoutNumberKey, { min: number; max: number; integer: boolean }>
+> = {
+  pageMarginMm: { min: 0, max: 40, integer: false },
+  scalePercent: { min: 20, max: 100, integer: true },
+  spacingStaff: { min: 0, max: 48, integer: true },
+  barsPerSystem: { min: 0, max: 12, integer: true },
+  barsPerPage: { min: 0, max: 48, integer: true },
+};
+
 /** Project-owned score display/layout settings. */
 export interface ScoreDisplaySettings {
   displayQuantizeKey: ScoreDisplayQuantizeKey;
@@ -440,6 +459,12 @@ function boundedNumber(
   return integer ? Math.round(bounded) : bounded;
 }
 
+/** Clamps a stored layout number into its {@link SCORE_LAYOUT_BOUNDS} range. */
+function layoutNumber(value: unknown, fallback: number, key: ScoreLayoutNumberKey): number {
+  const { min, max, integer } = SCORE_LAYOUT_BOUNDS[key];
+  return boundedNumber(value, fallback, min, max, integer);
+}
+
 /** Validates a loaded document's optional score settings and supplies defaults. */
 export function scoreDisplaySettingsFromDocument(
   source: Readonly<DocumentScoreSettings> | undefined,
@@ -472,11 +497,11 @@ export function scoreDisplaySettingsFromDocument(
         ? source.pageFormat
         : defaults.pageFormat,
     landscape: typeof source?.landscape === 'boolean' ? source.landscape : defaults.landscape,
-    pageMarginMm: boundedNumber(source?.pageMarginMm, defaults.pageMarginMm, 0, 40),
-    scalePercent: boundedNumber(source?.scalePercent, defaults.scalePercent, 20, 100, true),
-    spacingStaff: boundedNumber(source?.spacingStaff, defaults.spacingStaff, 0, 48, true),
-    barsPerSystem: boundedNumber(source?.barsPerSystem, defaults.barsPerSystem, 0, 12, true),
-    barsPerPage: boundedNumber(source?.barsPerPage, defaults.barsPerPage, 0, 48, true),
+    pageMarginMm: layoutNumber(source?.pageMarginMm, defaults.pageMarginMm, 'pageMarginMm'),
+    scalePercent: layoutNumber(source?.scalePercent, defaults.scalePercent, 'scalePercent'),
+    spacingStaff: layoutNumber(source?.spacingStaff, defaults.spacingStaff, 'spacingStaff'),
+    barsPerSystem: layoutNumber(source?.barsPerSystem, defaults.barsPerSystem, 'barsPerSystem'),
+    barsPerPage: layoutNumber(source?.barsPerPage, defaults.barsPerPage, 'barsPerPage'),
     grandStaffSplitPitch: boundedNumber(
       source?.grandStaffSplitPitch,
       defaults.grandStaffSplitPitch,
