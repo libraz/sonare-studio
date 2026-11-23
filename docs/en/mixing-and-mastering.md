@@ -34,6 +34,27 @@ The assigned track plays as many dB lower as the VCA fader says. Tracks outside 
 
 Removing a track does not remove the group. Remove the group with the remove button on its VCA strip.
 
+## Route a track to a return bus
+
+1. In the **Mixer** tab, press **+ Bus**. A bus strip appears next to the track strips.
+2. On a track strip, open the **Output** menu and choose the bus.
+3. Type a value in the bus strip's gain readout, or press the bus strip's mute button.
+
+The track plays through the bus. The bus has no signal until a track is routed to it, and then it carries the track at the track's level. A bus gain of -12 dB lowers the mix by 12 dB, and muting the bus silences the mix when the bus is the track's only route.
+
+## Send a track to a return bus
+
+1. In the **Mixer** tab, press **+ Bus**.
+2. On a track strip, click the gain readout of the bus's row under **Sends**, type a level in dB and press Enter.
+
+The send is stored on the track against that bus. A -6 dB send makes the bus carry the track 6 dB below the track's level, and a -18 dB send makes it 12 dB lower again.
+
+## Read the master meters
+
+Start playback with the **Mixer** tab open. The master strip shows the momentary, short-term and integrated loudness in LUFS and the true peak in dBTP.
+
+Lowering a track's gain by 12 dB lowers the momentary loudness and the true peak by about 12 dB within two seconds. A **Gain reduction** row appears on the master strip while a master insert reduces gain, for example a **Brickwall Limiter** with a ceiling below the signal. It is absent without one.
+
 ## Add and bypass inserts
 
 Open the device rack with **Devices** in the app bar.
@@ -87,6 +108,8 @@ Open the **Mastering** dock tab. The signal path summary shows a **Live** path a
 Typed values stay when you switch to another dock tab and back. The reset button next to a control returns it to the preset value; for **Streaming**, the target resets to -14 LUFS.
 
 **Auto-suggest** starts from the selected preset and shows it as the base of its result.
+
+When an audio export runs a preset, its loudness report adds a **Mastering preset output** row: the integrated loudness the mastering chain reported for its output. With the preset as the only mastering stage and loudness normalization off, the downloaded WAV measures that same loudness.
 
 ### Build a chain
 

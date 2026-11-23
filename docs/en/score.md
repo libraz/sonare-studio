@@ -6,6 +6,12 @@ The **Score** dock tab engraves the active clip with Verovio. The panel prints a
 
 Select the **Score** dock tab. The first open loads the engraver, so it can take longer than later opens. The panel then shows the engraved notes as SVG, and the page indicator reads `1 / N`, where N is the number of pages.
 
+## Show chord symbols
+
+Open the **Score** tab and press **Chords** in the score toolbar. The symbols are estimated from the clip's notes.
+
+For a clip of block triads C, F, G and C, one per bar, the engraving carries C, F, G and C above the staff, and **Estimate progression** in the Chords list of the **Lists** tab gives the same four chords. Press **Chords** again to remove the symbols.
+
 ## Add annotations
 
 Annotations are drawn on the engraving. Focus the score note navigator and press the context-menu key to open the annotation palette.

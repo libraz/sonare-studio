@@ -59,6 +59,13 @@ The **Baroque organ** template is 64 bars at 80 BPM in D harmonic minor, with si
 
 The finished piece is three minutes and twelve seconds long. **Reroll** on the motif changes the soprano and leaves the other three voices as they are.
 
+## Repeat a generation with a project seed
+
+1. Open **Generate chord progression…** or **Generate tracks…**.
+2. Enter a number in **Project seed**, then generate.
+
+The seed is saved in the project. Generating twice with the same seed writes the same chords and the same notes in **Motif**, **Drums**, **Bass** and **Backing**. A different seed writes a different progression and different notes in at least one of those parts.
+
 ## Reroll a part
 
 **Reroll** in a part's options asks for another variation of that part. Regenerating one part leaves the other parts unchanged.
