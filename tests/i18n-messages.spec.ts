@@ -40,6 +40,21 @@ function shapeErrors(
     });
 }
 
+/** Leaf path to message text, for every string in the tree. */
+function leafTexts(node: MessageNode, prefix = ''): Map<string, string> {
+  if (typeof node === 'string') return new Map([[prefix, node]]);
+  return new Map(
+    Object.keys(node).flatMap((key) => [
+      ...leafTexts(node[key], prefix === '' ? key : `${prefix}.${key}`),
+    ]),
+  );
+}
+
+/** Sorted, de-duplicated `{name}` placeholders formatMessage fills in. */
+function placeholders(text: string): string[] {
+  return [...new Set([...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1]))].sort();
+}
+
 describe('i18n messages', () => {
   it('keeps every locale structurally aligned with English', () => {
     const reference = MESSAGES.en as MessageNode;
@@ -49,6 +64,21 @@ describe('i18n messages', () => {
       const node = messages as MessageNode;
       expect(shapeErrors(reference, node, '', locale)).toEqual([]);
       expect(leafPaths(node)).toEqual(expectedPaths);
+    }
+  });
+
+  it('uses the same placeholders in every locale as in English', () => {
+    const reference = leafTexts(MESSAGES.en as MessageNode);
+    for (const [locale, messages] of Object.entries(MESSAGES)) {
+      const mismatches = [...leafTexts(messages as MessageNode)]
+        .filter(([path, text]) => {
+          const english = reference.get(path);
+          return (
+            english !== undefined && placeholders(english).join() !== placeholders(text).join()
+          );
+        })
+        .map(([path]) => `${locale}:${path}`);
+      expect(mismatches).toEqual([]);
     }
   });
 
