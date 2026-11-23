@@ -98,6 +98,11 @@ export interface MeterBridge extends MeterSource {
    * @returns A source tracking that target's latest levels and snapshots.
    */
   forTarget(targetId: number): MeterSource;
+  /**
+   * Resolves once every target that gained an insert gain-reduction listener
+   * has had its first poll settle; at once when no poll is due.
+   */
+  whenInsertGainReductionPolled(): Promise<void>;
   /** Stops all meter delivery and releases engine subscriptions. Idempotent. */
   dispose(): void;
 }
@@ -154,7 +159,8 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   const meterListeners = createTargetListeners<StereoMeterLevels>(() => disposed);
   const sources = new Map<number, MeterSource>();
   const insertGrListeners = createTargetListeners<readonly number[]>(() => disposed);
-  const insertGrPolls = new Map<number, { inFlight: boolean; lastMs: number }>();
+  const insertGrPolls = new Map<number, { inFlight: boolean; lastMs: number; settled: boolean }>();
+  const polledWaiters: Array<() => void> = [];
   let disposed = false;
   let rafId = 0;
 
@@ -180,7 +186,7 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       if (listeners.size === 0) continue;
       let state = insertGrPolls.get(targetId);
       if (!state) {
-        state = { inFlight: false, lastMs: Number.NEGATIVE_INFINITY };
+        state = { inFlight: false, lastMs: Number.NEGATIVE_INFINITY, settled: false };
         insertGrPolls.set(targetId, state);
       }
       if (state.inFlight || now - state.lastMs < INSERT_GAIN_REDUCTION_POLL_MS) continue;
@@ -190,15 +196,31 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       handle.engine.pollInsertGainReduction(targetId).then(
         (valuesDb) => {
           poll.inFlight = false;
+          poll.settled = true;
           if (!disposed) publishInsertGr(targetId, valuesDb);
+          wakePolledWaiters();
         },
         () => {
           // Rejected once the node is destroyed; the next frame retries otherwise.
           poll.inFlight = false;
+          poll.settled = true;
+          wakePolledWaiters();
         },
       );
     }
   };
+
+  const firstPollPending = (): boolean => {
+    if (disposed || handle.capabilities.mode !== 'sab') return false;
+    for (const [targetId, listeners] of insertGrListeners.entries()) {
+      if (listeners.size > 0 && !insertGrPolls.get(targetId)?.settled) return true;
+    }
+    return false;
+  };
+  function wakePolledWaiters(): void {
+    if (firstPollPending()) return;
+    for (const wake of polledWaiters.splice(0)) wake();
+  }
 
   // onMeter is the single source in both transport modes: any facade
   // subscription (onMeter, onTelemetry, onMidiOut) starts an internal ring
@@ -242,7 +264,12 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       subscribeInsertGainReduction(listener: InsertGainReductionListener): () => void {
         const unsubscribe = insertGrListeners.subscribe(targetId, listener);
         ensurePolling();
-        return unsubscribe;
+        return () => {
+          unsubscribe();
+          // A target that loses its last listener polls afresh when watched again.
+          if (!insertGrListeners.hasListeners(targetId)) insertGrPolls.delete(targetId);
+          wakePolledWaiters();
+        };
       },
     };
     sources.set(targetId, source);
@@ -264,6 +291,10 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
     forTarget(targetId: number): MeterSource {
       return sourceFor(targetId);
     },
+    whenInsertGainReductionPolled(): Promise<void> {
+      if (!firstPollPending()) return Promise.resolve();
+      return new Promise<void>((resolve) => polledWaiters.push(resolve));
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;
@@ -271,6 +302,7 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       unsubscribeOnMeter();
       meterListeners.clear();
       insertGrListeners.clear();
+      wakePolledWaiters();
     },
   };
 }

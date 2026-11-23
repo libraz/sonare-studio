@@ -518,6 +518,7 @@ const {
   midiSync,
   mixerLaneTrackIds,
   sidechainRefusal,
+  whenEngineSyncIdle,
 } = useEngineProjectSync({
   bridge,
   scope,
@@ -881,6 +882,7 @@ if (DEBUG_SURFACE_ENABLED) {
     automationSync,
     trackMeterSource,
     mixerLaneTrackIds,
+    whenEngineSyncIdle,
   });
 }
 

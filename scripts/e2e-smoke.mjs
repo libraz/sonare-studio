@@ -24,6 +24,7 @@
  *   node scripts/e2e-smoke.mjs --list
  *   node scripts/e2e-smoke.mjs --through=audio-record
  *   node scripts/e2e-smoke.mjs --only=boot,piano-roll,score
+ *   node scripts/e2e-smoke.mjs --update-api-map
  *
  * An unknown flag, scenario or extra positional argument is refused.
  *
@@ -32,7 +33,11 @@
  * paying for the whole run. Both keep the registry's order. Nothing replays a
  * scenario's prerequisites for you: a scenario dropped from the run is state
  * the later ones will not find.
+ *
+ * A full run also checks `scripts/e2e/api-map.md` against the libsonare calls
+ * the scenarios reached and fails on a difference; `--update-api-map` rewrites it.
  */
+import { checkApiMap } from './e2e/api-map.mjs';
 import { parseRunnerArgs } from './e2e/args.mjs';
 import { reportOutcomes, runScenarios } from './e2e/harness.mjs';
 import { scenarios } from './e2e/scenarios.mjs';
@@ -52,3 +57,8 @@ const chosen = scenarios.filter((scenario) => parsed.selected.includes(scenario.
 console.info(`running ${chosen.length}/${scenarios.length} scenario(s) against ${baseUrl}\n`);
 const { outcomes } = await runScenarios(chosen, baseUrl);
 process.exitCode = reportOutcomes(outcomes);
+// Only a full run sees every scenario, so only a full run checks or rewrites the API map.
+if (chosen.length === scenarios.length) {
+  const matched = await checkApiMap(outcomes, { update: parsed.updateApiMap });
+  if (!matched) process.exitCode = 1;
+}

@@ -40,6 +40,8 @@
 - ワープのタイムストレッチ
 - オーディオ解析（テイクの位置合わせ、採譜、ステム分離）
 
+[`scripts/e2e/api-map.md`](https://github.com/libraz/sonare-studio/blob/main/scripts/e2e/api-map.md) は、libsonare の公開 API の呼び出しごとに、それを通るシナリオを一覧にしたものです。全シナリオを実行すると、この一覧と実際の呼び出しを照合し、一致しなければ失敗します。
+
 解析、マスタリング、音声合成の出力が間違っている場合は、libsonare のバグです。[libsonare のトラッカー](https://github.com/libraz/libsonare/issues)に報告してください。それを示すシナリオがあれば添えてください。
 
 ## はじめに

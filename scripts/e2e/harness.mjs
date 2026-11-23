@@ -90,7 +90,8 @@ export async function untilDoneAcceptingConfirms(page, isDone, timeoutMs) {
       const message = ((await prompt.locator('.dialog-message').textContent()) ?? '').trim();
       console.info(`accepted app confirm: ${message.replace(/\s+/g, ' ')}`);
       accepted.push(message);
-      await prompt.locator('button.primary').click();
+      // A destructive confirmation styles its confirm button as danger-action.
+      await prompt.locator('button.primary, button.danger-action').click();
       // A queued follow-up dialog reuses the open modal, so wait for this
       // message to leave rather than for the modal to close.
       await page.waitForFunction(
@@ -151,6 +152,22 @@ export async function runScenarios(scenarios, baseUrl) {
     // The arrangement's persisted minimum height plus the editor dock needs a
     // tall viewport; Chromium's 720px default leaves the roll canvas clipped.
     // Fix the test viewport so visibility checks exercise the editor itself.
+    // Every page reports the libsonare calls it makes to the scenario running now;
+    // newPage goes through newContext, so the shared page is covered too.
+    let reached = new Set();
+    const sink = (_source, key) => {
+      reached.add(key);
+    };
+    // The app syncs the engine on a debounce, and a rack opened just before
+    // run() returns polls on the next frame, so a scenario's last calls can reach
+    // libsonare late; the boundary waits for both and credits them to that scenario.
+    const lateCallScenarios = [];
+    const newContext = browser.newContext.bind(browser);
+    browser.newContext = async (...args) => {
+      const context = await newContext(...args);
+      await context.exposeBinding('__sonareApiSink', sink);
+      return context;
+    };
     const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
     page.on('pageerror', (err) => console.error('pageerror:', err.message));
     page.on('console', (message) => {
@@ -168,6 +185,8 @@ export async function runScenarios(scenarios, baseUrl) {
         console.error(`FAIL [${scenario.name}]: ${message}`);
         failures.push(message);
       };
+      reached = new Set();
+      await page.evaluate(() => window.__sonareDebug?.resetApiCalls?.()).catch(() => undefined);
       const startedAt = process.hrtime.bigint();
       let thrown = null;
       try {
@@ -177,14 +196,29 @@ export async function runScenarios(scenarios, baseUrl) {
         console.error(`FAIL [${scenario.name}]: ${thrown}`);
       }
       const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const beforeSettle = reached.size;
+      await page
+        .evaluate(() =>
+          Promise.all([
+            window.__sonareDebug?.whenEngineSyncIdle?.(),
+            window.__sonareDebug?.whenInsertGainReductionPolled?.(),
+          ]),
+        )
+        .catch(() => undefined);
+      if (reached.size > beforeSettle) lateCallScenarios.push(scenario.name);
       outcomes.push({
         name: scenario.name,
         failures,
         thrown,
         ms,
         knownEngineDefect: scenario.knownEngineDefect ?? null,
+        apiCalls: [...reached].sort(),
       });
     }
+    console.info(
+      `libsonare calls still pending when run() returned: ${lateCallScenarios.length} of ` +
+        `${scenarios.length} scenario(s)${lateCallScenarios.length ? ` (${lateCallScenarios.join(', ')})` : ''}`,
+    );
     return { outcomes, failed: outcomes.filter(countsAsFailed).length };
   } finally {
     await browser.close();

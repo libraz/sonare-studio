@@ -8,6 +8,7 @@ import type { MeterBridge, MeterSource } from '@/engine/meters';
 import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
+import { apiCalls, resetApiCalls } from '@/lib/api-recorder';
 import { peakDb } from '@/lib/db';
 import { FNV1A_OFFSET_BASIS, FNV1A_PRIME, fnv1a32Bytes } from '@/lib/fnv1a';
 import { clamp } from '@/lib/math';
@@ -83,6 +84,7 @@ export interface DevDebugContext {
   automationSync: () => AutomationSync | null;
   trackMeterSource: (trackId: number) => MeterSource | null;
   mixerLaneTrackIds: () => readonly number[];
+  whenEngineSyncIdle: () => Promise<void>;
 }
 
 function peakOf(channels: Float32Array[]): number {
@@ -234,6 +236,9 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     activeClipId: () => store.clipId,
     selectClip: (clipId: number) => setActiveClip(clipId),
     applyPending: () => applyPending.value,
+    whenEngineSyncIdle: () => ctx.whenEngineSyncIdle(),
+    whenInsertGainReductionPolled: () =>
+      bridge.value?.whenInsertGainReductionPolled() ?? Promise.resolve(),
     scheduledClipIds: () => ctx.scheduledClips().map((clip) => clip.engineClipId),
     engineMidiClipCount: () => ctx.midiSync()?.scheduledClipCount() ?? 0,
     trackInstruments: () =>
@@ -261,6 +266,8 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       (store.mixer.masteringChain?.processors ?? []).map((slot) => slot.processor),
     lastDownload: () => ctx.lastDownload(),
     lastMidiImportEvents,
+    apiCalls,
+    resetApiCalls,
     clearLastMidiImportEvents,
     exportProbe: async (
       includeMasterChain = true,

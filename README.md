@@ -40,6 +40,8 @@ The scenarios in [`scripts/e2e/scenarios/`](https://github.com/libraz/sonare-stu
 - warp time-stretching
 - audio analysis: take alignment, transcription and stem separation
 
+[`scripts/e2e/api-map.md`](https://github.com/libraz/sonare-studio/blob/main/scripts/e2e/api-map.md) lists each call on libsonare's public surface with the scenarios that reach it. A full run compares the calls it records against the list and fails when they differ.
+
 A wrong result in analysis, mastering or synthesis output is a libsonare bug. Report it in the [libsonare tracker](https://github.com/libraz/libsonare/issues), with the scenario that shows it if there is one.
 
 ## Getting started

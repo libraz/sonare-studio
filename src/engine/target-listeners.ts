@@ -4,8 +4,8 @@ export interface TargetListeners<T> {
   subscribe(targetId: number, listener: (value: T) => void): () => void;
   /** Calls every listener registered for the target. */
   emit(targetId: number, value: T): void;
-  /** Whether any target has at least one listener. */
-  hasListeners(): boolean;
+  /** Whether the given target, or with no argument any target, has a listener. */
+  hasListeners(targetId?: number): boolean;
   /** Targets with their listener sets, for pollers that visit watched targets. */
   entries(): IterableIterator<[number, ReadonlySet<(value: T) => void>]>;
   /** Drops every listener. */
@@ -36,7 +36,8 @@ export function createTargetListeners<T>(isDisposed: () => boolean): TargetListe
       if (!listeners) return;
       for (const listener of listeners) listener(value);
     },
-    hasListeners() {
+    hasListeners(targetId) {
+      if (targetId !== undefined) return (byTarget.get(targetId)?.size ?? 0) > 0;
       for (const listeners of byTarget.values()) if (listeners.size > 0) return true;
       return false;
     },

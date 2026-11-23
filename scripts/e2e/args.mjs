@@ -3,15 +3,16 @@
  * and the `yarn e2e` launcher so both accept and refuse the same things.
  *
  * Accepted: `--list`, `--only=<a,b>` or `--only <a,b>`, `--through=<name>` or
- * `--through <name>`, and one positional base URL. Anything else, an unknown
- * scenario, or `--only` together with `--through` is refused rather than ignored.
+ * `--through <name>`, `--update-api-map`, and one positional base URL. Anything
+ * else, an unknown scenario, `--only` together with `--through`, or
+ * `--update-api-map` on a partial run is refused rather than ignored.
  */
 import { parseArgs } from 'node:util';
 
 /**
  * @param {string[]} argv The arguments after the script path.
  * @param {string[]} names Every scenario name, in running order.
- * @returns {{ baseUrl: string | undefined, list: boolean, selected: string[] }}
+ * @returns {{ baseUrl: string | undefined, list: boolean, selected: string[], updateApiMap: boolean }}
  *   `selected` keeps the running order.
  */
 export function parseRunnerArgs(argv, names) {
@@ -23,6 +24,7 @@ export function parseRunnerArgs(argv, names) {
       list: { type: 'boolean', default: false },
       only: { type: 'string' },
       through: { type: 'string' },
+      'update-api-map': { type: 'boolean', default: false },
     },
   });
   if (positionals.length > 1) {
@@ -42,5 +44,9 @@ export function parseRunnerArgs(argv, names) {
     if (end < 0) throw new Error(`Unknown scenario: ${values.through}`);
     selected = names.slice(0, end + 1);
   }
-  return { baseUrl: positionals[0], list: values.list, selected };
+  const updateApiMap = values['update-api-map'];
+  if (updateApiMap && selected.length !== names.length) {
+    throw new Error('--update-api-map needs the full run; drop --only and --through');
+  }
+  return { baseUrl: positionals[0], list: values.list, selected, updateApiMap };
 }

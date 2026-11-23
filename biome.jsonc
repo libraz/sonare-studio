@@ -9,6 +9,7 @@
       "!**/coverage",
       "!**/*.css",
       "!src/project/demo/*.json",
+      "!scripts/e2e/api-map.md",
       "!.github/ISSUE_TEMPLATE"
     ]
   },

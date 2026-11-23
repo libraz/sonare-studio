@@ -76,6 +76,7 @@ import * as pop_clipboard from './scenarios/pop-clipboard.mjs';
 import * as portable_project from './scenarios/portable-project.mjs';
 import * as project_revisions from './scenarios/project-revisions.mjs';
 import * as project_save_reopen from './scenarios/project-save-reopen.mjs';
+import * as project_switch_sync from './scenarios/project-switch-sync.mjs';
 import * as pwa_offline from './scenarios/pwa-offline.mjs';
 import * as rack_inserts from './scenarios/rack-inserts.mjs';
 import * as rack_instrument from './scenarios/rack-instrument.mjs';
@@ -207,6 +208,7 @@ export const scenarios = [
   musicxml_roundtrip,
   stem_separation,
   midi2_clip_import,
+  project_switch_sync,
   pwa_offline,
   language_ja,
 ];

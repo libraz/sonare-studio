@@ -410,6 +410,131 @@ describe('useEngineProjectSync', () => {
     vi.useRealTimers();
   });
 
+  it('reports idle only once a debounced MIDI sync has fired and settled', async () => {
+    vi.useFakeTimers();
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    let finishSync = () => {};
+    const midiSync = fakeMidiSync({
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 1,
+    });
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync: fakeMixerSync({ sync: vi.fn(), laneTrackIds: () => [1] }),
+      stripSync: { sync: vi.fn() } as unknown as StripSync,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+    await projectSync.syncMidiState();
+    let idle = false;
+    await projectSync.whenEngineSyncIdle().then(() => {
+      idle = true;
+    });
+    expect(idle).toBe(true);
+
+    vi.mocked(midiSync.sync).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSync = resolve;
+        }),
+    );
+    store.clips = store.clips.map((item) =>
+      item.id === 1 ? { ...item, notes: [{ ...item.notes[0], pitch: 61 }] } : item,
+    );
+    await nextTick();
+    idle = false;
+    void projectSync.whenEngineSyncIdle().then(() => {
+      idle = true;
+    });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(idle).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(midiSync.sync).toHaveBeenCalledTimes(2);
+    expect(idle).toBe(false);
+    finishSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(true);
+    scope.stop();
+    vi.useRealTimers();
+  });
+
+  it('lands the replacing project last when a project changes during a running MIDI sync', async () => {
+    vi.useFakeTimers();
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    const finishers: Array<() => void> = [];
+    const synced: number[][] = [];
+    const midiSync = fakeMidiSync({
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 1,
+    });
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync: fakeMixerSync({ sync: vi.fn(), laneTrackIds: () => [1, 2] }),
+      stripSync: { sync: vi.fn() } as unknown as StripSync,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+    await projectSync.syncMidiState();
+    vi.mocked(midiSync.sync).mockImplementation(async (_tracks, clips) => {
+      await new Promise<void>((resolve) => finishers.push(resolve));
+      synced.push(clips.map((item) => item.id));
+    });
+
+    // An edit in the first project starts a sync that is still running...
+    store.clips = store.clips.map((item) =>
+      item.id === 1 ? { ...item, notes: [{ ...item.notes[0], pitch: 61 }] } : item,
+    );
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(finishers).toHaveLength(1);
+    // ...when the next project replaces it.
+    store.tracks = [track(2)];
+    store.clips = [clip(2)];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(finishers).toHaveLength(1);
+    finishers[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishers).toHaveLength(2);
+    finishers[1]();
+    await projectSync.whenEngineSyncIdle();
+    expect(synced).toEqual([[1], [2]]);
+    scope.stop();
+    vi.useRealTimers();
+  });
+
   it('hands instrument lanes to the automation sync once MIDI sync has bound instruments', async () => {
     const store = useProjectStore();
     store.dispose();

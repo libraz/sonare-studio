@@ -301,6 +301,50 @@ describe('createMeterBridge', () => {
     bridge.dispose();
   });
 
+  it('resolves the first-poll wait once each newly watched target has polled', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { handle } = makeHandle('sab');
+    let answer: (valuesDb: number[]) => void = () => {};
+    (handle.engine as unknown as Record<string, unknown>).pollInsertGainReduction = vi.fn(
+      () => new Promise<number[]>((resolve) => (answer = resolve)),
+    );
+    const bridge = createMeterBridge(handle);
+    let settled = false;
+    const track = (wait: Promise<void>): void => {
+      settled = false;
+      void wait.then(() => (settled = true));
+    };
+
+    track(bridge.whenInsertGainReductionPolled());
+    await Promise.resolve();
+    expect(settled).toBe(true);
+
+    const unsubscribe = bridge.forTarget(5).subscribeInsertGainReduction(vi.fn());
+    track(bridge.whenInsertGainReductionPolled());
+    frames.at(-1)?.(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    answer([-1]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(true);
+
+    // Watching the target again after its last listener left waits for a fresh poll.
+    unsubscribe();
+    bridge.forTarget(5).subscribeInsertGainReduction(vi.fn());
+    track(bridge.whenInsertGainReductionPolled());
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    bridge.dispose();
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
   it('polls per-insert gain reduction in SAB mode only for watched targets, throttled', async () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {

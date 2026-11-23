@@ -118,6 +118,8 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let midiSyncTimer: ReturnType<typeof setTimeout> | null = null;
   let engineRebuildHandler: (() => void | Promise<void>) | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
+  let applyRun: Promise<void> = Promise.resolve();
+  const idleWaiters: Array<() => void> = [];
   let audioMediaIssues: MediaCompletenessIssue[] = [];
   let midiMediaIssues: MediaCompletenessIssue[] = [];
   /** Overflow count last reported, so the notice is set once per change. */
@@ -210,7 +212,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     if (applyTimer !== null) clearTimeout(applyTimer);
     applyTimer = setTimeout(() => {
       applyTimer = null;
-      void applyToEngine();
+      startApply();
     }, APPLY_DEBOUNCE_MS);
   }
 
@@ -221,6 +223,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     midiSyncTimer = setTimeout(() => {
       midiSyncTimer = null;
       void syncMidiState();
+      wakeIdleWaiters();
     }, MIDI_SYNC_DEBOUNCE_MS);
   }
 
@@ -395,7 +398,41 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(midiSyncTimer);
       midiSyncTimer = null;
     }
-    void applyToEngine();
+    startApply();
+  }
+
+  /** Runs one audio-schedule apply and records it for whenEngineSyncIdle. */
+  function startApply(): void {
+    applyRun = applyToEngine();
+    wakeIdleWaiters();
+  }
+
+  function wakeIdleWaiters(): void {
+    for (const wake of idleWaiters.splice(0)) wake();
+  }
+
+  /**
+   * Resolves once no debounced engine sync is waiting on its timer and the
+   * audio-schedule apply and MIDI sync it started have settled.
+   */
+  async function whenEngineSyncIdle(): Promise<void> {
+    for (;;) {
+      if (applyTimer !== null || midiSyncTimer !== null) {
+        await new Promise<void>((resolve) => idleWaiters.push(resolve));
+        continue;
+      }
+      const apply = applyRun;
+      const midi = midiSyncQueue;
+      await Promise.all([apply.catch(() => undefined), midi]);
+      if (
+        applyTimer === null &&
+        midiSyncTimer === null &&
+        apply === applyRun &&
+        midi === midiSyncQueue
+      ) {
+        return;
+      }
+    }
   }
 
   /** Routes a live channel-voice message directly to an external MIDI track. */
@@ -425,6 +462,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(applyTimer);
       applyTimer = null;
     }
+    wakeIdleWaiters();
     scheduledClips = [];
     scheduledCount.value = 0;
     mixerSync = null;
@@ -553,6 +591,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     syncMixerState,
     syncTransportState,
     trackMeterSource,
+    whenEngineSyncIdle,
     automationSync: () => automationSync,
     midiSync: () => midiSync,
     mixerLaneTrackIds: () => mixerSync?.laneTrackIds() ?? [],

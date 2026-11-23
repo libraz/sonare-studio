@@ -41,6 +41,7 @@ function mutableBridge(initial: StereoMeterLevels): {
       subscribe: source.subscribe,
       subscribeInsertGainReduction: source.subscribeInsertGainReduction,
       forTarget: () => source,
+      whenInsertGainReductionPolled: async () => {},
       dispose: () => {},
     },
     setLevels(next) {

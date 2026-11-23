@@ -9,7 +9,12 @@ describe('parseRunnerArgs', () => {
       baseUrl: undefined,
       list: false,
       selected: NAMES,
+      updateApiMap: false,
     });
+  });
+
+  it('takes --update-api-map on a full run', () => {
+    expect(parseRunnerArgs(['--update-api-map'], NAMES).updateApiMap).toBe(true);
   });
 
   it('takes --only with or without an equals sign, in running order', () => {
@@ -37,6 +42,8 @@ describe('parseRunnerArgs', () => {
     [['--only=nope']],
     [['--through=nope']],
     [['http://a', 'http://b']],
+    [['--update-api-map', '--only=boot']],
+    [['--update-api-map', '--through=score']],
   ])('refuses %j', (argv) => {
     expect(() => parseRunnerArgs(argv, NAMES)).toThrow();
   });

@@ -143,6 +143,9 @@ export async function run(ctx) {
       );
     }
 
+    // The realtime engine takes the flattened clip before its track goes, so the
+    // cleanup removes a scheduled clip rather than racing the debounced sync.
+    await page.evaluate(() => window.__sonareDebug.whenEngineSyncIdle());
     await page.evaluate(
       ([id, others]) => {
         window.__sonareDebug.armTrack(null);

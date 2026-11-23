@@ -1,3 +1,5 @@
+import { recordModule } from './api-recorder';
+
 let mod: typeof import('@libraz/libsonare') | null = null;
 let p: Promise<typeof import('@libraz/libsonare')> | null = null;
 
@@ -8,8 +10,8 @@ export async function ensureWasm(): Promise<typeof import('@libraz/libsonare')> 
     const attempt = (async () => {
       const m = await import('@libraz/libsonare');
       await m.init();
-      mod = m;
-      return m;
+      mod = recordModule(m);
+      return mod;
     })();
     const retryable = attempt.catch((error) => {
       // A rejected init must not poison all later callers. Keep a successful

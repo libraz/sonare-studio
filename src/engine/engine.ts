@@ -1,6 +1,7 @@
 import sonareWasmUrl from '@libraz/libsonare/wasm?url';
 import type { SonareRealtimeEngineNodeCapabilities } from '@libraz/libsonare/worklet';
 import { SonareEngine } from '@libraz/libsonare/worklet';
+import { recordObject } from '@/lib/api-recorder';
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { requestPwaEngineRecovery } from '@/pwa';
@@ -370,6 +371,7 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
         return node;
       },
     });
+    engine = recordObject(engine, 'SonareEngine');
     if (!workletReady) throw new Error('Engine worklet node was not created.');
     await workletReady;
     options.signal?.throwIfAborted();
