@@ -186,11 +186,6 @@ export function useArrangementClipMenu(
     }
   }
 
-  async function consolidateAudioCluster(clipIds: number[]): Promise<void> {
-    const id = await consolidateAudioClips(clipIds);
-    if (id !== null) setActiveClip(id);
-  }
-
   /** Audio clips that cover a clip's whole window, the references it can be aligned to. */
   function alignmentReferences(clip: EditorClip): EditorClip[] {
     const end = clip.startPpq + clip.lengthPpq;
@@ -293,7 +288,7 @@ export function useArrangementClipMenu(
         label: actions.duplicate,
         hint: shortcutHint('arrange.duplicateClip'),
         disabledReason: frozenBlock,
-        run: () => setActiveClip(duplicateClip(clip.id, end)),
+        run: () => duplicateClip(clip.id, end),
       },
       { id: 'sep-clipboard', separator: true },
       {
@@ -329,7 +324,7 @@ export function useArrangementClipMenu(
           [audio, why.midiClipsOnly],
           [glueIds.length < 2, why.nothingToJoin],
         ),
-        run: () => setActiveClip(glueMidiClips(glueIds)),
+        run: () => glueMidiClips(glueIds),
       },
       {
         id: 'consolidate-audio',
@@ -339,7 +334,7 @@ export function useArrangementClipMenu(
           [!audio, why.audioClipsOnly],
           [consolidateIds.length < 2, why.nothingToJoin],
         ),
-        run: () => consolidateAudioCluster(consolidateIds),
+        run: () => consolidateAudioClips(consolidateIds),
       },
       ...(audio
         ? (() => {

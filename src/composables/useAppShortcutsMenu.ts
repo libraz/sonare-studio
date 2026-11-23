@@ -26,7 +26,6 @@ import {
   pasteNotesAt,
   quantizeSelection,
   redo,
-  setActiveClip,
   setProjectSampleRate,
   setSelection,
   setTrackMute,
@@ -366,7 +365,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'arrange.duplicateClip': {
         const clip = store.activeClip;
         if (!clip) return false;
-        setActiveClip(duplicateClip(clip.id, clip.startPpq + clip.lengthPpq));
+        duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
         return true;
       }
       case 'arrange.splitClipAtPlayhead':
