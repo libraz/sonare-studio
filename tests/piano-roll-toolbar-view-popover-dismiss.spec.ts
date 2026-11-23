@@ -49,7 +49,7 @@ describe('PianoRollToolbar view popover outside-press dismissal', () => {
     });
   });
 
-  it('closes on a press outside, but not on the popover or a teleported listbox', async () => {
+  it('stays open for presses on the popover and its SelectMenu list, closes for another listbox', async () => {
     await wrapper!.find('.tb-menu').trigger('click');
     const popover = () => wrapper!.find('.view-popover');
     expect(popover().exists()).toBe(true);
@@ -58,11 +58,25 @@ describe('PianoRollToolbar view popover outside-press dismissal', () => {
     await wrapper!.vm.$nextTick();
     expect(popover().exists()).toBe(true);
 
+    await wrapper!.find('.view-popover .view-select .select-trigger').trigger('click');
+    const option = document.querySelector('.select-list .select-option');
+    expect(option).not.toBeNull();
+    option?.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await wrapper!.vm.$nextTick();
+    expect(popover().exists()).toBe(true);
+
+    // Another listbox on the page is not part of the popover.
     const listbox = document.createElement('ul');
     listbox.setAttribute('role', 'listbox');
     document.body.appendChild(listbox);
     listbox.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     await wrapper!.vm.$nextTick();
+    expect(popover().exists()).toBe(false);
+  });
+
+  it('closes on a press on the page itself', async () => {
+    await wrapper!.find('.tb-menu').trigger('click');
+    const popover = () => wrapper!.find('.view-popover');
     expect(popover().exists()).toBe(true);
 
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
