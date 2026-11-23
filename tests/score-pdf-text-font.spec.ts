@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { type PdfTextFont, trueTypeCoverage } from '@/notation/pdf-font';
+import {
+  loadPdfTextFont,
+  type PdfTextFont,
+  PdfTextFontUnavailableError,
+  pdfTextFontFromBytes,
+  trueTypeCoverage,
+} from '@/notation/pdf-font';
 import { drawSmuflTextAsPaths } from '@/notation/pdf-smufl-text';
 import { createPdfPageWriter, type PdfTextPlan, planPdfText } from '@/notation/print';
 
@@ -262,5 +268,39 @@ describe('embedded text font coverage', () => {
       expect(coverage.has(character.codePointAt(0) ?? 0), character).toBe(true);
     }
     for (const codePoint of [0xd55c, 0xeca5]) expect(coverage.has(codePoint)).toBe(false);
+  });
+});
+
+describe('embedded text font loading', () => {
+  it('reports a font the network cannot deliver as unavailable', async () => {
+    const offline = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await expect(loadPdfTextFont(offline)).rejects.toBeInstanceOf(PdfTextFontUnavailableError);
+    const refused = vi.fn(async () => new Response('', { status: 404 }));
+    await expect(loadPdfTextFont(refused)).rejects.toBeInstanceOf(PdfTextFontUnavailableError);
+  });
+});
+
+describe('embedded text font coverage through the plan and the writer', () => {
+  const font = pdfTextFontFromBytes(
+    new Uint8Array(
+      readFileSync(
+        'node_modules/@expo-google-fonts/noto-sans-jp/400Regular/NotoSansJP_400Regular.ttf',
+      ),
+    ),
+  );
+
+  beforeEach(() => {
+    pdfState.instances.length = 0;
+  });
+
+  it('lists Hangul, a Chinese-only ideograph and Cyrillic outside JIS per code point', async () => {
+    const plan = await planPdfText(['한국 ピアノ', '们 Ђ Д', 'Piano é 右手'], async () => font);
+    expect(plan.font).toBe(font);
+    expect(plan.undrawable).toEqual(['한', '국', '们', 'Ђ']);
+    const page = `<svg xmlns="${SVG_NS}"><text>Ә ピアノ 한</text></svg>`;
+    const { writer } = await writePdf([page], plan);
+    expect(writer.undrawable()).toEqual(['Ә']);
   });
 });

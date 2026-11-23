@@ -18,14 +18,35 @@ export interface PdfTextFont {
 
 const PDF_TEXT_FONT_NAME = 'NotoSansJP';
 
-/** Fetches the embedded text font and reads its character coverage. */
-export async function loadPdfTextFont(): Promise<PdfTextFont> {
+/**
+ * The embedded text font could not be fetched: offline before it was ever
+ * cached, or the server refused it.
+ */
+export class PdfTextFontUnavailableError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('The PDF text font could not be loaded', options);
+    this.name = 'PdfTextFontUnavailableError';
+  }
+}
+
+/**
+ * Fetches the embedded text font and reads its character coverage.
+ *
+ * @throws {PdfTextFontUnavailableError} When the font file cannot be fetched.
+ */
+export async function loadPdfTextFont(fetchFont: typeof fetch = fetch): Promise<PdfTextFont> {
   const { default: url } = await import(
     '@expo-google-fonts/noto-sans-jp/400Regular/NotoSansJP_400Regular.ttf?url'
   );
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`PDF text font failed to load (${response.status})`);
-  return pdfTextFontFromBytes(new Uint8Array(await response.arrayBuffer()));
+  let bytes: ArrayBuffer;
+  try {
+    const response = await fetchFont(url);
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    bytes = await response.arrayBuffer();
+  } catch (cause) {
+    throw new PdfTextFontUnavailableError({ cause });
+  }
+  return pdfTextFontFromBytes(new Uint8Array(bytes));
 }
 
 /** Builds the font record from TrueType bytes. */

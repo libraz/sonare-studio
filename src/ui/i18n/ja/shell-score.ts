@@ -61,6 +61,8 @@ export const shellScore = {
       maxZoom: 'これ以上拡大できません。',
     },
     engravedScore: '譜面',
+    pdfFontUnavailable:
+      'この譜面の文字を PDF に描くためのフォントをダウンロードできませんでした。ネットワークに接続してからもう一度書き出すか、すべての文字を保てる印刷を使ってください。',
     pdfPageLabel: '{page} / {count} ページ',
     accessibility: {
       navigator: '譜面ノートナビゲーター',

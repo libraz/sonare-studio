@@ -61,6 +61,8 @@ export const shellScore = {
       maxZoom: 'Already at the largest zoom.',
     },
     engravedScore: 'Engraved score',
+    pdfFontUnavailable:
+      'This score has text the PDF can only draw with a font that could not be downloaded. Connect to the network and export again, or use Print, which keeps every character.',
     pdfPageLabel: 'Page {page} / {count}',
     accessibility: {
       navigator: 'Score note navigator',

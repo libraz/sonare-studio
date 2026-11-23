@@ -51,9 +51,8 @@ const MAX_SCORE_PAGES = 500;
 
 /**
  * Unicode code points that jsPDF maps to glyphs in its built-in WinAnsi core
- * fonts in addition to the single-byte WinAnsi ranges. Keep this local and
- * deterministic: the overlay deliberately does not load or embed a Unicode
- * font just for optional metadata text.
+ * fonts in addition to the single-byte WinAnsi ranges. Text inside this set
+ * stays on the core fonts, so an all-Latin score never fetches the embedded font.
  */
 const CORE_FONT_WIN_ANSI_UNICODE = new Set([
   0x0192, // Latin small letter f with hook

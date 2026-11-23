@@ -40,7 +40,13 @@ import {
   inspectMusicXmlExportLoss,
   serializeMusicXml,
 } from '@/notation/musicxml';
-import { createPdfPageWriter, createPrintPageWriter, planPdfText } from '@/notation/print';
+import { PdfTextFontUnavailableError } from '@/notation/pdf-font';
+import {
+  createPdfPageWriter,
+  createPrintPageWriter,
+  type PdfTextPlan,
+  planPdfText,
+} from '@/notation/print';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
@@ -812,7 +818,14 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       const subject = t.value.shell.score.engravedScore;
       const pageLabel = t.value.shell.score.pdfPageLabel;
       const layout = scorePageDimsMm(settings);
-      const text = await planPdfText([musicXmlText(artifact.xml), title, subject, pageLabel]);
+      let text: PdfTextPlan;
+      try {
+        text = await planPdfText([musicXmlText(artifact.xml), title, subject, pageLabel]);
+      } catch (err) {
+        if (!(err instanceof PdfTextFontUnavailableError)) throw err;
+        error.value = t.value.shell.score.pdfFontUnavailable;
+        return;
+      }
       if (!(await confirmPdfTextLoss(text.undrawable))) return;
       const pdf: { writer: Awaited<ReturnType<typeof createPdfPageWriter>> | null } = {
         writer: null,

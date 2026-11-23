@@ -1,8 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openFreshPage } from '../fresh-page.mjs';
+import { openFreshPage, skipTour } from '../fresh-page.mjs';
 import { createPagesServer } from '../pages-server.mjs';
+import { inspectPdfFonts } from '../pdf-inspection.mjs';
+import { downloadBytes } from '../wav-inspection.mjs';
 
 const E2E_DIST = fileURLToPath(new URL('../../../.e2e-dist', import.meta.url));
 
@@ -11,6 +13,9 @@ const E2E_DIST = fileURLToPath(new URL('../../../.e2e-dist', import.meta.url));
  * the on-demand PDF text font), advertises an installable web app manifest,
  * and — once the worker controls
  * the page — boots from its cache and opens the demo with the network cut.
+ * Offline before the font was ever fetched, a PDF export with Japanese text
+ * says so and points at Print instead of writing a file; once one online
+ * export has fetched the font, the runtime cache serves it offline.
  * Runs in its own browser context, which is the only way to start with no
  * worker installed, against the build served with the static host's headers:
  * the preview server adds `Vary: Origin`, which the host does not send.
@@ -21,7 +26,7 @@ export async function run(ctx) {
   const { page: sharedPage, fail } = ctx;
   const server = await createPagesServer({ dist: E2E_DIST });
   const { baseUrl } = server;
-  const { context, page } = await openFreshPage(sharedPage);
+  const { context, page } = await openFreshPage(sharedPage, { acceptDownloads: true });
   try {
     await page.goto(baseUrl, { waitUntil: 'load' });
     await page.locator('[data-testid="start-demo"]').waitFor({ state: 'visible', timeout: 30000 });
@@ -154,11 +159,98 @@ export async function run(ctx) {
     if (!opened) {
       const lastError = await page.evaluate(() => window.__sonareDebug?.lastError() ?? null);
       fail(`the demo did not open offline: ${JSON.stringify(lastError)}`);
-    } else {
-      console.info('the demo opened offline');
+      return;
     }
+    console.info('the demo opened offline');
+
+    await checkOfflinePdfFont(page, context, fail);
   } finally {
     await context.close();
     await server.close();
   }
+}
+
+const PDF_PART_NAME = 'ピアノ';
+const FONT_UNAVAILABLE = 'could not be downloaded';
+
+/** Clicks PDF and resolves with the downloaded bytes, or null when the export ends without one. */
+async function exportPdf(page) {
+  const button = page.locator('button.tb-action').filter({ hasText: /^\s*PDF\s*$/ });
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('button.tb-action')].some(
+        (candidate) => candidate.textContent?.trim() === 'PDF' && !candidate.disabled,
+      ),
+    null,
+    { timeout: 120000 },
+  );
+  const notice = page.locator('.score-error').filter({ hasText: FONT_UNAVAILABLE });
+  const downloaded = page.waitForEvent('download', { timeout: 120000 }).catch(() => null);
+  await button.click();
+  // A notice left by the previous attempt clears as this export starts.
+  await notice.waitFor({ state: 'detached', timeout: 10000 });
+  const failed = notice
+    .waitFor({ state: 'visible', timeout: 120000 })
+    .then(() => null)
+    .catch(() => null);
+  const download = await Promise.race([downloaded, failed]);
+  return download ? downloadBytes(download) : null;
+}
+
+async function checkOfflinePdfFont(page, context, fail) {
+  await skipTour(page);
+  await page.evaluate(
+    (partName) =>
+      window.__sonareDebug.addNotedMidiClip(partName, 0, 16, [
+        { pitch: 60, startPpq: 0, durationPpq: 4 },
+      ]),
+    PDF_PART_NAME,
+  );
+  await page.click('.dock-tabs button:has-text("Score")');
+  await page
+    .locator('.score-body svg g.note')
+    .first()
+    .waitFor({ state: 'attached', timeout: 120000 });
+
+  const offlineFirst = await exportPdf(page);
+  const notice =
+    (await page
+      .locator('.score-error')
+      .textContent()
+      .catch(() => null)) ?? '';
+  if (offlineFirst !== null) {
+    fail('an offline PDF export with Japanese text wrote a file without its font');
+    return;
+  }
+  if (!notice.includes(FONT_UNAVAILABLE) || !notice.includes('Print')) {
+    fail(`the offline PDF export did not explain the missing font: ${JSON.stringify(notice)}`);
+    return;
+  }
+  console.info('offline PDF export without the font points at Print');
+
+  await context.setOffline(false);
+  const online = await exportPdf(page);
+  if (online === null || inspectPdfFonts(online).cidFonts < 1) {
+    fail('the online PDF export did not embed the text font');
+    return;
+  }
+  const cachedFont = await page.evaluate(async () => {
+    for (const key of await globalThis.caches.keys()) {
+      const cache = await globalThis.caches.open(key);
+      if ((await cache.keys()).some((entry) => entry.url.endsWith('.ttf'))) return true;
+    }
+    return false;
+  });
+  if (!cachedFont) {
+    fail('the PDF text font fetched online did not land in the runtime cache');
+    return;
+  }
+
+  await context.setOffline(true);
+  const offlineAgain = await exportPdf(page);
+  if (offlineAgain === null || inspectPdfFonts(offlineAgain).cidFonts < 1) {
+    fail('the PDF export did not reuse the cached text font offline');
+    return;
+  }
+  console.info('the cached PDF text font serves an offline export');
 }
