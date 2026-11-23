@@ -16,20 +16,13 @@ import {
   flattenClipMidiComp,
   removeTrack,
   removeTracks,
-  renameTrack,
-  reorderTracks,
   setActiveTrack,
   setStripPan,
   setTrackColor,
-  setTrackGroup,
   setTrackMute,
-  setTrackRecordInputChannel,
-  setTrackRecordInputDeviceId,
   setTrackSelection,
   setTrackSolo,
   setTracksColor,
-  setTracksGroup,
-  setTrackVca,
   setTrackVolume,
   type TrackPart,
 } from '@/project/commands';
@@ -43,7 +36,6 @@ import {
 } from '@/project/types';
 import {
   type ArrangementRowLayout,
-  reorderRowIndexForDelta,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,
   trackTakeRowCount,
@@ -51,9 +43,11 @@ import {
 import { useTrackAutomationStrip } from '@/ui/arrangement/use-track-automation-strip';
 import { useTrackFreezeBounce } from '@/ui/arrangement/use-track-freeze-bounce';
 import { useTrackHeaderMenu } from '@/ui/arrangement/use-track-header-menu';
+import { useTrackRename } from '@/ui/arrangement/use-track-rename';
+import { useTrackReorderDrag } from '@/ui/arrangement/use-track-reorder-drag';
+import { useTrackRouting } from '@/ui/arrangement/use-track-routing';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { isImeComposing } from '@/ui/keyboard/ime';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
 import { readInputNumber } from '@/ui/numeric-input';
 
@@ -203,65 +197,8 @@ const trackKindLabel = computed<Record<TrackKind, string>>(() => ({
 /** Surfaced when a command rejects (e.g. empty rename). */
 const error = ref('');
 
-// --- Inline rename ---------------------------------------------------------
-
-const editingTrackId = ref<number>(-1);
-const editName = ref('');
-const nameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
-let renameFocusFrame: number | null = null;
-
-function startRename(track: EditorTrack): void {
-  if (track.frozen !== undefined) {
-    error.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
-    return;
-  }
-  editingTrackId.value = track.id;
-  editName.value = track.name;
-  emit('revealTrack', track.id);
-  if (renameFocusFrame !== null) cancelAnimationFrame(renameFocusFrame);
-  // Focus once the input exists in the DOM. preventScroll: the shared
-  // scrollY above is the single source of truth for the row's position;
-  // the browser's own scrollIntoView-on-focus would otherwise scroll the
-  // (overflow-clipped) header list independently of it.
-  renameFocusFrame = requestAnimationFrame(() => {
-    renameFocusFrame = null;
-    const el = nameInput.value;
-    const input = Array.isArray(el) ? el[0] : el;
-    input?.focus({ preventScroll: true });
-    input?.select();
-  });
-}
-
-function commitRename(): void {
-  const trackId = editingTrackId.value;
-  editingTrackId.value = -1;
-  if (trackId < 0) return;
-  const name = editName.value.trim();
-  if (name.length === 0) return;
-  try {
-    renameTrack(trackId, name);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
-
-function onRenameEnter(event: KeyboardEvent): void {
-  if (isImeComposing(event)) return;
-  event.preventDefault();
-  commitRename();
-}
-
-function cancelRename(): void {
-  editingTrackId.value = -1;
-}
-
-onBeforeUnmount(() => {
-  if (renameFocusFrame !== null) {
-    cancelAnimationFrame(renameFocusFrame);
-    renameFocusFrame = null;
-  }
-});
+const { editingTrackId, editName, startRename, commitRename, onRenameEnter, cancelRename } =
+  useTrackRename({ error, emit });
 
 // --- Per-track controls ----------------------------------------------------
 
@@ -362,114 +299,22 @@ function isGroupCollapsed(track: EditorTrack): boolean {
   return track.kind === 'group' && (props.collapsedGroupIds?.includes(track.id) ?? false);
 }
 
-// --- Group membership --------------------------------------------------------
-
-/** Group tracks available as routing targets, in track order. */
-const groupTracks = computed<EditorTrack[]>(() =>
-  store.tracks.filter((track) => track.kind === 'group'),
-);
-
-/** Sentinel value for the "No group" output-group option. */
-const GROUP_NONE = '';
-
-/** Output-group picker options: "No group" plus every group track. */
-const groupOptions = computed<{ value: string | number; label: string }[]>(() => [
-  { value: GROUP_NONE, label: t.value.shell.arrangement.trackHeader.noGroup },
-  ...groupTracks.value.map((group) => ({ value: group.id, label: group.name })),
-]);
-
-function onGroupChange(track: EditorTrack, value: string | number): void {
-  try {
-    const ids = selectedTrackIds(track.id);
-    const groupId = value === GROUP_NONE ? null : Number(value);
-    if (ids.length === 1) setTrackGroup(track.id, groupId);
-    else setTracksGroup(ids, groupId);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
-
-// --- VCA membership ----------------------------------------------------------
-
-/** VCA groups available as remote fader targets. */
-const vcaGroups = computed(() => store.mixer.vcaGroups ?? []);
-
-/** Sentinel value for the "No VCA" option. */
-const VCA_NONE = '';
-
-/** VCA picker options: "No VCA" plus every mixer VCA group. */
-const vcaOptions = computed<{ value: string; label: string }[]>(() => [
-  { value: VCA_NONE, label: t.value.shell.arrangement.trackHeader.noVca },
-  ...vcaGroups.value.map((group) => ({ value: group.id, label: group.name })),
-]);
-
-function onVcaChange(track: EditorTrack, value: string): void {
-  try {
-    setTrackVca(track.id, value === VCA_NONE ? null : value);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
-
-// --- Recording input channel -------------------------------------------------
-
-/** SelectMenu value used for automatic input-channel assignment. */
-const RECORD_INPUT_AUTO = -1;
-/** Compact fixed menu; actual capture channel availability is known only after recording starts. */
-const RECORD_INPUT_CHANNEL_OPTIONS = 8;
-
-const recordInputChannelOptions = computed<{ value: number; label: string }[]>(() => [
-  { value: RECORD_INPUT_AUTO, label: t.value.shell.arrangement.trackHeader.recordInputAuto },
-  ...Array.from({ length: RECORD_INPUT_CHANNEL_OPTIONS }, (_, index) => ({
-    value: index,
-    label: formatMessage(t.value.shell.arrangement.trackHeader.recordInputChannel, {
-      channel: String(index + 1),
-    }),
-  })),
-]);
-
-function recordInputChannelValue(track: EditorTrack): number {
-  return track.recordInputChannel ?? RECORD_INPUT_AUTO;
-}
-
-function onRecordInputChannelChange(track: EditorTrack, value: number): void {
-  try {
-    setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
-
-// --- Recording input device --------------------------------------------------
-
-/** SelectMenu value for the global (non-overridden) input device. */
-const RECORD_DEVICE_DEFAULT = '';
-
-const recordInputDeviceOptions = computed<{ value: string; label: string }[]>(() => [
-  {
-    value: RECORD_DEVICE_DEFAULT,
-    label: t.value.shell.arrangement.trackHeader.recordInputDeviceDefault,
-  },
-  ...(props.recordInputDevices ?? [])
-    .filter((device) => device.value !== RECORD_DEVICE_DEFAULT)
-    .map((device) => ({ value: device.value, label: device.label })),
-]);
-
-function recordInputDeviceValue(track: EditorTrack): string {
-  return track.recordInputDeviceId ?? RECORD_DEVICE_DEFAULT;
-}
-
-function onRecordInputDeviceChange(track: EditorTrack, value: string): void {
-  try {
-    setTrackRecordInputDeviceId(track.id, value === RECORD_DEVICE_DEFAULT ? null : value);
-    error.value = '';
-  } catch (err) {
-    error.value = describeError(err, t.value.notices.errors);
-  }
-}
+const {
+  groupTracks,
+  GROUP_NONE,
+  groupOptions,
+  onGroupChange,
+  vcaGroups,
+  VCA_NONE,
+  vcaOptions,
+  onVcaChange,
+  recordInputChannelOptions,
+  recordInputChannelValue,
+  onRecordInputChannelChange,
+  recordInputDeviceOptions,
+  recordInputDeviceValue,
+  onRecordInputDeviceChange,
+} = useTrackRouting({ props, error, selectedTrackIds });
 
 /** True when the shell reports the track as record-armed. */
 function isArmed(track: EditorTrack): boolean {
@@ -585,57 +430,8 @@ function onAddTrack(kind: 'midi' | 'audio' | 'group'): void {
   emit('revealTrack', trackId);
 }
 
-// --- Drag reordering -------------------------------------------------------
-
-interface ReorderDrag {
-  trackId: number;
-  fromIndex: number;
-  toIndex: number;
-  startClientY: number;
-}
-
-const reorderDrag = ref<ReorderDrag | null>(null);
-
-function onGripPointerDown(track: EditorTrack, index: number, event: PointerEvent): void {
-  if (event.button !== 0) return;
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  reorderDrag.value = {
-    trackId: track.id,
-    fromIndex: index,
-    toIndex: index,
-    startClientY: event.clientY,
-  };
-}
-
-function onGripPointerMove(event: PointerEvent): void {
-  const drag = reorderDrag.value;
-  if (!drag) return;
-  const toIndex = reorderRowIndexForDelta(
-    props.rowLayout,
-    drag.fromIndex,
-    event.clientY - drag.startClientY,
-  );
-  if (toIndex !== drag.toIndex) reorderDrag.value = { ...drag, toIndex };
-}
-
-function onGripPointerUp(): void {
-  const drag = reorderDrag.value;
-  reorderDrag.value = null;
-  if (!drag || drag.toIndex === drag.fromIndex) return;
-  const ids = store.tracks.map((track) => track.id);
-  const fromIndex = ids.indexOf(drag.trackId);
-  const destinationId = displayTracks.value[drag.toIndex]?.id;
-  if (fromIndex < 0 || destinationId === undefined) return;
-  ids.splice(fromIndex, 1);
-  const destinationIndex = ids.indexOf(destinationId);
-  if (destinationIndex < 0) return;
-  ids.splice(destinationIndex + (drag.fromIndex < drag.toIndex ? 1 : 0), 0, drag.trackId);
-  reorderTracks(ids);
-}
-
-function onGripPointerCancel(): void {
-  reorderDrag.value = null;
-}
+const { reorderDrag, onGripPointerDown, onGripPointerMove, onGripPointerUp, onGripPointerCancel } =
+  useTrackReorderDrag({ props, displayTracks });
 
 const { onContextMenu } = useTrackHeaderMenu({
   error,
