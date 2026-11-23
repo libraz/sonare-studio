@@ -184,121 +184,130 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
     </span>
     <TransitionGroup tag="div" name="list-row" class="send-rows">
     <div v-for="bus in buses" :key="bus.id" class="send-row">
-      <button
-        type="button"
-        class="send-name"
-        :class="{
-          off: sendFor(bus.id)?.enabled === false,
-          unset: !sendFor(bus.id),
-          blocked: !isSendDestinationAllowed(bus.id),
-        }"
-        :disabled="!!muteBlocked(bus.id)"
-        v-tooltip="{
-          text: sendFor(bus.id)?.enabled === false
-            ? t.shell.mixer.sends.mutedTitle
-            : t.shell.mixer.sends.activeTitle,
-          reason: muteBlocked(bus.id),
-        }"
-        @click="onToggleEnabled(bus.id)"
+      <div class="send-head">
+        <button
+          type="button"
+          class="send-name"
+          :class="{
+            off: sendFor(bus.id)?.enabled === false,
+            unset: !sendFor(bus.id),
+            blocked: !isSendDestinationAllowed(bus.id),
+          }"
+          :disabled="!!muteBlocked(bus.id)"
+          v-tooltip="{
+            text: sendFor(bus.id)?.enabled === false
+              ? t.shell.mixer.sends.mutedTitle
+              : t.shell.mixer.sends.activeTitle,
+            reason: muteBlocked(bus.id),
+          }"
+          @click="onToggleEnabled(bus.id)"
+        >
+          {{ bus.name }}
+        </button>
+        <button
+          v-if="!isMaster && sendFor(bus.id)"
+          type="button"
+          class="send-timing"
+          :class="{ pre: isPreFader(bus.id) }"
+          v-tooltip="
+            isPreFader(bus.id) ? t.shell.mixer.sends.preFaderTitle : t.shell.mixer.sends.postFaderTitle
+          "
+          @click="onToggleTiming(bus.id)"
+        >
+          {{ isPreFader(bus.id) ? t.shell.mixer.sends.preFader : t.shell.mixer.sends.postFader }}
+        </button>
+        <button
+          v-if="sendFor(bus.id)"
+          type="button"
+          class="send-remove"
+          v-tooltip="t.shell.mixer.sends.remove"
+          :aria-label="t.shell.mixer.sends.remove"
+          @click="onRemove(bus.id)"
+        >
+          ×
+        </button>
+        <span v-else class="send-remove-spacer" />
+      </div>
+      <div class="send-body">
+        <MixerKnob
+          :value="levelFor(bus.id)"
+          :min="SEND_MIN_DB"
+          :max="SEND_MAX_DB"
+          :display="`${formatDb(levelFor(bus.id))} dB`"
+          :size="18"
+          :reason="routeBlocked(bus.id)"
+          :midi-learn-state="learnState(bus.id)"
+          @change="(value, commit) => onLevelChange(bus.id, value, commit)"
+          @midi-learn="onMidiLearn(bus.id)"
+          @midi-forget="onMidiForget(bus.id)"
+        />
+        <NumericReadout
+          class="send-readout"
+          :value="levelFor(bus.id)"
+          :min="SEND_MIN_DB"
+          :max="SEND_MAX_DB"
+          :display="formatDb(levelFor(bus.id))"
+          unit="dB"
+          :ariaLabel="`${bus.name} ${t.shell.mixer.sends.title}`"
+          :reason="routeBlocked(bus.id)"
+          @change="(value) => onLevelChange(bus.id, value, true)"
+        />
+      </div>
+      <div
+        v-if="learnState(bus.id, 'enabled') || (!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing'))"
+        class="send-learn"
       >
-        {{ bus.name }}
-      </button>
-      <button
-        v-if="learnState(bus.id, 'enabled')"
-        type="button"
-        class="send-midi-learn"
-        :class="learnState(bus.id, 'enabled')"
-        v-tooltip="
-          learnState(bus.id, 'enabled') === 'armed'
-            ? t.shell.mixer.controls.midiLearnListening
-            : t.shell.mixer.controls.midiLearn
-        "
-        :aria-label="t.shell.mixer.controls.midiLearn"
-        @click="onMidiLearn(bus.id, 'enabled')"
-      >
-        MIDI
-      </button>
-      <button
-        v-if="learnState(bus.id, 'enabled') === 'bound'"
-        type="button"
-        class="send-midi-forget"
-        v-tooltip="t.shell.mixer.controls.midiForget"
-        :aria-label="t.shell.mixer.controls.midiForget"
-        @click="onMidiForget(bus.id, 'enabled')"
-      >
-        ×
-      </button>
-      <button
-        v-if="!isMaster && sendFor(bus.id)"
-        type="button"
-        class="send-timing"
-        :class="{ pre: isPreFader(bus.id) }"
-        v-tooltip="
-          isPreFader(bus.id) ? t.shell.mixer.sends.preFaderTitle : t.shell.mixer.sends.postFaderTitle
-        "
-        @click="onToggleTiming(bus.id)"
-      >
-        {{ isPreFader(bus.id) ? t.shell.mixer.sends.preFader : t.shell.mixer.sends.postFader }}
-      </button>
-      <button
-        v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing')"
-        type="button"
-        class="send-midi-learn"
-        :class="learnState(bus.id, 'timing')"
-        v-tooltip="
-          learnState(bus.id, 'timing') === 'armed'
-            ? t.shell.mixer.controls.midiLearnListening
-            : t.shell.mixer.controls.midiLearn
-        "
-        :aria-label="t.shell.mixer.controls.midiLearn"
-        @click="onMidiLearn(bus.id, 'timing')"
-      >
-        MIDI
-      </button>
-      <button
-        v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing') === 'bound'"
-        type="button"
-        class="send-midi-forget"
-        v-tooltip="t.shell.mixer.controls.midiForget"
-        :aria-label="t.shell.mixer.controls.midiForget"
-        @click="onMidiForget(bus.id, 'timing')"
-      >
-        ×
-      </button>
-      <MixerKnob
-        :value="levelFor(bus.id)"
-        :min="SEND_MIN_DB"
-        :max="SEND_MAX_DB"
-        :display="`${formatDb(levelFor(bus.id))} dB`"
-        :size="18"
-        :reason="routeBlocked(bus.id)"
-        :midi-learn-state="learnState(bus.id)"
-        @change="(value, commit) => onLevelChange(bus.id, value, commit)"
-        @midi-learn="onMidiLearn(bus.id)"
-        @midi-forget="onMidiForget(bus.id)"
-      />
-      <NumericReadout
-        class="send-readout"
-        :value="levelFor(bus.id)"
-        :min="SEND_MIN_DB"
-        :max="SEND_MAX_DB"
-        :display="formatDb(levelFor(bus.id))"
-        unit="dB"
-        :ariaLabel="`${bus.name} ${t.shell.mixer.sends.title}`"
-        :reason="routeBlocked(bus.id)"
-        @change="(value) => onLevelChange(bus.id, value, true)"
-      />
-      <button
-        v-if="sendFor(bus.id)"
-        type="button"
-        class="send-remove"
-        v-tooltip="t.shell.mixer.sends.remove"
-        :aria-label="t.shell.mixer.sends.remove"
-        @click="onRemove(bus.id)"
-      >
-        ×
-      </button>
-      <span v-else class="send-remove-spacer" />
+        <button
+          v-if="learnState(bus.id, 'enabled')"
+          type="button"
+          class="send-midi-learn"
+          :class="learnState(bus.id, 'enabled')"
+          v-tooltip="
+            learnState(bus.id, 'enabled') === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearn(bus.id, 'enabled')"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="learnState(bus.id, 'enabled') === 'bound'"
+          type="button"
+          class="send-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForget(bus.id, 'enabled')"
+        >
+          ×
+        </button>
+        <button
+          v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing')"
+          type="button"
+          class="send-midi-learn"
+          :class="learnState(bus.id, 'timing')"
+          v-tooltip="
+            learnState(bus.id, 'timing') === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearn(bus.id, 'timing')"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing') === 'bound'"
+          type="button"
+          class="send-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForget(bus.id, 'timing')"
+        >
+          ×
+        </button>
+      </div>
     </div>
     </TransitionGroup>
   </div>
@@ -339,8 +348,22 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 
 .send-row {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A 96px strip cannot hold name, timing, knob and readout on one line. */
+.send-head,
+.send-body,
+.send-learn {
+  display: flex;
   align-items: center;
   gap: 3px;
+  min-width: 0;
+}
+
+.send-body {
+  justify-content: space-between;
 }
 
 .send-readout {
