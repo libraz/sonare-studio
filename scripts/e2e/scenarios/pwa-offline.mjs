@@ -45,7 +45,24 @@ export async function run(ctx) {
       })
       .catch(() => null);
     if (registered?.state !== 'activated') {
-      fail(`the service worker never activated: ${JSON.stringify(registered)}`);
+      const registration = await page
+        .evaluate(async () => {
+          const found = await navigator.serviceWorker.getRegistration('/');
+          return {
+            registered: Boolean(found),
+            installing: found?.installing?.state ?? null,
+            waiting: found?.waiting?.state ?? null,
+            active: found?.active?.state ?? null,
+            caches: await globalThis.caches.keys(),
+          };
+        })
+        .catch((error) => ({ error: error.message }));
+      const served = server.getRequests().map((request) => request.pathname);
+      fail(
+        `the service worker never activated: ${JSON.stringify({ registered, registration })}; ` +
+          `sw.js requested ${served.filter((path) => path === '/sw.js').length}x, ` +
+          `${served.length} requests`,
+      );
       return;
     }
     console.info(`service worker active, scope ${registered.scope}`);
