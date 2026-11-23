@@ -183,7 +183,6 @@ function onRedo(): void {
 
 const appSettings = useAppSettings();
 const { t } = useI18n();
-const mediaWarningIntro = computed(() => t.value.shell.media.missingWarning);
 
 const { capacityWarning, dismissCapacityWarning } = useProjectCapacityWarning();
 const shortcuts = useShortcuts();
@@ -412,7 +411,6 @@ const {
   scope,
   errorMessage,
   mediaWarning,
-  mediaWarningIntro,
   handle,
   transport,
 });

@@ -53,7 +53,6 @@ export interface EngineProjectSyncOptions {
   scope: ShallowRef<ScopeBridge | null>;
   errorMessage: { value: string };
   mediaWarning?: { value: string };
-  mediaWarningIntro?: { value: string };
   handle: ShallowRef<EngineHandle | null>;
   transport: Transport;
 }
@@ -135,7 +134,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     if (options.mediaWarning) {
       options.mediaWarning.value = mediaReport.value.complete
         ? ''
-        : `${options.mediaWarningIntro?.value ?? 'Some project media could not be played. Open Media to relink or replace it.'}\n${formatMediaCompletenessReport(mediaReport.value)}`;
+        : `${t.value.shell.media.missingWarning}\n${formatMediaCompletenessReport(mediaReport.value)}`;
     }
   }
 
