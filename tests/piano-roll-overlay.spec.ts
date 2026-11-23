@@ -179,10 +179,9 @@ describe('buildGhostNotes', () => {
     expect(ghosts.map((g) => g.pitch)).toEqual([2, 3]);
   });
 
-  it('falls back to the default ghost color for clips on unknown tracks', () => {
+  it('rejects a clip whose track is not listed', () => {
     const clips = [makeClip({ id: 10 }), makeClip({ id: 11, trackId: 99, notes: [makeNote()] })];
-    const ghosts = buildGhostNotes({ clips, tracks: [], activeClipId: 10 });
-    expect(ghosts[0].color).toBe(ghostNoteColor(DEFAULT_NOTE_COLOR));
+    expect(() => buildGhostNotes({ clips, tracks: [], activeClipId: 10 })).toThrow(/track 99/);
   });
 });
 

@@ -112,7 +112,7 @@ export function ghostNoteColor(trackColor: string, alpha: number = GHOST_NOTE_AL
 export interface BuildGhostNotesOptions {
   /** All clips in the mirror (the active one is skipped). */
   clips: ReadonlyArray<EditorClip>;
-  /** All tracks in the mirror (color lookup). */
+  /** The tracks every listed clip sits on (color and name lookup). */
   tracks: ReadonlyArray<EditorTrack>;
   /** Id of the active clip (-1 projects ghosts into the timeline frame). */
   activeClipId: number;
@@ -129,15 +129,16 @@ export interface BuildGhostNotesOptions {
  */
 export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
   const { clips, tracks, activeClipId } = options;
-  const colorByTrack = new Map(tracks.map((track) => [track.id, ghostNoteColor(track.color)]));
-  const nameByTrack = new Map(tracks.map((track) => [track.id, track.name]));
-  const fallbackColor = ghostNoteColor(DEFAULT_NOTE_COLOR);
+  const trackById = new Map(tracks.map((track) => [track.id, track]));
   const active = clips.find((clip) => clip.id === activeClipId) ?? null;
   const out: GhostNote[] = [];
   for (const clip of clips) {
     if (clip.id === activeClipId) continue;
-    const color = colorByTrack.get(clip.trackId) ?? fallbackColor;
-    const trackName = nameByTrack.get(clip.trackId) ?? 'Track';
+    const track = trackById.get(clip.trackId);
+    if (!track)
+      throw new Error(`ghost clip ${clip.id} is on track ${clip.trackId}, which is not listed`);
+    const color = ghostNoteColor(track.color);
+    const trackName = track.name;
     const targetOrigin = active ? active.startPpq - active.sourceOffsetPpq : 0;
     for (const note of projectMidiNoteOccurrences(clip)) {
       out.push({
