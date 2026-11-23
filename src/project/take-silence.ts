@@ -11,6 +11,7 @@
  */
 
 import { downmixToMono } from '@/lib/audio-channels';
+import { maxOf } from '@/lib/math';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { sliceAudioClipWindow } from './audio-clip-render';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
@@ -69,7 +70,7 @@ export async function commonTakeSilence(
       ),
     ),
   );
-  const frames = Math.max(...signals.map((signal) => signal.length));
+  const frames = maxOf(signals.map((signal) => signal.length));
   if (frames === 0) return [];
   const sounding = deps.splitSilenceCommon(signals);
 

@@ -16,6 +16,7 @@ import {
   canTonicizeWithSecondaryDominant,
   secondaryDominantLabel,
 } from '@/compose/secondary-dominant';
+import { maxOf, minOf } from '@/lib/math';
 import { CHORD_QUALITY_CHOICES, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import {
   arrangementMelodyPitchClasses,
@@ -426,8 +427,8 @@ const selectedChords = computed(() =>
 /** PPQ span covering every selected chord (regeneration replaces this whole span). */
 const selectionRangePpq = computed(() => {
   if (selectedChords.value.length === 0) return null;
-  const startPpq = Math.min(...selectedChords.value.map((c) => c.startPpq));
-  const endPpq = Math.max(...selectedChords.value.map((c) => c.endPpq));
+  const startPpq = minOf(selectedChords.value.map((c) => c.startPpq));
+  const endPpq = maxOf(selectedChords.value.map((c) => c.endPpq));
   return { startPpq, endPpq };
 });
 

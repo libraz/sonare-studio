@@ -10,7 +10,7 @@
  */
 
 import { type Ref, ref } from 'vue';
-import { clamp } from '@/lib/math';
+import { clamp, minOf } from '@/lib/math';
 import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
 import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import { snapPpqToStep } from '@/ui/canvas/timeline-range';
@@ -593,7 +593,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       );
     });
     const effectiveLaneDelta = canMoveAllLanes ? laneDelta : 0;
-    const minStart = Math.min(...g.origins.map((origin) => origin.startPpq));
+    const minStart = minOf(g.origins.map((origin) => origin.startPpq));
     const effectiveHorizontalDelta = Math.max(-minStart, horizontalDelta);
     return g.origins.map((origin) => {
       const originLane = lanes.get(origin.trackId) ?? -1;

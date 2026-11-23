@@ -9,6 +9,7 @@
  * from the start of the analysed window. Pure module.
  */
 
+import { maxOf } from '@/lib/math';
 import type { TempoSegment } from './types';
 
 /** Beats further than this off the fitted line make the tempo per-bar. */
@@ -64,8 +65,8 @@ export function fitBeatGrid(
   const period = covariance / variance;
   if (!(period > 0)) return null;
   const origin = meanTime - period * meanIndex;
-  const maxDriftBeats = Math.max(
-    ...times.map((time, index) => Math.abs(time - (origin + period * index)) / period),
+  const maxDriftBeats = maxOf(
+    times.map((time, index) => Math.abs(time - (origin + period * index)) / period),
   );
 
   // Vote each detected downbeat onto the beat index it falls nearest.
@@ -74,7 +75,7 @@ export function fitBeatGrid(
     const index = Math.round((downbeat - origin) / period);
     if (index >= 0 && index < n) votes[((index % beatsPerBar) + beatsPerBar) % beatsPerBar] += 1;
   }
-  const phase = votes.indexOf(Math.max(...votes));
+  const phase = votes.indexOf(maxOf(votes));
   const downbeatSeconds = times[phase] ?? origin + period * phase;
 
   const barBpms: number[] = [];

@@ -17,3 +17,23 @@ export function clampInt(value: number, min: number, max: number, fallback = min
 export function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
+
+/** Smallest value, like spreading into `Math.min` but without the argument-count limit; empty yields Infinity. */
+export function minOf(values: Iterable<number>): number {
+  let result = Number.POSITIVE_INFINITY;
+  for (const value of values) {
+    if (Number.isNaN(value)) return Number.NaN;
+    if (value < result || (value === 0 && result === 0 && Object.is(value, -0))) result = value;
+  }
+  return result;
+}
+
+/** Largest value, like spreading into `Math.max` but without the argument-count limit; empty yields -Infinity. */
+export function maxOf(values: Iterable<number>): number {
+  let result = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (Number.isNaN(value)) return Number.NaN;
+    if (value > result || (value === 0 && result === 0 && Object.is(result, -0))) result = value;
+  }
+  return result;
+}

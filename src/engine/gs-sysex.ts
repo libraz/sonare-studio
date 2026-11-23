@@ -1,4 +1,5 @@
 import type { RealtimeEngine } from '@libraz/libsonare';
+import { minOf } from '@/lib/math';
 import type { SmfSysExPacket } from '@/project/types';
 
 /** Maximum SysEx frame accepted by libsonare's realtime engine. */
@@ -54,7 +55,7 @@ export function collectGsSetupSysex(
   const noteStarts = clips.flatMap((clip) =>
     (clip.notes ?? []).map((note) => clip.startPpq + note.startPpq),
   );
-  if (noteStarts.length > 0) firstNotePpq = Math.min(...noteStarts);
+  if (noteStarts.length > 0) firstNotePpq = minOf(noteStarts);
   const seen = new Set<string>();
   let unsupportedPacketCount = 0;
 

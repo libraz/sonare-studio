@@ -1,6 +1,6 @@
 import { shallowRef } from 'vue';
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
-import { clamp01, clampInt } from '@/lib/math';
+import { clamp01, clampInt, maxOf, minOf } from '@/lib/math';
 import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import { pitchClassOf } from '@/lib/pitch';
 import {
@@ -109,7 +109,7 @@ function addedOrRespannedNotes(
 /** Clip length reaching the bar holding the last note end; undefined when the clip already covers it. */
 function grownClipLengthPpq(clip: EditorClip, notes: readonly EditorNote[]): number | undefined {
   if (clip.loopEnabled || notes.length === 0) return undefined;
-  const lastEnd = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
+  const lastEnd = maxOf(notes.map((note) => note.startPpq + note.durationPpq));
   const endPpq = midiSourcePpqToTimeline(clip, lastEnd);
   if (endPpq <= clip.startPpq + clip.lengthPpq + CLIP_LANE_EPSILON) return undefined;
   const bar = measureRangeAt(useProjectStore().timeSignatures, endPpq - 1e-6);
@@ -182,7 +182,7 @@ function selectedNotes(): EditorNote[] {
 export function copySelectedNotes(): boolean {
   const selected = selectedNotes();
   if (selected.length === 0) return false;
-  const originPpq = Math.min(...selected.map((note) => note.startPpq));
+  const originPpq = minOf(selected.map((note) => note.startPpq));
   noteClipboard = selected
     .map((note) => ({
       pitch: note.pitch,
@@ -349,8 +349,8 @@ export function addNotesInNewClip(
   if (track.kind !== 'midi') throw new Error('No active clip to edit');
   const drafts = additions.map(newNoteDraft);
   if (drafts.length === 0) return [];
-  const firstStart = Math.min(...drafts.map((note) => note.startPpq));
-  const lastEnd = Math.max(...drafts.map((note) => note.startPpq + note.durationPpq));
+  const firstStart = minOf(drafts.map((note) => note.startPpq));
+  const lastEnd = maxOf(drafts.map((note) => note.startPpq + note.durationPpq));
   // The lane may already hold clips on either side: the new clip fills only the gap around the first note.
   const gap = laneGapAround(store.clips, track.id, firstStart);
   if (gap === null) throw new RangeError('Cannot draw a new clip over an existing clip');
@@ -820,8 +820,8 @@ export function selectVelocityRange(): void {
   const store = useProjectStore();
   const selected = selectedNotes();
   if (selected.length === 0) return;
-  const min = Math.min(...selected.map((note) => note.velocity));
-  const max = Math.max(...selected.map((note) => note.velocity));
+  const min = minOf(selected.map((note) => note.velocity));
+  const max = maxOf(selected.map((note) => note.velocity));
   setSelection(
     store.notes
       .filter((note) => note.velocity >= min && note.velocity <= max)
@@ -922,7 +922,7 @@ export function quantizeSelectionEnds(strength = 1): void {
 export function normalizeSelectionVelocity(target = 100): void {
   const selected = selectedNotes();
   if (selected.length === 0) return;
-  const max = Math.max(...selected.map((note) => note.velocity));
+  const max = maxOf(selected.map((note) => note.velocity));
   if (max <= 0) return;
   const scale = clampInt(target, 1, 127) / max;
   updateNotes(

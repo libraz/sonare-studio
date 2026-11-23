@@ -5,6 +5,7 @@
  */
 
 import type { Ref } from 'vue';
+import { minOf } from '@/lib/math';
 import {
   applyGrooveToSelection,
   captureGrooveFromSelection,
@@ -91,7 +92,7 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
   function selectionBarPpq(): number {
     const selected = store.selectedNotes;
     if (selected.length === 0) return 0;
-    return barLengthPpq(Math.min(...selected.map((note) => note.startPpq)));
+    return barLengthPpq(minOf(selected.map((note) => note.startPpq)));
   }
 
   /** Selection-wide note operations shared by the note and empty-space menus. */

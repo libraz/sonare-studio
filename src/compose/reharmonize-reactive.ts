@@ -30,6 +30,7 @@ import {
   NoteSafety,
   type SafetyProfile,
 } from '@libraz/libcantus';
+import { maxOf, minOf } from '@/lib/math';
 import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import type { ReharmonizeStrength } from '@/project/command/generate-harmonize';
 import {
@@ -249,8 +250,8 @@ export function proposeReactiveReharmonization(
   let inferredKey: ReturnType<typeof effectiveKeyScale> | undefined;
   const configuredKey = input.key.enabled ? scaleHighlightToKeyScale(input.key) : undefined;
   try {
-    const startPpq = Math.min(...input.melody.map((note) => note.startPpq));
-    const endPpq = Math.max(...input.melody.map((note) => note.startPpq + note.durationPpq));
+    const startPpq = minOf(input.melody.map((note) => note.startPpq));
+    const endPpq = maxOf(input.melody.map((note) => note.startPpq + note.durationPpq));
     const meterStartPpq = measureRangeAt(input.timeSignatures, startPpq).startPpq;
     const meterRanges = timeSignatureRanges(input.timeSignatures, meterStartPpq, endPpq);
     if (input.harmonicRhythm === undefined && meterRanges.length > 1) {

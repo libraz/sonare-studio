@@ -7,6 +7,7 @@
  * are created in one atomic history entry on the first request.
  */
 
+import { maxOf, minOf } from '@/lib/math';
 import { useProjectStore } from '../store';
 import { clipKind } from '../types';
 import { addMidiClip } from './clips-create';
@@ -37,8 +38,8 @@ function chordProgressionRange(
       chord.endPpq > chord.startPpq,
   );
   if (regions.length === 0) return null;
-  const startPpq = Math.min(...regions.map((chord) => chord.startPpq));
-  const endPpq = Math.max(...regions.map((chord) => chord.endPpq));
+  const startPpq = minOf(regions.map((chord) => chord.startPpq));
+  const endPpq = maxOf(regions.map((chord) => chord.endPpq));
   return endPpq > startPpq ? { startPpq, endPpq, lengthPpq: endPpq - startPpq } : null;
 }
 

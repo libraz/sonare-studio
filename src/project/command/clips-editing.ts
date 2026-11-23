@@ -1,3 +1,4 @@
+import { maxOf } from '@/lib/math';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
@@ -388,7 +389,7 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   }
   const ordered = [...clips].sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
   const startPpq = ordered[0].startPpq;
-  const endPpq = Math.max(...ordered.map((clip) => clip.startPpq + clip.lengthPpq));
+  const endPpq = maxOf(ordered.map((clip) => clip.startPpq + clip.lengthPpq));
   const lengthPpq = endPpq - startPpq;
   if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
     throw new RangeError('Glued clip length must be finite and > 0');
@@ -585,7 +586,7 @@ export async function consolidateAudioClips(
       currentRevision(),
     );
   const startPpq = ordered[0].startPpq;
-  const endPpq = Math.max(...ordered.map((clip) => clip.startPpq + clip.lengthPpq));
+  const endPpq = maxOf(ordered.map((clip) => clip.startPpq + clip.lengthPpq));
   const lengthPpq = endPpq - startPpq;
   if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
     throw new RangeError('Consolidated clip length must be finite and > 0');

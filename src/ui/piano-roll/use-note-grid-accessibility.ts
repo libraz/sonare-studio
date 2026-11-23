@@ -5,6 +5,7 @@
 
 import { type ComputedRef, computed, type Ref } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { maxOf, minOf } from '@/lib/math';
 import type { EditorNote } from '@/project/types';
 import type {
   AccessibleObjectAdjustment,
@@ -89,8 +90,8 @@ export function useNoteGridAccessibility(
         }),
       );
     } else {
-      const low = Math.min(...selected.map((note) => note.pitch));
-      const high = Math.max(...selected.map((note) => note.pitch));
+      const low = minOf(selected.map((note) => note.pitch));
+      const high = maxOf(selected.map((note) => note.pitch));
       parts.push(
         formatMessage(t.value.shell.pianoRoll.accessibility.notesSelected, {
           count: selected.length,

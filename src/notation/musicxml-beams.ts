@@ -5,6 +5,7 @@
  * is decided here and the serializer only writes out what this decided.
  */
 
+import { maxOf } from '@/lib/math';
 import type { NotatedEvent, NotatedMeasure, NotatedTimeSig, NotatedVoice } from './model';
 import { PPQ_EPSILON, type StaffNumber } from './musicxml-shared';
 /** MusicXML beam level per beammable note value. */
@@ -110,7 +111,7 @@ export function beamLevel(event: NotatedEvent): number {
 
 /** Assigns first-level beams plus secondary hook/continue marks for one group. */
 export function assignBeams(group: NotatedEvent[], beams: Map<NotatedEvent, string[]>): void {
-  const maxLevel = Math.max(...group.map(beamLevel));
+  const maxLevel = maxOf(group.map(beamLevel));
   for (let level = 1; level <= maxLevel; level++) {
     const members = group.filter((event) => beamLevel(event) >= level);
     if (members.length === 0) continue;

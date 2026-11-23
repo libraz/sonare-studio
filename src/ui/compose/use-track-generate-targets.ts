@@ -7,6 +7,7 @@
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
 import { type SectionId, sectionIdFromName } from '@/compose/section-shaping';
 import { editableDrumTracks } from '@/compose/tracks';
+import { minOf } from '@/lib/math';
 import type { BatchTarget, TrackPart } from '@/project/commands';
 import { partForTrack } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
@@ -151,7 +152,7 @@ export function useTrackGenerateTargets(
     const starts = store.clips
       .filter((clip) => clip.trackId === trackId)
       .map((clip) => clip.startPpq);
-    return starts.length === 0 ? 0 : Math.min(...starts);
+    return starts.length === 0 ? 0 : minOf(starts);
   });
 
   /** A translated, actionable validation message shown before the command runs. */

@@ -19,7 +19,7 @@ import type {
   PitchResult,
 } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
-import { clamp } from '@/lib/math';
+import { clamp, minOf } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { type DetectedNote, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
@@ -226,7 +226,7 @@ export function analysisMono(
 
 /** Trims per-channel results to the shortest so the set stays planar. */
 function toPlanar(segments: ReadonlyArray<Float32Array>): Float32Array[] {
-  const minFrames = Math.min(...segments.map((segment) => segment.length));
+  const minFrames = minOf(segments.map((segment) => segment.length));
   return segments.map((segment) =>
     segment.length === minFrames ? segment : segment.slice(0, minFrames),
   );

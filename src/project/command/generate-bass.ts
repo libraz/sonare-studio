@@ -13,6 +13,7 @@
 import { type BassLineOptions, type BassSegment, generateBassLine } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { minOf } from '@/lib/math';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
@@ -44,7 +45,7 @@ export function buildBassPlan(
 ): TrackPlan | null {
   if (chords.length === 0) return null;
 
-  const firstStart = Math.min(...chords.map((symbol) => symbol.startPpq));
+  const firstStart = minOf(chords.map((symbol) => symbol.startPpq));
   const key = generationKeyAt(store, firstStart);
   const segments: BassSegment[] = chords.map((symbol) => ({
     startBeat: symbol.startPpq,

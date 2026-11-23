@@ -12,7 +12,7 @@ import { useReactiveReharmonization } from '@/composables/useReactiveReharmoniza
 import { buildKeyMap } from '@/compose/key-map';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
-import { clamp } from '@/lib/math';
+import { clamp, maxOf, minOf } from '@/lib/math';
 import { pitchClassOf } from '@/lib/pitch';
 import {
   addNotes,
@@ -455,10 +455,8 @@ function fitNotes(): void {
     fitClip();
     return;
   }
-  const endPpq = Math.max(
-    ...audibleSourceNotes.value.map((note) => note.startPpq + note.durationPpq),
-  );
-  const startPpq = Math.min(...audibleSourceNotes.value.map((note) => note.startPpq));
+  const endPpq = maxOf(audibleSourceNotes.value.map((note) => note.startPpq + note.durationPpq));
+  const startPpq = minOf(audibleSourceNotes.value.map((note) => note.startPpq));
   fitTimeToSpan(startPpq, endPpq);
   fitPitchToNotes(audibleSourceNotes.value);
   bump();
@@ -470,8 +468,8 @@ function fitSelection(): void {
     fitNotes();
     return;
   }
-  const endPpq = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
-  const startPpq = Math.min(...selected.map((note) => note.startPpq));
+  const endPpq = maxOf(selected.map((note) => note.startPpq + note.durationPpq));
+  const startPpq = minOf(selected.map((note) => note.startPpq));
   fitTimeToSpan(startPpq, endPpq);
   fitPitchToNotes(selected);
   bump();
@@ -729,7 +727,7 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
   let updates: Parameters<typeof updateNotes>[0] = [];
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     const direction = event.key === 'ArrowLeft' ? 'left' : 'right';
-    const minStart = Math.min(...selected.map((note) => note.startPpq));
+    const minStart = minOf(selected.map((note) => note.startPpq));
     const requestedDelta =
       store.snapEnabled && store.snapBar
         ? barKeyboardDelta(minStart, direction, event.shiftKey)

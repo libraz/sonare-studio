@@ -15,6 +15,7 @@
  */
 
 import { type KeyScale, spanFromChord, type TimeSignature } from '@libraz/libcantus';
+import { maxOf, minOf } from '@/lib/math';
 import type { EditorChordSymbol } from '@/project/chords';
 import { measureRangeAt, meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -71,9 +72,9 @@ function estimateChordsFromHarmonicTracks(
     };
   }
   if (options?.timeSignatures !== undefined) {
-    const firstNotePpq = Math.min(...notes.map((note) => note.startBeat));
+    const firstNotePpq = minOf(notes.map((note) => note.startBeat));
     const startPpq = measureRangeAt(options.timeSignatures, firstNotePpq).startPpq;
-    const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
+    const endPpq = maxOf(notes.map((note) => note.startBeat + note.durationBeat));
     const ranges: ChordDetectionRange[] = timeSignatureRanges(
       options.timeSignatures,
       startPpq,

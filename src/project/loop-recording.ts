@@ -10,6 +10,7 @@
 
 import type { ProjectLoopRecordingDesc } from '@libraz/libsonare';
 import { computed, type Ref, ref } from 'vue';
+import { minOf } from '@/lib/math';
 import { countInStartPpq, measureRangeAt } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
@@ -386,7 +387,7 @@ export function nativeLoopRecordingDesc(
   ) {
     return null;
   }
-  const frameCount = Math.min(...channels.map((channel) => channel.length));
+  const frameCount = minOf(channels.map((channel) => channel.length));
   if (frameCount <= 0) return null;
   const validChannels = channels.filter((channel) => channel.length >= frameCount);
   if (validChannels.length === 0) return null;

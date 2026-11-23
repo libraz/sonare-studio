@@ -31,6 +31,7 @@ import {
   type SafetyResult,
 } from '@libraz/libcantus';
 import { tryEval } from '@/lib/errors';
+import { maxOf, minOf } from '@/lib/math';
 import { pitchClassOf } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { type GuidanceProfile, toSafetyProfile } from './guidance-profile';
@@ -599,8 +600,8 @@ function motionPartnersOf(
   }
   if (motion.hiddenOuter) {
     const pitches = [pitch, ...outers.map((voice) => voice.pitch)];
-    const lowest = Math.min(...pitches);
-    const highest = Math.max(...pitches);
+    const lowest = minOf(pitches);
+    const highest = maxOf(pitches);
     const opposite = pitch === highest ? lowest : highest;
     for (const voice of outers) {
       if (voice.pitch !== opposite) continue;

@@ -7,6 +7,7 @@
 import type { LufsResult } from '@libraz/libsonare';
 import type { MixdownDeps, MixdownReport } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
+import { minOf } from '@/lib/math';
 
 function applyLoudness(report: MixdownReport, measurement: LufsResult): void {
   if (
@@ -48,7 +49,7 @@ function mergeClipping(
     clippingRatio: clippedSamples / (totalFrames * 2),
     maxClippedPeak: Math.max(left.maxClippedPeak, right.maxClippedPeak),
     regionCount: left.regions.length + right.regions.length,
-    firstRegionStartSample: starts.length > 0 ? Math.min(...starts) : 0,
+    firstRegionStartSample: starts.length > 0 ? minOf(starts) : 0,
   };
 }
 

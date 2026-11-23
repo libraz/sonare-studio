@@ -5,6 +5,7 @@
 
 import { type Ref, ref } from 'vue';
 import { describeError } from '@/lib/errors';
+import { maxOf, minOf } from '@/lib/math';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -121,8 +122,8 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
     }
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     if (clips.length === 0) return null;
-    const startPpq = Math.min(...clips.map((clip) => clip.startPpq));
-    const endPpq = Math.max(...clips.map((clip) => clip.startPpq + clip.lengthPpq));
+    const startPpq = minOf(clips.map((clip) => clip.startPpq));
+    const endPpq = maxOf(clips.map((clip) => clip.startPpq + clip.lengthPpq));
     return endPpq > startPpq ? { startPpq, endPpq } : null;
   }
 

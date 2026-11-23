@@ -6,7 +6,7 @@
  */
 
 import type { MaterialPresetName, RirDiagnostic } from '@libraz/libsonare';
-import { clamp } from '@/lib/math';
+import { clamp, minOf } from '@/lib/math';
 import type { SampleRange } from './ops';
 import {
   analysisMono,
@@ -96,7 +96,7 @@ export function roomMorphChannels(
     };
   }
   const processed = channels.map((channel) => fn(channel, sampleRate, options));
-  const minFrames = Math.min(...processed.map((result) => result.audio.length));
+  const minFrames = minOf(processed.map((result) => result.audio.length));
   return {
     channels: processed.map(({ audio }) =>
       audio.length === minFrames ? audio : audio.slice(0, minFrames),
