@@ -306,14 +306,16 @@ const interactions = useScoreInteractions({
   onNotePitchDrag: (ids, semitones) => {
     const clip = store.activeClip;
     if (!clip) return;
-    applyNoteEdits({
-      updates: ids.map((id, index) => {
-        const note = clip.notes.find((entry) => entry.id === id);
-        return note === undefined
-          ? { id }
-          : { id, pitch: clamp(note.pitch + semitones[index], MIN_PITCH, MAX_PITCH) };
+    tryScoreEdit(() =>
+      applyNoteEdits({
+        updates: ids.map((id, index) => {
+          const note = clip.notes.find((entry) => entry.id === id);
+          return note === undefined
+            ? { id }
+            : { id, pitch: clamp(note.pitch + semitones[index], MIN_PITCH, MAX_PITCH) };
+        }),
       }),
-    });
+    );
   },
   onInsertAt: (startPpq) => {
     const source = store.notes.find((note) => store.selection.has(note.id));
@@ -322,15 +324,17 @@ const interactions = useScoreInteractions({
       ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes)
       : store.notes;
     const drum = isDrumTrack(track, trackNotes);
-    addNote({
-      pitch: source?.pitch ?? (drum ? 36 : 60),
-      velocity: source?.velocity ?? 96,
-      channel: drum
-        ? GM_PERCUSSION_CHANNEL
-        : (source?.channel ?? preferredNoteChannel(track, trackNotes)),
-      startPpq,
-      durationPpq: source?.durationPpq ?? divisionPpq(),
-    });
+    tryScoreEdit(() =>
+      addNote({
+        pitch: source?.pitch ?? (drum ? 36 : 60),
+        velocity: source?.velocity ?? 96,
+        channel: drum
+          ? GM_PERCUSSION_CHANNEL
+          : (source?.channel ?? preferredNoteChannel(track, trackNotes)),
+        startPpq,
+        durationPpq: source?.durationPpq ?? divisionPpq(),
+      }),
+    );
   },
 });
 
@@ -356,14 +360,16 @@ function onScoreKeyDown(event: KeyboardEvent): void {
   // One note per physical press: a held key must not stack duplicates.
   if (event.repeat) return;
   const source = selected[selected.length - 1];
-  addNote({
-    pitch: source.pitch,
-    velocity: source.velocity,
-    channel: source.channel,
-    startPpq: source.startPpq + source.durationPpq,
-    durationPpq: source.durationPpq,
-    ...(source.offVelocity !== undefined ? { offVelocity: source.offVelocity } : {}),
-  });
+  tryScoreEdit(() =>
+    addNote({
+      pitch: source.pitch,
+      velocity: source.velocity,
+      channel: source.channel,
+      startPpq: source.startPpq + source.durationPpq,
+      durationPpq: source.durationPpq,
+      ...(source.offVelocity !== undefined ? { offVelocity: source.offVelocity } : {}),
+    }),
+  );
 }
 
 /** Runs a score edit, clearing the panel error on success and surfacing a thrown one. */
