@@ -19,7 +19,7 @@ import type {
   EditorClip,
   MidiClipTake,
 } from '../types';
-import { clearLaneRangeWithin, makeRoomForRecordingWithin } from './clip-lane';
+import { clearLaneRangeWithin } from './clip-lane';
 import { execute, executeAtomic } from './history';
 import {
   requireEditableClip,
@@ -68,9 +68,9 @@ export interface AddRecordedMidiClipInput {
 /**
  * Lays a freshly recorded performance onto an existing MIDI track as one
  * undoable edit: the clip and its events are committed together so a single
- * undo removes the whole take. Under the disallow overlap policy, clips
- * already under the recorded range are split around it and their covered part
- * removed, so the take always lands; an overlap-allowing project layers it.
+ * undo removes the whole take. Clips already under the recorded range are
+ * split around it and their covered part removed, whatever the project's
+ * overlap policy, so a recording always replaces the range it covers.
  *
  * The notes are clip-window-relative (the caller offsets them by the punch-in
  * position).
@@ -81,13 +81,6 @@ export interface AddRecordedMidiClipInput {
  *   placement is invalid.
  */
 export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
-  return storeRecordedMidiClip(input, makeRoomForRecordingWithin);
-}
-
-function storeRecordedMidiClip(
-  input: AddRecordedMidiClipInput,
-  makeRoom: typeof clearLaneRangeWithin,
-): number {
   const store = useProjectStore();
   const track = requireEditableTrack(store, input.trackId);
   if (track.kind !== 'midi') {
@@ -115,7 +108,7 @@ function storeRecordedMidiClip(
   const project = getProject();
   const events = notesToProjectEvents(notes.map((note) => ({ ...note })));
   return executeAtomic((edit) => {
-    makeRoom(edit, input.trackId, input.startPpq, input.startPpq + input.lengthPpq);
+    clearLaneRangeWithin(edit, input.trackId, input.startPpq, input.startPpq + input.lengthPpq);
     const newClipId = edit(1, () =>
       project.addClip({
         trackId: input.trackId,
@@ -262,17 +255,3 @@ export function flattenClipMidiComp(clipId: number): void {
     store.refresh();
   });
 }
-
-/**
- * Replaces MIDI material in one timeline interval as one atomic command.
- *
- * Existing clips are split at the interval edges and their middle fragments
- * are removed, leaving material before and after the cycle untouched; the new
- * recording is then added as one MIDI clip in the same history entry.
- */
-export function overwriteRecordedMidiClip(input: AddRecordedMidiClipInput): number {
-  return storeRecordedMidiClip(input, clearLaneRangeWithin);
-}
-
-/** Descriptive alias for callers that use the replace terminology. */
-export const replaceRecordedMidiMaterial = overwriteRecordedMidiClip;

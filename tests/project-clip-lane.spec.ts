@@ -2,7 +2,6 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, saveAsset } from '@/persistence/assets';
 import { clipRangesCollide } from '@/project/command/clip-lane';
-import { overwriteRecordedMidiClip } from '@/project/command/midi-recording';
 import {
   addAudioClip,
   addAudioTrack,
@@ -260,25 +259,12 @@ describe('clip lane placement', () => {
       expect(lane()).toEqual([[0, 12]]);
     });
 
-    it('layers a MIDI take over an existing clip when the project allows overlap', () => {
+    it('clears the range for a MIDI recording even when the project allows overlap', () => {
       midi(0, 12);
       getProject().setOverlapPolicy('allow');
       clearHistory();
 
       addRecordedMidiClip({ trackId, startPpq: 4, lengthPpq: 4, notes: [] });
-
-      expect(lane()).toEqual([
-        [0, 12],
-        [4, 8],
-      ]);
-    });
-
-    it('clears the range for a MIDI overwrite recording even when the project allows overlap', () => {
-      midi(0, 12);
-      getProject().setOverlapPolicy('allow');
-      clearHistory();
-
-      overwriteRecordedMidiClip({ trackId, startPpq: 4, lengthPpq: 4, notes: [] });
 
       expect(lane()).toEqual([
         [0, 4],
@@ -287,9 +273,9 @@ describe('clip lane placement', () => {
       ]);
     });
 
-    it('clears an empty clip under a MIDI overwrite recording', () => {
+    it('clears an empty clip under a MIDI recording', () => {
       midi(2, 4);
-      const id = overwriteRecordedMidiClip({
+      const id = addRecordedMidiClip({
         trackId,
         startPpq: 0,
         lengthPpq: 4,

@@ -469,7 +469,6 @@ export const shellFrame = {
     midiCycleRecordTakes: 'Takes',
     midiCycleRecordOverdub: 'Overdub',
     midiCycleRecordKeepLast: 'Keep last',
-    midiCycleRecordOverwrite: 'Overwrite',
     midiInputAll: 'All inputs',
     midiInputQuantizeOff: 'Off',
     midiInputQuantizeQuarter: '1/4',

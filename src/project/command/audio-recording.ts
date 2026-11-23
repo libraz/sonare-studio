@@ -1,7 +1,7 @@
 import { audioAssetUri } from '@/persistence/assets';
 import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import type { ClipTake } from '../types';
-import { makeRoomForRecordingWithin } from './clip-lane';
+import { clearLaneRangeWithin } from './clip-lane';
 import { executeAtomic } from './history';
 import { requireEditableTrack, reusableAudioSourceId, validatePpq } from './utils';
 
@@ -45,9 +45,10 @@ function prepareInput(input: AddRecordedAudioClipInput): PreparedRecordedAudioCl
 /**
  * Publishes every route of one audio recording as one atomic undo entry.
  *
- * Under the disallow overlap policy, clips already under a recorded range are
- * split around it and their covered part removed, so the take always lands. All inputs are validated first. If
- * any later native placement or mirror update fails, executeAtomic reverses
+ * Clips already under a recorded range are split around it and their covered
+ * part removed, whatever the overlap policy, so a recording always replaces
+ * the range it covers. All inputs are validated first. If any later native
+ * placement or mirror update fails, executeAtomic reverses
  * every completed Project edit and restores the exact pre-recording mirror
  * snapshot.
  */
@@ -62,12 +63,7 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
     // Make room on every destination before the first clip lands so the
     // mirror stays in step.
     for (const input of prepared) {
-      makeRoomForRecordingWithin(
-        edit,
-        input.trackId,
-        input.startPpq,
-        input.startPpq + input.lengthPpq,
-      );
+      clearLaneRangeWithin(edit, input.trackId, input.startPpq, input.startPpq + input.lengthPpq);
     }
     for (const input of prepared) {
       const sourceId = reusableAudioSourceId(input.assetId, project.sources().length);

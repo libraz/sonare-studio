@@ -353,18 +353,3 @@ export function clearLaneRangeWithin(
     removeClipWithin(edit, middleId);
   }
 }
-
-/**
- * Makes room for a recorded take: under the disallow overlap policy the
- * recorded range is cleared like {@link clearLaneRangeWithin}; a project that
- * allows overlap layers the take over existing clips instead.
- */
-export function makeRoomForRecordingWithin(
-  edit: AtomicProjectEdit,
-  trackId: number,
-  startPpq: number,
-  endPpq: number,
-): void {
-  if (getProject().overlapPolicy !== 'disallow') return;
-  clearLaneRangeWithin(edit, trackId, startPpq, endPpq);
-}

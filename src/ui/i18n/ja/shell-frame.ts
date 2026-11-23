@@ -474,7 +474,6 @@ export const shellFrame = {
     midiCycleRecordTakes: 'テイク',
     midiCycleRecordOverdub: 'オーバーダブ',
     midiCycleRecordKeepLast: '最終テイクを採用',
-    midiCycleRecordOverwrite: '上書き',
     midiInputAll: 'すべての入力',
     midiInputQuantizeOff: 'オフ',
     midiInputQuantizeQuarter: '1/4',

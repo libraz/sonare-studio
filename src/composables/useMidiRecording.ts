@@ -12,10 +12,7 @@
 
 import { getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { describeError } from '@/lib/errors';
-import {
-  type AddRecordedMidiClipInput,
-  overwriteRecordedMidiClip as overwriteRecordedMidiClipCommand,
-} from '@/project/command/midi-recording';
+import type { AddRecordedMidiClipInput } from '@/project/command/midi-recording';
 import { addRecordedMidiClip as addRecordedMidiClipCommand } from '@/project/commands';
 import type {
   RecordingCycleTake,
@@ -50,7 +47,7 @@ import { createCountInController, resolveTransportRecordingPlan } from './record
 import type { UseTransportReturn } from './useTransport';
 
 /** How a MIDI performance recorded through a transport cycle is committed. */
-export type MidiCycleRecordMode = 'takes' | 'overdub' | 'keep-last' | 'overwrite';
+export type MidiCycleRecordMode = 'takes' | 'overdub' | 'keep-last';
 
 /** A note-on/note-off received from a MIDI input (channel-voice, 7-bit). */
 export interface CapturedNoteEvent {
@@ -97,8 +94,6 @@ export interface CapturedPolyPressureEvent extends CapturedChannelPressureEvent 
 export interface UseMidiRecordingOptions {
   /** Clip-creation command; defaults to addRecordedMidiClip from commands. */
   addRecordedMidiClip?: typeof addRecordedMidiClipCommand;
-  /** Cycle-overwrite command; defaults to the atomic project command. */
-  overwriteRecordedMidiClip?: (input: AddRecordedMidiClipInput) => number;
   /** High-resolution clock in milliseconds, injectable for tests. */
   now?: () => number;
 }
@@ -175,7 +170,6 @@ export function useMidiRecording(
   const store = useProjectStore();
   const { t } = useI18n();
   const addClip = options.addRecordedMidiClip ?? addRecordedMidiClipCommand;
-  const overwriteClip = options.overwriteRecordedMidiClip ?? overwriteRecordedMidiClipCommand;
   const now = options.now ?? (() => globalThis.performance?.now?.() ?? Date.now());
 
   const armedTrackId = ref<number | null>(null);
@@ -665,10 +659,7 @@ export function useMidiRecording(
           : {}),
         name: `MIDI Recording ${nextRecordingCounter}`,
       };
-      const clipId =
-        loopLengthPpq > 0 && cycleRecordMode.value === 'overwrite'
-          ? overwriteClip(input)
-          : addClip(input);
+      const clipId = addClip(input);
       recordingCounter = nextRecordingCounter;
       return clipId;
     } catch (err) {

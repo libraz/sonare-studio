@@ -93,7 +93,7 @@ const KINDS: KindCase[] = [
 
 const ALL_FIELDS: LaneField[] = KINDS.map((kind) => kind.field);
 
-/** A recorder over a writable playhead whose add/overwrite commands log their input. */
+/** A recorder over a writable playhead whose recording command logs its input. */
 function setup(now?: () => number) {
   const positionPpq = ref(0);
   const transport = fakeTransport({
@@ -109,19 +109,14 @@ function setup(now?: () => number) {
     }),
   });
   const added: AddRecordedMidiClipInput[] = [];
-  const overwritten: AddRecordedMidiClipInput[] = [];
   const recording = useMidiRecording(transport, {
     now,
     addRecordedMidiClip: (input) => {
       added.push(input);
       return 1;
     },
-    overwriteRecordedMidiClip: (input) => {
-      overwritten.push(input);
-      return 2;
-    },
   });
-  return { recording, transport, positionPpq, added, overwritten };
+  return { recording, transport, positionPpq, added };
 }
 
 /** Fields other than `field` are absent from a clip or take input. */
@@ -143,7 +138,7 @@ describe.each(KINDS)('useMidiRecording records $name', (kind) => {
   });
 
   /** Records a 4-8 loop: values 10 at 4.5 and 20 at 5.5, then 30 at 4.75 in the second pass. */
-  function recordTwoPasses(mode: 'takes' | 'overdub' | 'keep-last' | 'overwrite') {
+  function recordTwoPasses(mode: 'takes' | 'overdub' | 'keep-last') {
     const harness = setup();
     const { recording, transport, positionPpq } = harness;
     recording.arm(store.tracks[0].id);
@@ -223,9 +218,8 @@ describe.each(KINDS)('useMidiRecording records $name', (kind) => {
   });
 
   it('keeps each pass as a take and the last pass on the clip in takes mode', () => {
-    const { result, added, overwritten } = recordTwoPasses('takes');
+    const { result, added } = recordTwoPasses('takes');
     expect(result).toBe(1);
-    expect(overwritten).toEqual([]);
     const [input] = added;
     expect(input).toMatchObject({ startPpq: 4, lengthPpq: 4, notes: [] });
     expect(input[kind.field]).toEqual([kind.lane(1, [[0.75, 30]])]);
@@ -265,14 +259,5 @@ describe.each(KINDS)('useMidiRecording records $name', (kind) => {
       ]),
     ]);
     expect(added[0].midiTakes).toBeUndefined();
-  });
-
-  it('replaces the cycle range with the last pass in overwrite mode', () => {
-    const { result, added, overwritten } = recordTwoPasses('overwrite');
-    expect(result).toBe(2);
-    expect(added).toEqual([]);
-    expect(overwritten[0]).toMatchObject({ startPpq: 4, lengthPpq: 4 });
-    expect(overwritten[0][kind.field]).toEqual([kind.lane(1, [[0.75, 30]])]);
-    expect(overwritten[0].midiTakes).toBeUndefined();
   });
 });

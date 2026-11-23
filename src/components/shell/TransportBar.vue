@@ -175,7 +175,6 @@ const midiCycleRecordModeOptions = computed(() => [
   { value: 'takes', label: t.value.shell.transport.midiCycleRecordTakes },
   { value: 'overdub', label: t.value.shell.transport.midiCycleRecordOverdub },
   { value: 'keep-last', label: t.value.shell.transport.midiCycleRecordKeepLast },
-  { value: 'overwrite', label: t.value.shell.transport.midiCycleRecordOverwrite },
 ]);
 
 const midiCycleRecordMode = computed(() => props.midiRecording.cycleRecordMode?.value ?? 'takes');

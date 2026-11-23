@@ -607,27 +607,19 @@ describe('useMidiRecording', () => {
   describe('cycle-recording modes', () => {
     /** Records pitch 60 in the first pass and 64 in the second of a 4-8 loop. */
     const recordTwoPasses = (
-      mode: 'takes' | 'overwrite',
+      mode: 'takes' | 'keep-last',
       commands: {
         add?: (input: AddRecordedMidiClipInput) => number;
-        overwrite?: (input: AddRecordedMidiClipInput) => number;
       } = {},
     ) => {
       const t = makeTransport();
       const added: AddRecordedMidiClipInput[] = [];
-      const overwritten: AddRecordedMidiClipInput[] = [];
       const recording = useMidiRecording(t.transport, {
         addRecordedMidiClip:
           commands.add ??
           ((input) => {
             added.push(input);
             return 1;
-          }),
-        overwriteRecordedMidiClip:
-          commands.overwrite ??
-          ((input) => {
-            overwritten.push(input);
-            return 2;
           }),
       });
       recording.arm(store.tracks[0].id);
@@ -646,13 +638,12 @@ describe('useMidiRecording', () => {
       t.positionPpq.value = 5;
       recording.captureNoteOff({ pitch: 64, velocity: 0, channel: 0 });
       const result = recording.stopRecord();
-      return { recording, result, added, overwritten };
+      return { recording, result, added };
     };
 
     it('stores each pass as a take with the last one active in takes mode', () => {
-      const { result, added, overwritten } = recordTwoPasses('takes');
+      const { result, added } = recordTwoPasses('takes');
       expect(result).toBe(1);
-      expect(overwritten).toHaveLength(0);
       expect(added).toHaveLength(1);
       const [input] = added;
       expect(input.midiTakes?.map((take) => take.notes.map((note) => note.pitch))).toEqual([
@@ -664,14 +655,13 @@ describe('useMidiRecording', () => {
       expect(input).toMatchObject({ startPpq: 4, lengthPpq: 4 });
     });
 
-    it('replaces the cycle range through the overwrite command in overwrite mode', () => {
-      const { result, added, overwritten } = recordTwoPasses('overwrite');
-      expect(result).toBe(2);
-      expect(added).toHaveLength(0);
-      expect(overwritten).toHaveLength(1);
-      expect(overwritten[0]).toMatchObject({ startPpq: 4, lengthPpq: 4 });
-      expect(overwritten[0].notes.map((note) => note.pitch)).toEqual([64]);
-      expect(overwritten[0].midiTakes).toBeUndefined();
+    it('commits only the last pass, without takes, in keep-last mode', () => {
+      const { result, added } = recordTwoPasses('keep-last');
+      expect(result).toBe(1);
+      expect(added).toHaveLength(1);
+      expect(added[0]).toMatchObject({ startPpq: 4, lengthPpq: 4 });
+      expect(added[0].notes.map((note) => note.pitch)).toEqual([64]);
+      expect(added[0].midiTakes).toBeUndefined();
     });
 
     it('reports a failed store and returns no clip', () => {

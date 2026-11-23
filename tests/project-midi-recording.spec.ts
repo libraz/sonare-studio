@@ -1,7 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloneJson } from '@/project/clone-json';
-import { overwriteRecordedMidiClip } from '@/project/command/midi-recording';
 import {
   addAudioTrack,
   addRecordedMidiClip,
@@ -306,7 +305,7 @@ describe('addRecordedMidiClip', () => {
   });
 });
 
-describe('overwriteRecordedMidiClip', () => {
+describe('addRecordedMidiClip over existing material', () => {
   let store: ReturnType<typeof useProjectStore>;
 
   beforeEach(async () => {
@@ -332,7 +331,7 @@ describe('overwriteRecordedMidiClip', () => {
     const before = JSON.parse(JSON.stringify(store.clips));
     clearHistory();
 
-    const replacementId = overwriteRecordedMidiClip({
+    const replacementId = addRecordedMidiClip({
       trackId,
       startPpq: 4,
       lengthPpq: 4,
