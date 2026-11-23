@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openFreshPage } from '../fresh-page.mjs';
 import { createPagesServer } from '../pages-server.mjs';
@@ -57,11 +59,20 @@ export async function run(ctx) {
           };
         })
         .catch((error) => ({ error: error.message }));
-      const served = server.getRequests().map((request) => request.pathname);
+      const requests = server.getRequests();
+      const served = requests.map((request) => request.pathname);
+      const listed = JSON.parse(
+        await readFile(join(E2E_DIST, 'precache-manifest.json'), 'utf8'),
+      ).assets;
+      const unrequested = listed.filter((asset) => !served.includes(asset));
+      const unfinished = requests
+        .filter((request) => request.status !== 200 || !request.completed)
+        .map((request) => `${request.pathname} ${request.status} completed=${request.completed}`);
       fail(
         `the service worker never activated: ${JSON.stringify({ registered, registration })}; ` +
           `sw.js requested ${served.filter((path) => path === '/sw.js').length}x, ` +
-          `${served.length} requests`,
+          `${served.length} requests; precache assets never requested ${JSON.stringify(unrequested)}; ` +
+          `not a completed 200 ${JSON.stringify(unfinished)}`,
       );
       return;
     }

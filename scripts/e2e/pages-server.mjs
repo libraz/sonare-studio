@@ -128,10 +128,17 @@ export async function createPagesServer({ dist, host = '127.0.0.1', port = 0 } =
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
-    requests.push({
+    const entry = {
       method: request.method ?? 'GET',
       pathname: url.pathname,
       release: activeRelease,
+      status: null,
+      completed: false,
+    };
+    requests.push(entry);
+    response.on('close', () => {
+      entry.status = response.statusCode;
+      entry.completed = response.writableFinished;
     });
     const commonHeaders = { ...COI_HEADERS };
     if (!online) {
@@ -208,6 +215,8 @@ export async function createPagesServer({ dist, host = '127.0.0.1', port = 0 } =
     }
     const headers = {
       ...commonHeaders,
+      // A chunked 8 MB wasm body failed the worker's Cache.put in 10 of 20 installs.
+      'content-length': String(body.byteLength),
       'content-type':
         MIME_TYPES[extname(pathnameForContentType).toLowerCase()] ?? 'application/octet-stream',
     };
