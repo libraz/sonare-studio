@@ -346,6 +346,8 @@ export const shellFrame = {
     syncTempoTitle: 'Time-stretch previews of tempo-tagged assets to the project tempo',
     importFiles: 'Import files…',
     importFilesTitle: 'Add audio files to this project’s media library',
+    tagDynamicRange: 'DR {value} dB',
+    tagBrightness: 'Bright {value}',
     importing: 'Importing {done} / {total}…',
     empty: 'No audio assets. Import files or drop them here.',
     noMatches: 'No assets match the filters.',

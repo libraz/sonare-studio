@@ -351,6 +351,8 @@ export const shellFrame = {
     syncTempoTitle: 'テンポタグ付きアセットのプレビューをプロジェクトテンポに合わせて伸縮',
     importFiles: 'ファイルを読み込み...',
     importFilesTitle: 'このプロジェクトのメディアライブラリーにオーディオファイルを追加',
+    tagDynamicRange: 'DR {value} dB',
+    tagBrightness: '明るさ {value}',
     importing: '読み込み中 {done} / {total}...',
     empty: 'オーディオアセットはありません。ファイルを読み込むか、ここへドロップしてください。',
     noMatches: 'フィルターに一致するアセットはありません。',

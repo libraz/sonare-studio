@@ -80,16 +80,21 @@ const assets = ref<AudioAssetMeta[]>([]);
 const listError = ref<string | null>(null);
 const loaded = ref(false);
 
-/** Reloads the asset list from the store. */
+let refreshGeneration = 0;
+
+/** Reloads the asset list from the store; only the newest reload lands. */
 async function refresh(): Promise<void> {
+  const generation = ++refreshGeneration;
   try {
-    assets.value = await listAssets();
+    const listed = await listAssets();
+    if (disposed || generation !== refreshGeneration) return;
+    assets.value = listed;
     listError.value = null;
   } catch (error) {
+    if (disposed || generation !== refreshGeneration) return;
     listError.value = errorMessage(error);
-  } finally {
-    loaded.value = true;
   }
+  loaded.value = true;
 }
 
 // --- Filtering and sorting -------------------------------------------------
@@ -355,9 +360,17 @@ function assetSummary(asset: AudioAssetMeta): string {
   if (asset.tags?.timeSignature) parts.push(asset.tags.timeSignature);
   if (asset.tags?.grooveType) parts.push(asset.tags.grooveType);
   if (asset.tags?.dynamicRangeDb !== undefined)
-    parts.push(`DR ${formatTagNumber(asset.tags.dynamicRangeDb)} dB`);
+    parts.push(
+      formatMessage(t.value.shell.media.tagDynamicRange, {
+        value: formatTagNumber(asset.tags.dynamicRangeDb),
+      }),
+    );
   if (asset.tags?.brightness !== undefined)
-    parts.push(`Bright ${formatTagNumber(asset.tags.brightness, 2)}`);
+    parts.push(
+      formatMessage(t.value.shell.media.tagBrightness, {
+        value: formatTagNumber(asset.tags.brightness, 2),
+      }),
+    );
   if (asset.tags?.lufs !== undefined) parts.push(formatLufs(asset.tags.lufs));
   return parts.join(' · ');
 }
@@ -495,7 +508,13 @@ onBeforeUnmount(() => {
       :message="t.shell.media.empty"
     >
       <template #action>
-        <button type="button" class="empty-import" :disabled="!!importBlocked" @click="onImportClick">
+        <button
+          type="button"
+          class="empty-import"
+          :disabled="!!importBlocked"
+          v-tooltip="{ reason: importBlocked }"
+          @click="onImportClick"
+        >
           {{ t.shell.media.importFiles }}
         </button>
       </template>
