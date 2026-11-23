@@ -89,6 +89,7 @@ Nothing in this section asks anything of you; read it when a checklist item or a
 - Some checks guard the seam to the engine and the shape of the build: the spec type-check ceiling, the core contract specs (`tests/core-*.spec.ts`) and the bundle check at the end of `yarn build`. The maintainer runs and maintains them; a change that trips one is still welcome.
 - Most end-to-end scenarios share one page and run in order; the portable project and revision scenarios use fresh browser contexts. The production-journey scenarios start from empty browser storage, save and reopen the project, and inspect the real downloaded WAV, MIDI or ZIP files.
 - Service Workers are disabled on the dev server. `node scripts/e2e-pages.mjs` after `yarn build` serves the build with Cloudflare Pages-style redirects and exercises Service Worker installation, release changes, cache repair and offline revisits.
+- A Chrome DevTools Protocol session opened on a page (`context.newCDPSession`) stops `context.setOffline` from taking effect, so the `pwa-offline` scenario carries no CDP tracing.
 - `yarn test:external-formats` downloads the pinned MusicXML and DAWproject schemas and validates exported files against them with `xmllint`, so it needs network access and `xmllint` on `PATH`. `tests/external-formats.md` lists its optional inputs.
 
 ## Reporting issues
