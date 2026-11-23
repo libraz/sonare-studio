@@ -125,26 +125,32 @@ export function useAppShellLayout() {
     dividerDrag = { startY: event.clientY, startHeight: arrangeHeight.value };
   }
 
+  function applyDividerSample(): void {
+    if (!dividerDrag) return;
+    arrangeHeight.value = clampArrangeHeight(
+      dividerDrag.startHeight + (dividerPendingY - dividerDrag.startY),
+    );
+  }
+
   function onDividerPointerMove(event: PointerEvent): void {
     if (!dividerDrag) return;
     dividerPendingY = event.clientY;
     if (dividerRaf !== 0) return;
     dividerRaf = requestAnimationFrame(() => {
       dividerRaf = 0;
-      if (!dividerDrag) return;
-      arrangeHeight.value = clampArrangeHeight(
-        dividerDrag.startHeight + (dividerPendingY - dividerDrag.startY),
-      );
+      applyDividerSample();
     });
   }
 
   function onDividerPointerUp(): void {
     if (!dividerDrag) return;
-    dividerDrag = null;
     if (dividerRaf !== 0) {
+      // The release can land before the queued frame: apply its sample now.
       cancelAnimationFrame(dividerRaf);
       dividerRaf = 0;
+      applyDividerSample();
     }
+    dividerDrag = null;
     persistArrangeHeight();
   }
 
@@ -192,27 +198,33 @@ export function useAppShellLayout() {
     scoreDrag = { startY: event.clientY, startHeight };
   }
 
+  function applyScoreSample(): void {
+    if (!scoreDrag) return;
+    // The divider sits above the score: dragging up (smaller clientY) grows it.
+    scoreHeight.value = clampScoreHeight(
+      scoreDrag.startHeight + (scoreDrag.startY - scorePendingY),
+    );
+  }
+
   function onScoreDividerPointerMove(event: PointerEvent): void {
     if (!scoreDrag) return;
     scorePendingY = event.clientY;
     if (scoreRaf !== 0) return;
     scoreRaf = requestAnimationFrame(() => {
       scoreRaf = 0;
-      if (!scoreDrag) return;
-      // The divider sits above the score: dragging up (smaller clientY) grows it.
-      scoreHeight.value = clampScoreHeight(
-        scoreDrag.startHeight + (scoreDrag.startY - scorePendingY),
-      );
+      applyScoreSample();
     });
   }
 
   function onScoreDividerPointerUp(): void {
     if (!scoreDrag) return;
-    scoreDrag = null;
     if (scoreRaf !== 0) {
+      // The release can land before the queued frame: apply its sample now.
       cancelAnimationFrame(scoreRaf);
       scoreRaf = 0;
+      applyScoreSample();
     }
+    scoreDrag = null;
     persistScoreHeight();
   }
 
