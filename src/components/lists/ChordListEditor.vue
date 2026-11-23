@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { chordToRoman, type ProgStyle } from '@libraz/libcantus';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { chordToRoman } from '@libraz/libcantus';
+import { computed, ref } from 'vue';
 import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { confirmDialog } from '@/composables/useDialogs';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { editorChordToChord } from '@/compose/chord-io';
 import { chordCombinationKey } from '@/compose/chord-quality';
@@ -16,26 +15,22 @@ import {
   canTonicizeWithSecondaryDominant,
   secondaryDominantLabel,
 } from '@/compose/secondary-dominant';
-import { maxOf, minOf } from '@/lib/math';
 import { CHORD_QUALITY_CHOICES, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import {
   arrangementMelodyPitchClasses,
   clearProjectChords,
-  detectChordsForClip,
-  detectChordsFromAudioClip,
-  estimateChordsFromArrangement,
-  generateProgressionCommand,
   insertSecondaryDominantBefore,
   reharmonizeChord,
   setProjectChords,
 } from '@/project/commands';
-import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { timeSignatureAt } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
+import { useChordDetection } from '@/ui/lists/use-chord-detection';
+import { useChordRangeSelection } from '@/ui/lists/use-chord-range-selection';
+import { barLengthPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 
 /** One entry of the quality picker: its combination key and its visible label. */
@@ -103,39 +98,26 @@ const PITCH_CLASS_OPTIONS = computed(() =>
 const BASS_OPTIONS = computed(() => [{ value: -1, label: '—' }, ...PITCH_CLASS_OPTIONS.value]);
 
 const errorMessage = ref('');
-/** True while an audio-clip detection is awaiting the engine. */
-const isDetecting = ref(false);
-/** True while an arrangement-wide progression estimate is running. */
-const isEstimating = ref(false);
-
-/** Confidence below which an estimated chord row is shown as tentative. */
-const LOW_CONFIDENCE = 0.55;
-
-/**
- * Confidence in [0, 1] for chords produced by the last progression estimate,
- * keyed by start PPQ. Populated by {@link estimateProgression}; cleared on any
- * manual edit so hand-entered chords are never dimmed.
- */
-const estimateConfidence = ref(new Map<number, number>());
-
-/** True when a chord row is a low-confidence estimate that should read faintly. */
-function isTentative(chord: EditorChordSymbol): boolean {
-  const confidence = estimateConfidence.value.get(chord.startPpq);
-  return confidence !== undefined && confidence < LOW_CONFIDENCE;
-}
-
-/**
- * The active clip's detection kind: 'midi' for MIDI clips, 'audio' for audio
- * clips that carry an asset, or null when nothing detectable is active.
- */
-const detectKind = computed<'midi' | 'audio' | null>(() => {
-  const clip = store.activeClip;
-  if (!clip) return null;
-  const kind = clipKind(clip);
-  if (kind === 'midi') return 'midi';
-  if (kind === 'audio' && clip.assetId !== undefined) return 'audio';
-  return null;
-});
+const {
+  isDetecting,
+  isEstimating,
+  detectKind,
+  clearEstimate,
+  isTentative,
+  estimateProgression,
+  detectFromClip,
+} = useChordDetection(errorMessage);
+const {
+  selectedIndices,
+  selectedChords,
+  rangeStyle,
+  rangePreset,
+  rangeBars,
+  onSelectClick,
+  selectGroup,
+  clearSelection,
+  applyToSelection,
+} = useChordRangeSelection(clearEstimate);
 
 const listReasons = computed(() => t.value.shell.lists.reasons);
 const detectBlocked = computed(() =>
@@ -162,7 +144,7 @@ function barLengthAt(ppq: number): number {
 
 /** Commits a chord list mutated at one index (drop the entry when null). */
 function commitAt(index: number, next: EditorChordSymbol | null): void {
-  estimateConfidence.value = new Map();
+  clearEstimate();
   const list = store.chords.map((chord) => ({ ...chord }));
   if (next === null) list.splice(index, 1);
   else list[index] = next;
@@ -238,7 +220,7 @@ function insertDominantBlocked(chord: EditorChordSymbol): string | null {
 /** Inserts the secondary dominant of a chord before it (see {@link insertSecondaryDominantBefore}). */
 function onInsertDominant(index: number): void {
   if (!canTonicizeWithSecondaryDominant(store.chords[index])) return;
-  estimateConfidence.value = new Map();
+  clearEstimate();
   reharmIndex.value = null;
   const inserted = insertSecondaryDominantBefore(index);
   errorMessage.value = inserted ? '' : t.value.shell.lists.chords.insertDominantTooShort;
@@ -378,94 +360,6 @@ const rowItems = computed<RowItem[]>(() => {
   return items;
 });
 
-/**
- * Range selection for progression-level replacement: chord indices the user
- * has picked, either by clicking checkboxes (shift-click extends from the
- * last-clicked index) or via a group header's "select this pattern" action.
- */
-const selectedIndices = ref<Set<number>>(new Set());
-const selectionAnchor = ref<number | null>(null);
-
-/** Toggles or range-extends the selection from a row checkbox click. */
-function onSelectClick(index: number, event: MouseEvent): void {
-  const next = new Set(selectedIndices.value);
-  if (event.shiftKey && selectionAnchor.value !== null) {
-    const [lo, hi] =
-      selectionAnchor.value <= index
-        ? [selectionAnchor.value, index]
-        : [index, selectionAnchor.value];
-    for (let i = lo; i <= hi; i++) next.add(i);
-  } else {
-    if (next.has(index)) next.delete(index);
-    else next.add(index);
-    selectionAnchor.value = index;
-  }
-  selectedIndices.value = next;
-}
-
-/** Selects every chord in a detected group, including any collapsed repeats. */
-function selectGroup(group: PatternGroup): void {
-  const next = new Set<number>();
-  for (let i = group.startIndex; i < group.startIndex + group.length; i++) next.add(i);
-  selectedIndices.value = next;
-  selectionAnchor.value = group.startIndex;
-}
-
-function clearSelection(): void {
-  selectedIndices.value = new Set();
-  selectionAnchor.value = null;
-}
-
-/** The selected chords in track order. */
-const selectedChords = computed(() =>
-  [...selectedIndices.value]
-    .sort((a, b) => a - b)
-    .map((i) => store.chords[i])
-    .filter((chord): chord is EditorChordSymbol => chord !== undefined),
-);
-
-/** PPQ span covering every selected chord (regeneration replaces this whole span). */
-const selectionRangePpq = computed(() => {
-  if (selectedChords.value.length === 0) return null;
-  const startPpq = minOf(selectedChords.value.map((c) => c.startPpq));
-  const endPpq = maxOf(selectedChords.value.map((c) => c.endPpq));
-  return { startPpq, endPpq };
-});
-
-const rangeStyle = ref<ProgStyle>('idol');
-const rangePreset = ref('');
-const rangeBars = ref(4);
-
-// Re-seed the bar count from the selection's own width whenever it changes,
-// so the field starts at a sensible value but stays user-editable afterward.
-// Uses the active meter (not a fixed 4 beats/bar) so 3/4, 6/8, etc. seed right.
-watch(selectionRangePpq, (range) => {
-  if (range) {
-    rangeBars.value = Math.max(
-      1,
-      Math.round(fractionalBarsBetween(range.startPpq, range.endPpq, store.timeSignatures)),
-    );
-  }
-});
-
-/** Regenerates the selected range with the chosen style/preset, then clears the selection. */
-function applyToSelection(): void {
-  const range = selectionRangePpq.value;
-  if (!range) return;
-  estimateConfidence.value = new Map();
-  generateProgressionCommand({
-    style: rangeStyle.value,
-    presetId: rangePreset.value || undefined,
-    bars: Math.max(1, Math.round(rangeBars.value)),
-    // Addressed by where the range starts, so regenerating one range does not
-    // hand it the material another range already got.
-    seed: partSeed(store.generationSeed, 'progression', 'range', range.startPpq),
-    mode: 'range',
-    startPpq: range.startPpq,
-  });
-  clearSelection();
-}
-
 /** Index of the chord whose reharmonization palette is open, or null. */
 const reharmIndex = ref<number | null>(null);
 
@@ -509,7 +403,7 @@ function onSeek(chord: EditorChordSymbol): void {
 
 /** Inserts a one-bar C major at the playhead (or 1.1 without a getter). */
 function addAtPlayhead(): void {
-  estimateConfidence.value = new Map();
+  clearEstimate();
   const ppq = Math.max(0, props.positionPpq?.() ?? 0);
   const length = barLengthAt(ppq);
   setProjectChords([
@@ -518,80 +412,9 @@ function addAtPlayhead(): void {
   ]);
 }
 
-/**
- * Infers a chord progression from the notes across all tracks and writes it to
- * the chord track. Confirms first when the project already has chords (the
- * estimate replaces them), and dims low-confidence rows afterwards.
- */
-async function estimateProgression(): Promise<void> {
-  if (isEstimating.value) return;
-  errorMessage.value = '';
-  if (store.chords.length > 0) {
-    const proceed = await confirmDialog({
-      title: t.value.shell.lists.chords.estimateReplaceTitle,
-      message: formatMessage(t.value.shell.lists.chords.estimateReplaceConfirm, {
-        count: store.chords.length,
-      }),
-      confirmLabel: t.value.shell.lists.chords.estimateReplaceOk,
-    });
-    if (!proceed) return;
-  }
-  try {
-    isEstimating.value = true;
-    const summary = estimateChordsFromArrangement();
-    if (summary.count === 0) {
-      errorMessage.value = t.value.shell.lists.chords.noneEstimated;
-      estimateConfidence.value = new Map();
-      return;
-    }
-    estimateConfidence.value = new Map(summary.confidenceByStartPpq);
-  } finally {
-    isEstimating.value = false;
-  }
-}
-
-let detectGeneration = 0;
-let detectController: AbortController | null = null;
-
-// A detection belongs to the clip it started on; leaving that clip or the editor drops it.
-watch(
-  () => store.activeClip?.id,
-  () => detectController?.abort(),
-);
-onBeforeUnmount(() => detectController?.abort());
-
-async function detectFromClip(): Promise<void> {
-  const clip = store.activeClip;
-  const kind = detectKind.value;
-  if (!clip || kind === null || isDetecting.value) return;
-  const generation = ++detectGeneration;
-  const controller = new AbortController();
-  detectController = controller;
-  const isCurrent = () => generation === detectGeneration && !controller.signal.aborted;
-  errorMessage.value = '';
-  estimateConfidence.value = new Map();
-  try {
-    isDetecting.value = true;
-    const count =
-      kind === 'audio'
-        ? await detectChordsFromAudioClip(clip.id, controller.signal)
-        : detectChordsForClip(clip.id);
-    if (!isCurrent()) return;
-    if (count === 0) {
-      errorMessage.value = t.value.shell.lists.chords.noneDetected;
-    }
-  } catch {
-    if (!isCurrent()) return;
-    errorMessage.value = t.value.shell.lists.chords.detectFailed;
-  } finally {
-    if (generation === detectGeneration) isDetecting.value = false;
-    if (detectController === controller) detectController = null;
-  }
-}
-
 function clearAll(): void {
   errorMessage.value = '';
-  estimateConfidence.value = new Map();
+  clearEstimate();
   clearProjectChords();
 }
 </script>
