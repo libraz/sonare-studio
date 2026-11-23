@@ -34,7 +34,7 @@ import type { EditorChordSymbol } from '@/project/chords';
 import { buildChordTimeline } from './chord-at-tick';
 import { editorChordToChord } from './chord-io';
 import { DEFAULT_KEY_SCALE } from './key';
-import type { KeyMap } from './key-map';
+import type { KeyMap, KeyMapRegion } from './key-map';
 
 /** A cadence type as libcantus names it (the null case is "no cadence"). */
 type LibraryCadenceType = NonNullable<CadenceResult['type']>;
@@ -243,23 +243,49 @@ function cadenceMarks(
   return out;
 }
 
+/** One key-map region of a chord track, read in the region's own key. */
+interface RegionReading {
+  regionSymbols: EditorChordSymbol[];
+  declaredKey: KeyScale;
+  timeline: ChordTimeline | undefined;
+  localSpans: KeySpan[];
+}
+
+function readRegion(
+  symbols: ReadonlyArray<EditorChordSymbol>,
+  region: KeyMapRegion,
+): RegionReading {
+  const regionSymbols = symbols.filter(
+    (symbol) => symbol.startPpq >= region.startPpq && symbol.startPpq < region.endPpq,
+  );
+  const declaredKey = region.key ?? DEFAULT_KEY_SCALE;
+  const timeline = tryEval(() => buildChordTimeline(regionSymbols));
+  const localSpans = timeline === undefined ? [] : keySpansOf(timeline, declaredKey);
+  return { regionSymbols, declaredKey, timeline, localSpans };
+}
+
 /**
  * The cadences one chord track states, without the per-symbol annotations.
  *
  * Split out of {@link analyzeHarmony} so a surface that only asks where the
  * harmony arrives — the note hover card — reads the same cadences the chord
- * lane draws instead of detecting a second set of its own.
+ * lane draws instead of detecting a second set of its own. Each key-map region
+ * is read in its own key, exactly as {@link analyzeHarmony} reads it.
  *
  * @param symbols The project chord track (absolute PPQ regions).
- * @param key The key the progression is declared in.
+ * @param keyMap The project's key map; a region with no key set reads as
+ *   {@link DEFAULT_KEY_SCALE}.
  */
 export function chordTrackCadences(
   symbols: ReadonlyArray<EditorChordSymbol>,
-  key: KeyScale,
+  keyMap: KeyMap,
 ): CadenceMark[] {
-  const timeline = tryEval(() => buildChordTimeline(symbols));
-  if (timeline === undefined) return [];
-  return cadenceMarks(timeline, keySpansOf(timeline, key), key);
+  const cadences: CadenceMark[] = [];
+  for (const region of keyMap.regions) {
+    const { timeline, localSpans, declaredKey } = readRegion(symbols, region);
+    if (timeline !== undefined) cadences.push(...cadenceMarks(timeline, localSpans, declaredKey));
+  }
+  return cadences;
 }
 
 /**
@@ -292,12 +318,7 @@ export function analyzeHarmony(
   let previousKey: KeyScale | null = null;
 
   for (const region of keyMap.regions) {
-    const regionSymbols = symbols.filter(
-      (symbol) => symbol.startPpq >= region.startPpq && symbol.startPpq < region.endPpq,
-    );
-    const declaredKey = region.key ?? DEFAULT_KEY_SCALE;
-    const timeline = tryEval(() => buildChordTimeline(regionSymbols));
-    const localSpans = timeline === undefined ? [] : keySpansOf(timeline, declaredKey);
+    const { regionSymbols, declaredKey, timeline, localSpans } = readRegion(symbols, region);
 
     for (const symbol of regionSymbols) {
       const chord = tryEval(() => editorChordToChord(symbol));

@@ -678,7 +678,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // so the harmony is read over every sounding voice: the active clip's notes on
   // the shared timeline plus the other lines gathered for the voice context.
   // Reading them costs nothing when a chord track states the progression, so
-  // the notes are only pooled when there is none to state it. Cadences and the
+  // the notes are only pooled when there is none to state it. The chord track is
+  // read region by region in each region's key, as the chord lane reads it; the
   // melodic labels below read the key in force at the clip's start.
   const windowKey = keyAt(windowStart);
   const cadenceNotes =
@@ -688,12 +689,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
           ...editorNotesToNoteEvents(notes, input.clipStartPpq),
           ...lines.flatMap((line) => editorNotesToNoteEvents(line.notes)),
         ].sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch);
-  const cadences = cadenceArrivals(
-    input.chordSymbols,
-    cadenceNotes,
-    windowKey,
-    input.timeSignatures,
-  );
+  const cadences = cadenceArrivals(input.chordSymbols, cadenceNotes, keyMap, input.timeSignatures);
   const cadenceByNoteId = cadencesByNote(
     firstInputNotes,
     (note) => input.clipStartPpq + note.startPpq,

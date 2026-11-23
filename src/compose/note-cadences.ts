@@ -35,7 +35,6 @@ import {
   type ChordTimelineResult,
   chordTimelineFromNotes,
   detectCadences,
-  type KeyScale,
   type NoteEvent,
   phrasesFromTimeline,
   structuralCadences,
@@ -50,6 +49,7 @@ import {
 } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { type CadenceType, chordTrackCadences, displayedCadence } from './harmonic-analysis';
+import type { KeyMap } from './key-map';
 
 /** One cadence arrival on the shared timeline. */
 export interface CadenceArrival {
@@ -310,12 +310,12 @@ export function cadencesFromNotes(
 const chordCadenceMemo = new Map<string, CadenceArrival[]>();
 
 /**
- * Identity of a chord track as read in one key, for the cadence memo. Every
+ * Identity of a chord track as read against a key map, for the cadence memo. Every
  * field the chord conversion reads is part of it — an edit that only adds an
  * extension or drops a tone changes which chord sounds, and with it where the
  * progression arrives.
  */
-function chordTrackIdentity(symbols: ReadonlyArray<EditorChordSymbol>, key: KeyScale): string {
+function chordTrackIdentity(symbols: ReadonlyArray<EditorChordSymbol>, keyMap: KeyMap): string {
   const track = symbols
     .map(
       (symbol) =>
@@ -323,18 +323,25 @@ function chordTrackIdentity(symbols: ReadonlyArray<EditorChordSymbol>, key: KeyS
         `,${(symbol.extensions ?? []).join('.')},${(symbol.omissions ?? []).join('.')}`,
     )
     .join(';');
-  return `${key.rootPc}/${key.modeMask12}|${track}`;
+  const regions = keyMap.regions
+    .map(
+      (region) =>
+        `${region.startPpq},${region.endPpq},${region.source},` +
+        (region.key === null ? '' : `${region.key.rootPc}/${region.key.modeMask12}`),
+    )
+    .join(';');
+  return `${regions}|${track}`;
 }
 
 /** The cadences an authored chord track states, computed at most once per input. */
 function memoizedChordCadences(
   symbols: ReadonlyArray<EditorChordSymbol>,
-  key: KeyScale,
+  keyMap: KeyMap,
 ): CadenceArrival[] {
-  const identity = chordTrackIdentity(symbols, key);
+  const identity = chordTrackIdentity(symbols, keyMap);
   const cached = chordCadenceMemo.get(identity);
   if (cached !== undefined) return cached;
-  const marks = chordTrackCadences(symbols, key).map<CadenceArrival>((mark) => ({
+  const marks = chordTrackCadences(symbols, keyMap).map<CadenceArrival>((mark) => ({
     atPpq: mark.atPpq,
     type: mark.type,
   }));
@@ -355,18 +362,19 @@ function memoizedChordCadences(
  * @param notes Every sounding note of the piece, on the shared timeline. Pool
  *   the whole texture rather than one clip: harmony is a property of what
  *   sounds together, not of the part being edited.
- * @param key The key the progression is read in (used only by the chord-track
- *   reading; the inference searches for the key itself).
+ * @param keyMap The project key map; each region of the chord track is read in
+ *   its own key (used only by the chord-track reading; the inference searches
+ *   for the key itself).
  * @param timeSignatures The project meter map.
  */
 export function cadenceArrivals(
   symbols: ReadonlyArray<EditorChordSymbol>,
   notes: ReadonlyArray<NoteEvent>,
-  key: KeyScale,
+  keyMap: KeyMap,
   timeSignatures: ReadonlyArray<TimeSignatureSegment>,
 ): { arrivals: CadenceArrival[]; inferred: boolean; quality?: SegmentationQuality } {
   if (symbols.length > 0) {
-    return { arrivals: memoizedChordCadences(symbols, key), inferred: false };
+    return { arrivals: memoizedChordCadences(symbols, keyMap), inferred: false };
   }
   const read = cadencesFromNotes(notes, timeSignatures);
   return { arrivals: read.arrivals, inferred: true, quality: read.quality };
