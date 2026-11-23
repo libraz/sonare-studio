@@ -26,7 +26,7 @@ Each line below is driven through the UI by an end-to-end scenario.
 - **Read the score** — the active clip engraved with Verovio, chord symbols, annotations, print, PDF, and MusicXML / `.mxl` export and import. [Score](https://github.com/libraz/sonare-studio/blob/main/docs/en/score.md)
 - **Compose** — chord progressions and generated parts from libcantus, reroll, a project seed, the theory card, the placement guide and secondary-dominant reharmonization. [Composing](https://github.com/libraz/sonare-studio/blob/main/docs/en/composing.md)
 - **Record and analyse audio** — import, microphone recording, take comping and alignment, tempo, chord and section detection, audio-to-MIDI transcription, stem separation and the sample editor. [Recording and analysing audio](https://github.com/libraz/sonare-studio/blob/main/docs/en/audio-recording-and-analysis.md)
-- **Move files in and out** — `.szd`, Standard MIDI File and MIDI 2.0 clip export, DAWproject, MusicXML, WAV, FLAC and MP3 mixdown, and WAV stems. [Files and formats](https://github.com/libraz/sonare-studio/blob/main/docs/en/files-and-formats.md)
+- **Move files in and out** — `.szd`, Standard MIDI File and MIDI 2.0 clip import and export, DAWproject, MusicXML, WAV, FLAC and MP3 mixdown, and WAV stems. [Files and formats](https://github.com/libraz/sonare-studio/blob/main/docs/en/files-and-formats.md)
 - **Work offline** — installable PWA, English and Japanese UI, remappable shortcuts, save and continue, autosave, and named revisions. [Offline use and settings](https://github.com/libraz/sonare-studio/blob/main/docs/en/offline-and-settings.md)
 
 ## What it verifies

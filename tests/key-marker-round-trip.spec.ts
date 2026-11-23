@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { NotatedMeasure, NotatedScore } from '@/notation/model';
 import type { ProjectDocument } from '@/project/serialization';
 import { projectDocumentToSmf } from '@/project/smf';
-import { smfToProjectDocument } from '@/project/smf-import';
+import { midiFileToProjectDocument } from '@/project/smf-import';
 import {
   SCORE_KEY_MODES,
   SCORE_KEY_ROOTS,
@@ -129,7 +129,7 @@ describe('key marker round trip', () => {
 
   it('keeps key markers readable after an SMF round trip', async () => {
     const names = markerNames().map((entry) => entry.name);
-    const roundTrip = await smfToProjectDocument(
+    const roundTrip = await midiFileToProjectDocument(
       await projectDocumentToSmf(documentWithMarkers(names)),
       'keys.mid',
     );

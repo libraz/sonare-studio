@@ -54,6 +54,7 @@ import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import type { InsertParamValue, MixerSidechainSource } from '@/project/mixer';
 import type { ScheduledProjectClip } from '@/project/scheduling';
 import { serializeProject } from '@/project/serialization';
+import { clearLastMidiImportEvents, lastMidiImportEvents } from '@/project/smf-import';
 import type { useProjectStore } from '@/project/store';
 import type { WarpAnchor } from '@/project/types';
 import { clipKind, isAudioClip } from '@/project/types';
@@ -259,6 +260,8 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     masteringProcessors: () =>
       (store.mixer.masteringChain?.processors ?? []).map((slot) => slot.processor),
     lastDownload: () => ctx.lastDownload(),
+    lastMidiImportEvents,
+    clearLastMidiImportEvents,
     exportProbe: async (
       includeMasterChain = true,
       range?: { startPpq: number; endPpq: number },

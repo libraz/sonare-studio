@@ -26,7 +26,7 @@
 - **譜面を読む** — アクティブクリップの Verovio による浄書、コードシンボル、注釈、印刷、PDF、MusicXML と `.mxl` の書き出しと読み込み。[譜面](https://github.com/libraz/sonare-studio/blob/main/docs/ja/score.md)
 - **作曲する** — libcantus によるコード進行とパートの生成、振り直し、プロジェクトのシード、理論カード、配置ガイド、セカンダリードミナントによるリハーモナイズ。[作曲](https://github.com/libraz/sonare-studio/blob/main/docs/ja/composing.md)
 - **録音してオーディオを解析する** — 読み込み、マイク録音、テイクの選択とコンピング、テイクの位置合わせ、テンポ・コード・セクションの検出、オーディオから MIDI への採譜、ステム分離、サンプルエディター。[オーディオの録音と解析](https://github.com/libraz/sonare-studio/blob/main/docs/ja/audio-recording-and-analysis.md)
-- **ファイルを出し入れする** — `.szd`、Standard MIDI File と MIDI 2.0 クリップの書き出し、DAWproject、MusicXML、WAV・FLAC・MP3 のミックスダウン、WAV のステム。[ファイルと形式](https://github.com/libraz/sonare-studio/blob/main/docs/ja/files-and-formats.md)
+- **ファイルを出し入れする** — `.szd`、Standard MIDI File と MIDI 2.0 クリップの読み込みと書き出し、DAWproject、MusicXML、WAV・FLAC・MP3 のミックスダウン、WAV のステム。[ファイルと形式](https://github.com/libraz/sonare-studio/blob/main/docs/ja/files-and-formats.md)
 - **オフラインで使う** — インストール可能な PWA、英語と日本語の UI、再割り当て可能なショートカット、保存して続行、自動保存、名前付きリビジョン。[オフライン利用と設定](https://github.com/libraz/sonare-studio/blob/main/docs/ja/offline-and-settings.md)
 
 ## 検証しているもの

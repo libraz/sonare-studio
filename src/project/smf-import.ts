@@ -1,6 +1,7 @@
 import type { Project, ProjectClip, ProjectMarker, ProjectTrack } from '@libraz/libsonare';
 import { keyMarkerName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
+import { DEBUG_SURFACE_ENABLED } from '@/lib/debug-surface';
 import { ensureWasm } from '@/lib/wasm';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './document-schema';
 import { GM2_DRUM_BANK, isGm2DrumBank, presetForGmProgram } from './instrument';
@@ -557,18 +558,60 @@ function documentFromProject(
   };
 }
 
-/** Imports SMF through libsonare, then adapts the native Project JSON to the app document. */
-export async function smfToProjectDocument(
+/** The 8-byte header that opens a MIDI 2.0 Clip File. */
+const CLIP_FILE_HEADER = 'SMF2CLIP';
+
+let lastImportEvents: Record<string, SerializedMidiEvent[]> | null = null;
+
+/** The engine's events from the last MIDI import, before document adaptation; debug surface only. */
+export function lastMidiImportEvents(): Record<string, SerializedMidiEvent[]> | null {
+  return lastImportEvents;
+}
+
+/** Forgets the recorded events of the last MIDI import. */
+export function clearLastMidiImportEvents(): void {
+  lastImportEvents = null;
+}
+
+function isClipFile(bytes: Uint8Array): boolean {
+  if (bytes.length < CLIP_FILE_HEADER.length) return false;
+  for (let i = 0; i < CLIP_FILE_HEADER.length; i += 1) {
+    if (bytes[i] !== CLIP_FILE_HEADER.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+/**
+ * Imports a Standard MIDI File or a MIDI 2.0 Clip File through libsonare,
+ * chosen by the file's own header, then adapts the native Project JSON to the
+ * app document. The document stores 7-bit values, so MIDI 2.0 velocities and
+ * controllers are narrowed in the adaptation.
+ */
+export async function midiFileToProjectDocument(
   bytes: ArrayBuffer | Uint8Array,
   fileName?: string,
 ): Promise<ProjectDocument> {
-  const smfBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const sysEx = extractSmfSysEx(smfBytes);
+  const fileBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const clipFile = isClipFile(fileBytes);
+  const sysEx = clipFile ? [] : extractSmfSysEx(fileBytes);
   const wasm = await ensureWasm();
   const project = new wasm.Project();
   try {
-    project.importSmf(smfBytes);
-    return documentFromProject(project, fileName, sysEx);
+    if (!clipFile) {
+      project.importSmf(fileBytes);
+      if (DEBUG_SURFACE_ENABLED) lastImportEvents = projectMidiContent(project);
+      return documentFromProject(project, fileName, sysEx);
+    }
+    project.importClipFile(fileBytes);
+    if (DEBUG_SURFACE_ENABLED) lastImportEvents = projectMidiContent(project);
+    // The document holds MIDI 1.0 values; the engine's own SMF writer narrows the clip to them.
+    const narrowed = new wasm.Project();
+    try {
+      narrowed.importSmf(project.exportSmf());
+      return documentFromProject(narrowed, fileName, sysEx);
+    } finally {
+      narrowed.destroy();
+    }
   } finally {
     project.destroy();
   }

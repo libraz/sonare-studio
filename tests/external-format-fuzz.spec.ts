@@ -14,7 +14,7 @@ import {
 import { decodeSzd, encodeSzd, SzdFormatError } from '@/persistence/szd';
 import type { ProjectDocument } from '@/project/serialization';
 import { projectDocumentToSmf } from '@/project/smf';
-import { smfToProjectDocument } from '@/project/smf-import';
+import { midiFileToProjectDocument } from '@/project/smf-import';
 import { coreWasmBinary } from './core-package';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
@@ -230,10 +230,11 @@ describe('bounded external-format fuzz corpus', () => {
       (bytes) => importDawproject(bytes),
       [DawprojectImportError],
     );
-    await exerciseCorpus(await projectDocumentToSmf(doc), (bytes) => smfToProjectDocument(bytes), [
-      RangeError,
-      isSonareError,
-    ]);
+    await exerciseCorpus(
+      await projectDocumentToSmf(doc),
+      (bytes) => midiFileToProjectDocument(bytes),
+      [RangeError, isSonareError],
+    );
   });
 
   it('keeps MusicXML mutations inside byte/element/depth limits', async () => {

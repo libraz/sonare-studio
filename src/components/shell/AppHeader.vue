@@ -69,7 +69,7 @@ const { locale, t } = useI18n();
       :ref="(el) => emit('midiImportInputRef', el as HTMLInputElement | null)"
       class="hidden-file-input"
       type="file"
-      accept=".mid,.midi,audio/midi,audio/x-midi"
+      accept=".mid,.midi,.midi2,audio/midi,audio/x-midi"
       aria-hidden="true"
       tabindex="-1"
       @change="emit('midiImportChange', $event)"

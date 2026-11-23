@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ensureWasm } from '@/lib/wasm';
 import type { ProjectDocument } from '@/project/serialization';
 import {
   gmVolumeCc,
@@ -7,7 +8,12 @@ import {
   SMF_TEMPO_RAMP_MAX_ERROR_BPM,
   sampleTempoRampsForSmf,
 } from '@/project/smf';
-import { extractSmfSysEx, smfToProjectDocument } from '@/project/smf-import';
+import {
+  clearLastMidiImportEvents,
+  extractSmfSysEx,
+  lastMidiImportEvents,
+  midiFileToProjectDocument,
+} from '@/project/smf-import';
 import { coreWasmBinary } from './core-package';
 
 /** SysEx packet and payload-byte counts of an SMF. */
@@ -77,7 +83,7 @@ function eot(delta = 0): number[] {
   return meta(delta, 0x2f, []);
 }
 
-describe('smfToProjectDocument', () => {
+describe('midiFileToProjectDocument', () => {
   it('approximates tempo ramps with bounded instantaneous SMF tempos', () => {
     const sampled = sampleTempoRampsForSmf({
       schemaVersion: 3,
@@ -247,7 +253,7 @@ describe('smfToProjectDocument', () => {
     };
 
     const { bytes, loss } = await projectDocumentToSmfWithLoss(source);
-    const roundTrip = await smfToProjectDocument(bytes, 'losses.mid');
+    const roundTrip = await midiFileToProjectDocument(bytes, 'losses.mid');
 
     // Only the audible clip's note survives; the silenced clip keeps its CC lane.
     const notes = roundTrip.tracks.flatMap((track) => track.clips.flatMap((clip) => clip.notes));
@@ -309,7 +315,7 @@ describe('smfToProjectDocument', () => {
       },
     };
     const { bytes, loss } = await projectDocumentToSmfWithLoss(source);
-    const roundTrip = await smfToProjectDocument(bytes, 'levels.mid');
+    const roundTrip = await midiFileToProjectDocument(bytes, 'levels.mid');
     expect(roundTrip.tracks[0].clips[0].ccLanes).toContainEqual({
       controller: 7,
       channel: 0,
@@ -362,7 +368,7 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const imported = await smfToProjectDocument(
+    const imported = await midiFileToProjectDocument(
       await projectDocumentToSmf(source),
       'ramp-export.mid',
     );
@@ -419,7 +425,7 @@ describe('smfToProjectDocument', () => {
       ],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'song.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'song.mid');
 
     expect(doc.name).toBe('song');
     expect(doc.tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
@@ -462,7 +468,7 @@ describe('smfToProjectDocument', () => {
   it('imports format 0 notes using running status', async () => {
     const bytes = smf(0, 96, [[...varLen(0), 0x90, 64, 90, ...varLen(96), 64, 0, ...eot()]]);
 
-    const doc = await smfToProjectDocument(bytes, 'riff.midi');
+    const doc = await midiFileToProjectDocument(bytes, 'riff.midi');
 
     expect(doc.tracks).toHaveLength(1);
     expect(doc.tracks[0].clips[0].notes).toEqual([
@@ -481,7 +487,7 @@ describe('smfToProjectDocument', () => {
     }
     events.push(...eot());
 
-    const doc = await smfToProjectDocument(smf(0, 480, [events]), 'many-cc.mid');
+    const doc = await midiFileToProjectDocument(smf(0, 480, [events]), 'many-cc.mid');
     const clip = doc.tracks[0].clips[0];
     expect(clip.ccLanes?.[0].points).toHaveLength(count);
     expect(clip.lengthPpq).toBeGreaterThanOrEqual(count / 480);
@@ -493,7 +499,7 @@ describe('smfToProjectDocument', () => {
       [...meta(0, 0x03, ascii('Empty Pad')), ...eot()],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'empty.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'empty.mid');
 
     expect(doc.tracks).toHaveLength(1);
     expect(doc.tracks[0].clips).toHaveLength(1);
@@ -513,7 +519,7 @@ describe('smfToProjectDocument', () => {
       [...varLen(0), 0x90, 60, 100, ...varLen(240), 0x80, 60, 0, ...eot()],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'meta.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'meta.mid');
 
     expect(doc.markers).toEqual([
       { ppq: 0, name: 'Verse' },
@@ -561,7 +567,7 @@ describe('smfToProjectDocument', () => {
       ],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'gm.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'gm.mid');
 
     expect(doc.tracks).toHaveLength(3);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
@@ -601,7 +607,7 @@ describe('smfToProjectDocument', () => {
       ],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'held.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'held.mid');
 
     expect(doc.tracks).toHaveLength(2);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
@@ -621,7 +627,7 @@ describe('smfToProjectDocument', () => {
       [...varLen(0), 0x90, 60, 100, ...varLen(480), 0x80, 60, 0, ...eot()],
     ]);
 
-    const doc = await smfToProjectDocument(bytes, 'plain.mid');
+    const doc = await midiFileToProjectDocument(bytes, 'plain.mid');
 
     expect(doc.tracks).toHaveLength(1);
     expect(doc.tracks[0].instrument).toEqual({
@@ -637,11 +643,13 @@ describe('smfToProjectDocument', () => {
 
   it('rejects SMPTE time division', async () => {
     const bytes = smf(0, 0xe250, [[...eot()]]);
-    await expect(smfToProjectDocument(bytes)).rejects.toThrow(/SMF|MIDI|import|SMPTE/i);
+    await expect(midiFileToProjectDocument(bytes)).rejects.toThrow(/SMF|MIDI|import|SMPTE/i);
   });
 
   it('rejects empty MIDI input', async () => {
-    await expect(smfToProjectDocument(new Uint8Array())).rejects.toThrow(/SMF|MIDI|import|header/i);
+    await expect(midiFileToProjectDocument(new Uint8Array())).rejects.toThrow(
+      /SMF|MIDI|import|header/i,
+    );
   });
 
   it('round-trips F0 and F7 SysEx packets through an opaque SMF sidecar', async () => {
@@ -665,7 +673,7 @@ describe('smfToProjectDocument', () => {
     ]);
 
     expect(sysExCounts(bytes)).toEqual({ packets: 2, payloadBytes: 7 });
-    const document = await smfToProjectDocument(bytes, 'xg.mid');
+    const document = await midiFileToProjectDocument(bytes, 'xg.mid');
     const packets = document.tracks.flatMap((track) =>
       track.clips.flatMap((clip) => clip.smfSysEx ?? []),
     );
@@ -685,7 +693,7 @@ describe('smfToProjectDocument', () => {
       [...varLen(0), 0xf0, ...varLen(payload.length), ...payload, ...eot()],
     ]);
 
-    const document = await smfToProjectDocument(bytes, 'large-sysex.mid');
+    const document = await midiFileToProjectDocument(bytes, 'large-sysex.mid');
     const exported = await projectDocumentToSmf(document);
     expect(extractSmfSysEx(exported)).toEqual([{ ppq: 0, status: 0xf0, data: payload }]);
   });
@@ -696,7 +704,7 @@ describe('smfToProjectDocument', () => {
       [...varLen(0), 0xf0, ...varLen(payload.length), ...payload, ...eot()],
     ]);
 
-    await expect(smfToProjectDocument(bytes)).rejects.toThrow(/SysEx exceeds/);
+    await expect(midiFileToProjectDocument(bytes)).rejects.toThrow(/SysEx exceeds/);
   });
 
   it('preserves a GS reset fixture byte-for-byte', async () => {
@@ -706,7 +714,7 @@ describe('smfToProjectDocument', () => {
       [...varLen(0), 0xf0, ...varLen(gsReset.length), ...gsReset, ...eot()],
     ]);
 
-    const document = await smfToProjectDocument(bytes, 'gs-reset.mid');
+    const document = await midiFileToProjectDocument(bytes, 'gs-reset.mid');
     expect(extractSmfSysEx(await projectDocumentToSmf(document))).toEqual([
       { ppq: 0, status: 0xf0, data: gsReset },
     ]);
@@ -751,7 +759,10 @@ describe('smfToProjectDocument', () => {
       sections: [{ name: 'Verse', color: '#60a5fa', startPpq: 0, endPpq: 1 }],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'export.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'export.mid',
+    );
 
     expect(roundTrip.tempoSegments).toEqual([{ startPpq: 0, bpm: 100 }]);
     expect(roundTrip.markers).toEqual([{ ppq: 0, name: 'Cue: Verse' }]);
@@ -825,7 +836,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'tracks.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'tracks.mid',
+    );
 
     expect(roundTrip.tracks.map((track) => track.name)).toEqual(['Two clips']);
     expect(roundTrip.tracks[0].clips).toHaveLength(1);
@@ -871,7 +885,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'lead.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'lead.mid',
+    );
 
     expect(roundTrip.tracks).toHaveLength(1);
     expect(roundTrip.tracks[0].clips[0].notes).toEqual(source.tracks[0].clips[0].notes);
@@ -913,7 +930,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'loop.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'loop.mid',
+    );
 
     expect(roundTrip.tracks[0].clips[0].notes).toEqual([
       { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
@@ -969,7 +989,7 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(
+    const roundTrip = await midiFileToProjectDocument(
       await projectDocumentToSmf(source),
       'safe-loop.mid',
     );
@@ -1017,7 +1037,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'program.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'program.mid',
+    );
 
     expect(roundTrip.tracks[0].clips[0].programChangeLanes).toEqual(
       source.tracks[0].clips[0].programChangeLanes,
@@ -1080,7 +1103,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'presets.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'presets.mid',
+    );
 
     // Standard GM has no plain sine voice: its closest melodic program imports
     // as the square lead, rather than misusing program 120 (guitar fret noise).
@@ -1125,7 +1151,7 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'gm.mid');
+    const roundTrip = await midiFileToProjectDocument(await projectDocumentToSmf(source), 'gm.mid');
 
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
@@ -1178,7 +1204,7 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'gs.mid');
+    const roundTrip = await midiFileToProjectDocument(await projectDocumentToSmf(source), 'gs.mid');
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
       preset: 'electricGuitar',
@@ -1230,7 +1256,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'markers.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'markers.mid',
+    );
 
     expect(roundTrip.markers).toEqual(source.markers);
   });
@@ -1282,7 +1311,10 @@ describe('smfToProjectDocument', () => {
       sections: [],
     };
 
-    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'clamped.mid');
+    const roundTrip = await midiFileToProjectDocument(
+      await projectDocumentToSmf(source),
+      'clamped.mid',
+    );
 
     expect(roundTrip.tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
     expect(roundTrip.timeSignatures).toEqual([{ startPpq: 0, numerator: 255, denominator: 4 }]);
@@ -1305,5 +1337,39 @@ describe('smfToProjectDocument', () => {
         offVelocity: 127,
       },
     ]);
+  });
+
+  describe('a MIDI 2.0 Clip File', () => {
+    const VELOCITY_16 = 0x1234;
+    async function clipFile(): Promise<Uint8Array> {
+      const wasm = await ensureWasm();
+      const project = new wasm.Project();
+      try {
+        const { clipId } = project.addMidiClip(0, 4);
+        project.setMidiEvents(clipId, [
+          {
+            ppq: 0,
+            word0: (0x4 << 28) | (0x9 << 20) | (60 << 8),
+            word1: (VELOCITY_16 << 16) >>> 0,
+          },
+          { ppq: 1, word0: (0x4 << 28) | (0x8 << 20) | (60 << 8), word1: 0 },
+        ]);
+        return new Uint8Array(project.exportClipFile());
+      } finally {
+        project.destroy();
+      }
+    }
+
+    it('is read by its header, keeping the 16-bit velocity at the engine seam', async () => {
+      clearLastMidiImportEvents();
+      const doc = await midiFileToProjectDocument(await clipFile(), 'velocity.mid');
+      const events = Object.values(lastMidiImportEvents() ?? {}).flat();
+      expect(events.find((event) => event.ppq === 0)).toMatchObject({
+        word0: ((0x4 << 28) | (0x9 << 20) | (60 << 8)) >>> 0,
+        word1: (VELOCITY_16 << 16) >>> 0,
+      });
+      const notes = doc.tracks.flatMap((track) => track.clips.flatMap((clip) => clip.notes));
+      expect(notes).toMatchObject([{ pitch: 60, startPpq: 0, durationPpq: 1, velocity: 9 }]);
+    });
   });
 });

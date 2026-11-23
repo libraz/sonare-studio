@@ -20,7 +20,7 @@ import {
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
 import { createAssetReferenceGuard } from '@/project/asset-references';
 import type { ProjectDocument } from '@/project/serialization';
-import { smfToProjectDocument } from '@/project/smf-import';
+import { midiFileToProjectDocument } from '@/project/smf-import';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -211,7 +211,7 @@ export function useForeignFormatImports(
     if (!file) return;
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      const doc = await smfToProjectDocument(
+      const doc = await midiFileToProjectDocument(
         await readFileBytesBounded(file, MAX_SMF_FILE_BYTES),
         file.name,
       );

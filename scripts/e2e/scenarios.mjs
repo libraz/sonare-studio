@@ -59,6 +59,7 @@ import * as mastering_chain from './scenarios/mastering-chain.mjs';
 import * as meter_map from './scenarios/meter-map.mjs';
 import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
 import * as midi_fx from './scenarios/midi-fx.mjs';
+import * as midi2_clip_import from './scenarios/midi2-clip-import.mjs';
 import * as mix_suggestion from './scenarios/mix-suggestion.mjs';
 import * as mixer_snapshots from './scenarios/mixer-snapshots.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
@@ -205,6 +206,7 @@ export const scenarios = [
   freeze_bounce_ui,
   musicxml_roundtrip,
   stem_separation,
+  midi2_clip_import,
   pwa_offline,
   language_ja,
 ];

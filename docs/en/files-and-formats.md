@@ -18,7 +18,7 @@ Open the file from the start screen with **Open .szd file…**. The imported pro
 
 ## Standard MIDI File and MIDI 2.0 clip files
 
-Import a Standard MIDI File from the start screen with **Import MIDI file…**. Each part that carries notes becomes a track, and the drum channel gets a drum kit. Notes added afterwards keep the channel of the track they are drawn on: melody notes stay on their channel and drum hits stay on channel 10. **Estimate progression** in the Chords list of the **Lists** tab reads the imported parts without the drums distorting the result.
+Import a Standard MIDI File or a MIDI 2.0 clip file from the start screen with **Import MIDI file…** or with **File** > **Import MIDI...**. The app tells the two formats apart by the file's header, not its extension. The project stores note velocities and controller values at MIDI 1.0 resolution, so a MIDI 2.0 clip file's 16-bit velocities and 32-bit controller values are reduced to 7 bits on import. Each part that carries notes becomes a track, and the drum channel gets a drum kit. Notes added afterwards keep the channel of the track they are drawn on: melody notes stay on their channel and drum hits stay on channel 10. **Estimate progression** in the Chords list of the **Lists** tab reads the imported parts without the drums distorting the result.
 
 - **File** > **Export SMF** downloads a Standard MIDI File with the extension `.mid`.
 - **File** > **Export MIDI 2.0 clip file** downloads a MIDI 2.0 clip file with the extension `.midi2`.
