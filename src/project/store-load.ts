@@ -4,6 +4,7 @@ import { audioAssetUri } from '@/persistence/assets';
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
 import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from './chords';
+import { lanesHoldOverlap } from './clip-overlap';
 import { activeTakeIndex, sanitizeCompSegments } from './comping';
 import type { DocumentInsertSlot } from './document-mixer-references';
 import { sanitizeExpressionMap } from './expression-map';
@@ -335,21 +336,15 @@ export function hydrateProjectFromDocument(
   // (for example, a crossfade). The native project defaults to rejecting
   // overlap, so select the matching policy before adding the first clip.
   if (
-    doc.tracks.some((track) => {
-      const ordered = track.clips
-        .map((clip) => ({
+    lanesHoldOverlap(
+      doc.tracks.flatMap((track, trackIndex) =>
+        track.clips.map((clip) => ({
+          trackId: trackIndex,
           startPpq: finiteAtLeast(clip.startPpq, 0, 0),
           lengthPpq: finiteAtLeast(clip.lengthPpq, Number.EPSILON, 1),
-        }))
-        .sort((a, b) => a.startPpq - b.startPpq);
-      let latestEnd = -Infinity;
-      for (const clip of ordered) {
-        // Strict, unlike the lane epsilon: the native addClip rejects any overlap under 'disallow'.
-        if (clip.startPpq < latestEnd) return true;
-        latestEnd = Math.max(latestEnd, clip.startPpq + clip.lengthPpq);
-      }
-      return false;
-    })
+        })),
+      ),
+    )
   ) {
     created.setOverlapPolicy('allow');
   }

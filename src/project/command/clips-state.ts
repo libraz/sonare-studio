@@ -1,5 +1,6 @@
 import { planClipCrossfade } from '../clip-crossfade';
 import { validateClipFadePair } from '../clip-fades';
+import { lanesHoldOverlap } from '../clip-overlap';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import type { ClipWarp, EditorClip } from '../types';
@@ -11,7 +12,12 @@ import {
   sanitizeClipWarp,
 } from '../warp';
 import { trimClipWithin } from './clips-internal';
-import { execute, executeAtomic } from './history';
+import {
+  execute,
+  executeAtomic,
+  type PostEditContext,
+  registerPostEditReconciler,
+} from './history';
 import { requireClip, requireEditableClip, requireTrack } from './utils';
 
 // ---------------------------------------------------------------------------
@@ -246,6 +252,22 @@ export function crossfadeClips(
   });
   return plan.lengthPpq;
 }
+
+/**
+ * Keeps the overlap policy equal to what a reload of the document derives:
+ * once a forward edit leaves no overlapping clips, 'allow' returns to
+ * 'disallow' in the same history entry. The way up needs no reconciler,
+ * because the engine refuses an overlap until a command such as
+ * {@link crossfadeClips} has switched the policy first.
+ */
+function reconcileOverlapPolicy({ after }: PostEditContext): number | undefined {
+  const project = getProject();
+  if (project.overlapPolicy !== 'allow' || lanesHoldOverlap(after.clips)) return undefined;
+  project.setOverlapPolicy('disallow');
+  return 1;
+}
+
+registerPostEditReconciler('overlap-policy', reconcileOverlapPolicy);
 
 /**
  * Makes a clip the active piano-roll clip. Editor-only state: not undoable.
