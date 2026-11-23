@@ -29,6 +29,7 @@ import {
   parseMidiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
 import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 
 /**
  * MIDI-learn popover: binds hardware CC controllers to mixer strip gain/pan for
@@ -198,6 +199,15 @@ const surfaceSettings = computed(() => store.controlSurface);
 
 function updateSurface(patch: Partial<typeof store.controlSurface>): void {
   store.controlSurface = sanitizeControlSurfaceSettings({ ...store.controlSurface, ...patch });
+}
+
+function onBankSizeChange(event: Event): void {
+  const bankSize = readInputNumber(event);
+  if (bankSize === null) {
+    restoreInputValue(event, surfaceSettings.value.bankSize);
+    return;
+  }
+  updateSurface({ bankSize: Math.min(SURFACE_STRIP_COUNT, bankSize) });
 }
 
 const protocolChoices = computed(() =>
@@ -497,14 +507,7 @@ function clearAll(): void {
             min="1"
             :max="SURFACE_STRIP_COUNT"
             :value="surfaceSettings.bankSize"
-            @change="
-              updateSurface({
-                bankSize: Math.min(
-                  SURFACE_STRIP_COUNT,
-                  Number(($event.target as HTMLInputElement).value),
-                ),
-              })
-            "
+            @change="onBankSizeChange"
           />
         </label>
         <div class="ml-field ml-bank-nav">

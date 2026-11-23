@@ -14,3 +14,25 @@ export function parseNumber(value: NumericInputValue): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
+
+/** The finite number an input event's target holds; null when blank or non-numeric. */
+export function readInputNumber(event: Event): number | null {
+  return parseNumber((event.target as HTMLInputElement).value);
+}
+
+/**
+ * Shows `value` again in the event's input. Call it only when an edit is
+ * committed or abandoned (change, blur, Enter), never on `input`, so a user can
+ * clear the field on the way to typing a new number.
+ */
+export function restoreInputValue(event: Event, value: number | string): void {
+  (event.target as HTMLInputElement).value = String(value);
+}
+
+/**
+ * On a committed edit (`change`), shows `value` again when the field holds no
+ * number; for fields whose `input` handler already skips blank text.
+ */
+export function restoreUnreadableInput(event: Event, value: number | string): void {
+  if (readInputNumber(event) === null) restoreInputValue(event, value);
+}

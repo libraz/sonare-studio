@@ -5,6 +5,7 @@ import type {
   AccessibleObjectAdjustment,
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
+import { readInputNumber } from '@/ui/numeric-input';
 
 const props = defineProps<{
   label: string;
@@ -114,8 +115,8 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function onControlInput(itemId: string, controlId: string, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  if (Number.isFinite(value)) emit('set-value', { id: itemId, controlId, value });
+  const value = readInputNumber(event);
+  if (value !== null) emit('set-value', { id: itemId, controlId, value });
 }
 
 watch(

@@ -24,6 +24,7 @@ import { useTrackGenerateSources } from '@/ui/compose/use-track-generate-sources
 import { useTrackGenerateTargets } from '@/ui/compose/use-track-generate-targets';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreUnreadableInput } from '@/ui/numeric-input';
 
 /**
  * Flow B: the track generator. A checklist of the five instrumental parts
@@ -184,7 +185,8 @@ function setWholeBars(value: number): void {
 }
 
 function onWholeBarsInput(event: Event): void {
-  setWholeBars(Number((event.target as HTMLInputElement).value));
+  const bars = readInputNumber(event);
+  if (bars !== null) setWholeBars(bars);
 }
 
 function onDurationChange(event: Event): void {
@@ -712,6 +714,7 @@ function toggleExpanded(part: TrackPart): void {
               max="256"
               step="1"
               @input="onWholeBarsInput"
+              @change="restoreUnreadableInput($event, wholeBars)"
             />
           </label>
           <label class="number-field">

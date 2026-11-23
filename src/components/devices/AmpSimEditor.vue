@@ -18,6 +18,7 @@ import {
   isAutomationWriteMode,
 } from '@/ui/mixer/automation-mode';
 import { insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
+import { readInputNumber } from '@/ui/numeric-input';
 
 /**
  * The order is the public order of libsonare's amp_preset_names(). Keep the
@@ -421,8 +422,8 @@ function endWrite(): void {
 }
 
 function onRangeInput(param: string, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(value)) return;
+  const value = readInputNumber(event);
+  if (value === null) return;
   if (CONSTRUCTION_ONLY_RANGE_PARAMS.has(param as AmpNumberKey)) {
     pendingRangeValues.value = { ...pendingRangeValues.value, [param]: value };
     return;
@@ -435,8 +436,8 @@ function onRangeInput(param: string, event: Event): void {
 }
 
 function onRangeChange(param: string, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(value)) return;
+  const value = readInputNumber(event);
+  if (value === null) return;
   if (CONSTRUCTION_ONLY_RANGE_PARAMS.has(param as AmpNumberKey)) {
     apply(param, value, true);
     clearPendingRangeValue(param);

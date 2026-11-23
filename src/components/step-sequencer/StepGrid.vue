@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { clamp } from '@/lib/math';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { readInputNumber } from '@/ui/numeric-input';
 import { clampVelocity, type StepPattern } from '@/ui/step-sequencer/pattern';
 import { isTripletResolution } from '@/ui/step-sequencer/timing';
 import StepCell from './StepCell.vue';
@@ -190,7 +191,9 @@ function onCellKeyDown(event: KeyboardEvent, row: number, step: number): void {
 }
 
 function onVelocityInput(event: Event): void {
-  const velocity = clampVelocity(Number((event.target as HTMLInputElement).value));
+  const raw = readInputNumber(event);
+  if (raw === null) return;
+  const velocity = clampVelocity(raw);
   emit('set-velocity', activeRow.value, activeStep.value, velocity);
   liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.velocityChanged, {
     velocity,

@@ -112,6 +112,11 @@ export function useTransportControls(options: TransportControlsOptions) {
     }
   }
 
+  /** Drops an uncommitted tempo draft in favour of the committed tempo. */
+  function cancelTempoInput(): void {
+    tempoInput.value = options.tempo.value;
+  }
+
   function toggleLoop(): void {
     const start =
       options.loopEndPpq.value > options.loopStartPpq.value ? options.loopStartPpq.value : 0;
@@ -256,6 +261,7 @@ export function useTransportControls(options: TransportControlsOptions) {
     positionBbt,
     tempoInput,
     applyTempo,
+    cancelTempoInput,
     formatSeconds,
     nudgeByBar,
     onBbtCommit,

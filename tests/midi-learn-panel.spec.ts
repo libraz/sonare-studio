@@ -233,7 +233,7 @@ describe('MidiLearnPanel control surface', () => {
       ['20', 8],
       ['-3', 1],
       ['2.5', 3],
-      ['', 1],
+      ['', 3],
     ] as const) {
       await input.setValue(typed);
       expect(store.controlSurface.bankSize).toBe(expected);

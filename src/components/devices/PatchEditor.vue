@@ -38,6 +38,7 @@ import {
 import { resolveSynthEnums } from '@/ui/devices/synth-enums';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreInputValue, restoreUnreadableInput } from '@/ui/numeric-input';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
@@ -166,8 +167,8 @@ function fieldLabel(spec: PatchFieldSpec): string {
 }
 
 function onFieldInput(spec: PatchFieldSpec, event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(raw)) return;
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   draft.value = { ...draft.value, [spec.id]: clampPatchField(spec.id, raw) };
 }
 
@@ -300,8 +301,16 @@ function setEngineValue(info: SynthParamInfo, raw: number): void {
 }
 
 function onEngineInput(info: SynthParamInfo, event: Event): void {
-  const target = event.target as HTMLInputElement;
-  setEngineValue(info, info.type === 'boolean' ? (target.checked ? 1 : 0) : Number(target.value));
+  if (info.type === 'boolean') {
+    setEngineValue(info, (event.target as HTMLInputElement).checked ? 1 : 0);
+    return;
+  }
+  const value = readInputNumber(event);
+  if (value === null) {
+    if (event.type === 'change') restoreInputValue(event, engineValue(info));
+    return;
+  }
+  setEngineValue(info, value);
 }
 
 function resetEngineParam(info: SynthParamInfo): void {
@@ -349,8 +358,8 @@ function onModRowChange(index: number, patchRow: Partial<ModMatrixRow>): void {
 }
 
 function onModDepthInput(index: number, event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(raw)) return;
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   onModRowChange(index, { depth: clamp(raw, MOD_DEPTH_MIN, MOD_DEPTH_MAX) });
 }
 
@@ -796,6 +805,7 @@ function onKeydown(event: KeyboardEvent): void {
               :value="row.depth"
               :aria-label="formatMessage(t.shell.patchEditor.modDepth, { row: index + 1 })"
               @input="onModDepthInput(index, $event)"
+              @change="restoreUnreadableInput($event, row.depth)"
             />
             <button
               type="button"

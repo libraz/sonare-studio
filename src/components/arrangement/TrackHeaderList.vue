@@ -55,6 +55,7 @@ import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { isImeComposing } from '@/ui/keyboard/ime';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
+import { readInputNumber } from '@/ui/numeric-input';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -303,8 +304,8 @@ function cycleColor(track: EditorTrack): void {
 }
 
 function onVolumeChange(track: EditorTrack, event: Event): void {
-  const position = Number((event.target as HTMLInputElement).value);
-  if (Number.isFinite(position) && position >= 0 && position <= 1) {
+  const position = readInputNumber(event);
+  if (position !== null && position >= 0 && position <= 1) {
     // Preserve exact silence at the bottom rather than turning a zero legacy
     // volume into a merely very quiet −96 dB value.
     const value = position === 0 ? 0 : dbToLinear(faderPositionToDb(position));
@@ -327,9 +328,9 @@ function trackFaderDb(track: EditorTrack): number {
 }
 
 function onPanChange(track: EditorTrack, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
+  const value = readInputNumber(event);
   const current = track.mixer?.pan ?? track.pan;
-  if (Number.isFinite(value) && value >= -1 && value <= 1 && value !== current) {
+  if (value !== null && value >= -1 && value <= 1 && value !== current) {
     setStripPan(track.id, value);
   }
 }

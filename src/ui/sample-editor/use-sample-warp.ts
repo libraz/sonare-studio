@@ -15,7 +15,12 @@ import { type DetectedBeats, detectBeatsInWorker } from '@/project/audio-analysi
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
-import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
+import {
+  type NumericInputValue,
+  parseNumber,
+  readInputNumber,
+  restoreInputValue,
+} from '@/ui/numeric-input';
 import {
   autoWarpFromBeatTimes,
   defaultWarpAnchor,
@@ -100,8 +105,12 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
   }
 
   function onAnchorEdit(index: number, field: 'ppq' | 'sourceSeconds', event: Event): void {
-    const value = Number((event.target as HTMLInputElement).value);
-    if (!Number.isFinite(value)) return;
+    const value = readInputNumber(event);
+    if (value === null) {
+      const current = warpAnchors.value[index]?.[field];
+      if (current !== undefined) restoreInputValue(event, current);
+      return;
+    }
     commitWarp({
       anchors: warpAnchors.value.map((anchor, i) =>
         i === index ? { ...anchor, [field]: value } : anchor,

@@ -17,6 +17,7 @@ import {
   SF2_DRUM_CHANNEL,
 } from '@/ui/devices/sf2-model';
 import { useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreUnreadableInput } from '@/ui/numeric-input';
 import { gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 
 const props = defineProps<{
@@ -94,6 +95,16 @@ function setBank(channel: number, raw: number): void {
   commit(channel, { channel, bank: clampBank(raw), program: entryFor(channel)?.program ?? 0 });
 }
 
+function onBankInput(channel: number, event: Event): void {
+  const raw = readInputNumber(event);
+  if (raw !== null) setBank(channel, raw);
+}
+
+function onProgramInput(channel: number, event: Event): void {
+  const raw = readInputNumber(event);
+  if (raw !== null) setProgram(channel, raw);
+}
+
 function setDrumKit(channel: number, kitValue: string): void {
   commit(channel, { channel, bank: gm2DrumBank(0), program: clampProgram(Number(kitValue)) });
 }
@@ -146,7 +157,8 @@ function channelLabel(channel: number): string {
               max="16383"
               :value="entryFor(channel)?.bank ?? defaultBank"
               :aria-label="t.shell.devicesPanel.bank"
-              @input="setBank(channel, Number(($event.target as HTMLInputElement).value))"
+              @input="onBankInput(channel, $event)"
+              @change="restoreUnreadableInput($event, entryFor(channel)?.bank ?? defaultBank)"
             />
             <input
               class="sf2-channel-program"
@@ -155,7 +167,8 @@ function channelLabel(channel: number): string {
               max="127"
               :value="entryFor(channel)?.program ?? 0"
               :aria-label="t.shell.devicesPanel.program"
-              @input="setProgram(channel, Number(($event.target as HTMLInputElement).value))"
+              @input="onProgramInput(channel, $event)"
+              @change="restoreUnreadableInput($event, entryFor(channel)?.program ?? 0)"
             />
             <span class="sf2-channel-program-name">{{
               programName(entryFor(channel)?.program ?? 0)

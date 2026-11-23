@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -20,6 +20,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { isImeComposing } from '@/ui/keyboard/ime';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 import {
   CUSTOM_VOICE_PRESET_TEMPLATE,
   parseCustomVoicePreset,
@@ -55,6 +56,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   applyTempo: [];
+  cancelTempoInput: [];
   bbtBlur: [];
   bbtFocus: [];
   countInChange: [bars: number];
@@ -231,8 +233,33 @@ async function onApplyCustomVoicePreset(): Promise<void> {
 }
 
 function onRetuneInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  props.recording.setStreamingRetuneSemitones(Number.isFinite(value) ? value : 0);
+  const value = readInputNumber(event);
+  if (value === null) {
+    restoreInputValue(event, props.recording.streamingRetuneSemitones.value);
+    return;
+  }
+  props.recording.setStreamingRetuneSemitones(value);
+}
+
+function onTempoInput(event: Event): void {
+  const tempo = readInputNumber(event);
+  if (tempo !== null) emit('updateTempoInput', tempo);
+}
+
+/** A blank tempo commits nothing: the draft goes back to the committed tempo. */
+async function onTempoChange(event: Event): Promise<void> {
+  if (readInputNumber(event) !== null) {
+    emit('applyTempo');
+    return;
+  }
+  emit('cancelTempoInput');
+  await nextTick();
+  restoreInputValue(event, props.tempoInput);
+}
+
+function onMetronomeVolumeInput(event: Event): void {
+  const volume = readInputNumber(event);
+  if (volume !== null) emit('metronomeVolumeChange', volume);
 }
 </script>
 
@@ -525,8 +552,8 @@ function onRetuneInput(event: Event): void {
           :disabled="!!loadBlocked"
           :aria-label="t.shell.transport.tempoLabel"
           v-tooltip="{ text: t.shell.transport.tempoTitle, reason: loadBlocked }"
-          @input="emit('updateTempoInput', Number(($event.target as HTMLInputElement).value))"
-          @change="emit('applyTempo')"
+          @input="onTempoInput"
+          @change="onTempoChange"
         />
         <span class="tempo-unit" aria-hidden="true">BPM</span>
       </label>
@@ -553,7 +580,7 @@ function onRetuneInput(event: Event): void {
           :disabled="!!metronomeVolumeBlocked"
           :aria-label="t.shell.transport.metronomeVolume"
           v-tooltip="{ text: t.shell.transport.metronomeVolume, reason: metronomeVolumeBlocked }"
-          @input="emit('metronomeVolumeChange', Number(($event.target as HTMLInputElement).value))"
+          @input="onMetronomeVolumeInput"
         />
       </label>
     </div>

@@ -7,6 +7,7 @@ import { setClipFades, setClipGain, setClipLoop } from '@/project/commands';
 import { type EditorClip, isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 
 /**
  * Compact inspector for the active arrangement clip: edits the clip gain,
@@ -66,8 +67,11 @@ function fadeBeats(ppq: number | undefined): number {
 
 function onGainInput(event: Event): void {
   if (!props.clip) return;
-  const db = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(db)) return;
+  const db = readInputNumber(event);
+  if (db === null) {
+    restoreInputValue(event, gainFieldDb.value);
+    return;
+  }
   // At or below the floor the clip is silenced (linear gain 0), matching how a
   // fader bottoms out to silence.
   setClipGain(props.clip.id, db <= GAIN_FLOOR_DB ? 0 : dbToLinear(db));
@@ -75,8 +79,15 @@ function onGainInput(event: Event): void {
 
 function onFadeInput(which: 'in' | 'out', event: Event): void {
   if (!props.clip) return;
-  const beats = Math.max(0, Number((event.target as HTMLInputElement).value));
-  if (!Number.isFinite(beats)) return;
+  const raw = readInputNumber(event);
+  if (raw === null) {
+    restoreInputValue(
+      event,
+      fadeBeats(which === 'in' ? props.clip.fadeInPpq : props.clip.fadeOutPpq),
+    );
+    return;
+  }
+  const beats = Math.max(0, raw);
   const currentIn = props.clip.fadeInPpq ?? 0;
   const currentOut = props.clip.fadeOutPpq ?? 0;
   const fadeIn =

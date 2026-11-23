@@ -69,6 +69,7 @@ import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
+import { readInputNumber, restoreUnreadableInput } from '@/ui/numeric-input';
 import { formatSize } from '@/ui/shell/format';
 import StripAutomationControls from '../mixer/StripAutomationControls.vue';
 import AmpSimEditor from './AmpSimEditor.vue';
@@ -533,12 +534,14 @@ async function removeFont(fontId: string): Promise<void> {
 }
 
 function onBankInput(event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   sf2Selection.value = { ...sf2Selection.value, bank: clampBank(raw) };
 }
 
 function onProgramInput(event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   sf2Selection.value = { ...sf2Selection.value, program: clampProgram(raw) };
 }
 
@@ -562,12 +565,14 @@ function onChannelMapUpdate(channelMap: Sf2ChannelProgram[]): void {
 }
 
 function onGainInput(event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   sf2Selection.value = { ...sf2Selection.value, gain: clampGain(raw) };
 }
 
 function onPolyphonyInput(event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   sf2Selection.value = { ...sf2Selection.value, polyphony: clampPolyphony(raw) };
 }
 
@@ -734,7 +739,8 @@ function onExternalPortChange(portId: string): void {
 }
 
 function onExternalChannelInput(event: Event): void {
-  const raw = Number((event.target as HTMLInputElement).value);
+  const raw = readInputNumber(event);
+  if (raw === null) return;
   const channel = clampChannel(raw - 1);
   externalSelection.value = { ...externalSelection.value, channel };
 }
@@ -1166,6 +1172,7 @@ const instrumentSourceCaption = computed(() => {
                   max="16383"
                   :value="sf2Selection.bank"
                   @input="onBankInput"
+                  @change="restoreUnreadableInput($event, sf2Selection.bank)"
                 />
               </label>
               <label class="sf2-field">
@@ -1177,6 +1184,7 @@ const instrumentSourceCaption = computed(() => {
                   max="127"
                   :value="sf2Selection.program"
                   @input="onProgramInput"
+                  @change="restoreUnreadableInput($event, sf2Selection.program)"
                 />
               </label>
               <label class="sf2-field">
@@ -1189,6 +1197,7 @@ const instrumentSourceCaption = computed(() => {
                   step="0.1"
                   :value="sf2Selection.gain"
                   @input="onGainInput"
+                  @change="restoreUnreadableInput($event, sf2Selection.gain)"
                 />
               </label>
               <label class="sf2-field">
@@ -1201,6 +1210,7 @@ const instrumentSourceCaption = computed(() => {
                   step="1"
                   :value="sf2Selection.polyphony"
                   @input="onPolyphonyInput"
+                  @change="restoreUnreadableInput($event, sf2Selection.polyphony)"
                 />
               </label>
               <label class="sf2-field sf2-field-check">
@@ -1378,6 +1388,7 @@ const instrumentSourceCaption = computed(() => {
                   max="16"
                   :value="externalSelection.channel + 1"
                   @input="onExternalChannelInput"
+                  @change="restoreUnreadableInput($event, externalSelection.channel + 1)"
                 />
               </label>
               <label class="external-clock">

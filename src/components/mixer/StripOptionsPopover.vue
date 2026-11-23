@@ -44,6 +44,7 @@ import {
   midiLearnStripControlTargetId,
 } from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 import NumericReadout from './NumericReadout.vue';
 
 /**
@@ -137,18 +138,16 @@ const hasStripOptions = computed(
 );
 
 function onInputTrimInput(event: Event, commit: boolean): void {
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw) ? clamp(raw, MIN_INPUT_TRIM_DB, MAX_INPUT_TRIM_DB) : 0;
-  setStripInputTrim(props.target, value, { commit });
+  const raw = readInputNumber(event);
+  if (raw === null) return;
+  setStripInputTrim(props.target, clamp(raw, MIN_INPUT_TRIM_DB, MAX_INPUT_TRIM_DB), { commit });
 }
 
 function onWidthInput(event: Event, commit: boolean): void {
   if (isSurroundBus.value) return;
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? clamp(raw, MIN_STRIP_WIDTH, MAX_STRIP_WIDTH)
-    : DEFAULT_STRIP_WIDTH;
-  setStripWidth(props.target, value, { commit });
+  const raw = readInputNumber(event);
+  if (raw === null) return;
+  setStripWidth(props.target, clamp(raw, MIN_STRIP_WIDTH, MAX_STRIP_WIDTH), { commit });
 }
 
 /** Commits a bounded value entered through the adjacent numeric readout. */
@@ -170,9 +169,12 @@ function onPolarityToggle(channel: 'left' | 'right'): void {
 
 function onChannelDelayInput(event: Event): void {
   if (typeof props.target !== 'number') return;
-  const raw = Number.parseInt((event.target as HTMLInputElement).value, 10);
-  const samples = Number.isFinite(raw) ? clamp(raw, 0, MAX_CHANNEL_DELAY_SAMPLES) : 0;
-  setStripChannelDelaySamples(props.target, samples);
+  const raw = readInputNumber(event);
+  if (raw === null) {
+    restoreInputValue(event, channelDelaySamples.value);
+    return;
+  }
+  setStripChannelDelaySamples(props.target, clamp(Math.trunc(raw), 0, MAX_CHANNEL_DELAY_SAMPLES));
 }
 
 function onPanLawChange(value: string): void {
@@ -189,8 +191,9 @@ function onPanModeChange(value: string): void {
 /** Updates or commits a dual-pan slider edit, keeping the other channel intact. */
 function onDualPanInput(channel: 'left' | 'right', event: Event, commit: boolean): void {
   if (props.target === 'master' || isSurroundBus.value) return;
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw) ? clamp(raw, -1, 1) : 0;
+  const raw = readInputNumber(event);
+  if (raw === null) return;
+  const value = clamp(raw, -1, 1);
   const left = channel === 'left' ? value : dualPanLeft.value;
   const right = channel === 'right' ? value : dualPanRight.value;
   setStripDualPan(props.target, left, right, { commit });

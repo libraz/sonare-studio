@@ -648,6 +648,7 @@ provide(MIDI_LEARN_KEY, midiLearn);
 const {
   autoPunchEnabled,
   applyTempo,
+  cancelTempoInput,
   bbtDisplay,
   bbtDraft,
   hasLocatorWindow,
@@ -1530,6 +1531,7 @@ onMounted(installLaunchQueueConsumer);
       :store-initialized="store.initialized"
       :tempo-input="tempoInput"
       @apply-tempo="applyTempo"
+      @cancel-tempo-input="cancelTempoInput"
       @bbt-blur="onBbtCommit"
       @bbt-focus="onBbtFocus"
       @count-in-change="onCountInChange"

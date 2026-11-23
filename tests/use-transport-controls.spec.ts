@@ -347,3 +347,17 @@ describe('useTransportControls project end', () => {
     h.scope.stop();
   });
 });
+
+describe('useTransportControls tempo draft', () => {
+  it('cancelTempoInput puts the committed tempo back into the draft', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    const h = harness();
+    h.controls.tempoInput.value = 1;
+    h.controls.cancelTempoInput();
+    expect(h.controls.tempoInput.value).toBe(120);
+    h.scope.stop();
+  });
+});

@@ -7,6 +7,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDestructive } from '@/composables/useDialogs';
 import type { GuidanceProfile } from '@/compose/guidance-profile';
 import { useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 import {
   type AppLanguage,
   type AppTheme,
@@ -136,27 +137,21 @@ const autosaveSeconds = computed<number>(() =>
 );
 
 function onAutosaveSecondsInput(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  const value = Number(input.value);
-  if (!Number.isFinite(value)) return;
-  appSettings.set('autosaveIntervalMs', value * 1000);
-  input.value = String(autosaveSeconds.value);
+  const value = readInputNumber(event);
+  if (value !== null) appSettings.set('autosaveIntervalMs', value * 1000);
+  restoreInputValue(event, autosaveSeconds.value);
 }
 
 function onCountInInput(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  const value = Number(input.value);
-  if (!Number.isFinite(value)) return;
-  appSettings.set('countInBars', value);
-  input.value = String(appSettings.settings.countInBars);
+  const value = readInputNumber(event);
+  if (value !== null) appSettings.set('countInBars', value);
+  restoreInputValue(event, appSettings.settings.countInBars);
 }
 
 function onLoudnessTargetInput(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  const value = Number(input.value);
-  if (!Number.isFinite(value)) return;
-  appSettings.set('loudnessTargetLufs', value);
-  input.value = String(appSettings.settings.loudnessTargetLufs);
+  const value = readInputNumber(event);
+  if (value !== null) appSettings.set('loudnessTargetLufs', value);
+  restoreInputValue(event, appSettings.settings.loudnessTargetLufs);
 }
 </script>
 

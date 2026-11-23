@@ -39,6 +39,7 @@ import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 import { formatChannels, formatSampleRate } from '@/ui/media/asset-list';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 import {
   type AssetVersion,
   createHistory,
@@ -305,7 +306,14 @@ const selectionEndFrame = computed(
 function onSelectionBoundaryInput(boundary: 'start' | 'end', event: Event): void {
   const totalFrames = asset.value?.meta.numFrames;
   if (totalFrames === undefined) return;
-  const frame = Number((event.target as HTMLInputElement).value);
+  const frame = readInputNumber(event);
+  if (frame === null) {
+    restoreInputValue(
+      event,
+      boundary === 'start' ? selectionStartFrame.value : selectionEndFrame.value,
+    );
+    return;
+  }
   const current = selRange.value ?? { startFrame: 0, endFrame: totalFrames };
   setSelectionRange(
     boundary === 'start' ? frame : current.startFrame,

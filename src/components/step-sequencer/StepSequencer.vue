@@ -15,6 +15,7 @@ import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { readInputNumber, restoreInputValue } from '@/ui/numeric-input';
 import {
   bakePattern,
   isEmptyPlan,
@@ -241,7 +242,12 @@ function setMode(mode: SequencerMode): void {
 }
 
 function onRootPitchChange(event: Event): void {
-  const value = clampInt(Number((event.target as HTMLInputElement).value), 0, 115, 48);
+  const raw = readInputNumber(event);
+  if (raw === null) {
+    restoreInputValue(event, rootPitch.value);
+    return;
+  }
+  const value = clampInt(raw, 0, 115, 48);
   const previousRootPitch = rootPitch.value;
   rootPitch.value = value;
   if (pattern.value.mode === 'pitch') {
@@ -266,13 +272,21 @@ function onResolutionChange(value: StepResolution): void {
 }
 
 function onSwingChange(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  setPattern(withSwing(pattern.value, Number.isFinite(value) ? value : 0));
+  const value = readInputNumber(event);
+  if (value === null) {
+    restoreInputValue(event, pattern.value.swing);
+    return;
+  }
+  setPattern(withSwing(pattern.value, value));
 }
 
 function onSeedChange(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  setPattern({ ...pattern.value, seed: Number.isFinite(value) ? Math.trunc(value) : 1 });
+  const value = readInputNumber(event);
+  if (value === null) {
+    restoreInputValue(event, pattern.value.seed);
+    return;
+  }
+  setPattern({ ...pattern.value, seed: Math.trunc(value) });
 }
 
 // --- Grid / lane handlers ---------------------------------------------------
