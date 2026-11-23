@@ -222,6 +222,10 @@ export const shellEditors = {
     polyPressureLaneTab: 'PAT',
     polyPressureLaneTitle: 'Polyphonic key pressure lane (select notes)',
     polyPressureSelectedKeys: '{count} keys',
+    statusSelected: '{count} selected',
+    statusSnap: 'Snap {snap}',
+    statusSnapBar: 'Bar',
+    statusSnapOff: 'off',
     mpeUnsupported:
       'MPE is not supported. Expression is MIDI 1.0 channel-based; polyphonic pressure is keyed by pitch, not individual notes.',
     laneChannelTitle: 'MIDI channel the expression lane edits',

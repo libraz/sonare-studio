@@ -482,25 +482,26 @@ function scrollMinimapTo(centerPpq: number): void {
 
 const statusText = computed(() => {
   const hover = hoverStatus.value;
-  const selection = store.selection.size;
+  const copy = t.value.shell.pianoRoll;
   const snap = store.snapEnabled
     ? store.snapBar
-      ? 'Bar'
+      ? copy.statusSnapBar
       : `${Math.round(4 / gridPpq.value)}`
-    : 'off';
+    : copy.statusSnapOff;
+  const tail = `${formatMessage(copy.statusSelected, { count: store.selection.size })} · ${formatMessage(copy.statusSnap, { snap })}`;
   const lead = [
-    store.leadFollowDeferred ? t.value.shell.pianoRoll.placement.leadFollowDeferred : null,
+    store.leadFollowDeferred ? copy.placement.leadFollowDeferred : null,
     placementStatus.value,
   ].filter((part): part is string => part !== null);
   const prefix = lead.length > 0 ? `${lead.join(' · ')} · ` : '';
   if (!hover) {
-    return `${prefix}${selection} selected · Snap ${snap}`;
+    return `${prefix}${tail}`;
   }
   const location = pianoRollStatusLocation(
     store.timeSignatures,
     hover.ppq + timeSignatureOriginPpq.value,
   );
-  return `${prefix}${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
+  return `${prefix}${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${tail}`;
 });
 
 /** Focuses the editor so keyboard shortcuts work after any click inside it. */

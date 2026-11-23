@@ -222,6 +222,10 @@ export const shellEditors = {
     polyPressureLaneTab: 'PAT',
     polyPressureLaneTitle: 'ポリフォニックキープレッシャーレーン（ノートを選択）',
     polyPressureSelectedKeys: '{count} キー',
+    statusSelected: '{count} 個選択',
+    statusSnap: 'スナップ {snap}',
+    statusSnapBar: '小節',
+    statusSnapOff: 'オフ',
     mpeUnsupported:
       'MPE には対応していません。表現は MIDI 1.0 のチャンネル単位で、ポリフォニックプレッシャーも個々のノートではなくピッチ単位です。',
     laneChannelTitle: 'エクスプレッションレーンが編集する MIDI チャンネル',
