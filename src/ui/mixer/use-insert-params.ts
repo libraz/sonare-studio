@@ -80,7 +80,7 @@ export function useInsertParams(options: UseInsertParamsOptions): InsertParams {
     expandedIndex.value = expandedIndex.value === index ? null : index;
   }
 
-  /** In-flight knob gestures keyed by control id (one per dragged knob). */
+  /** In-flight knob gestures keyed by slot index and control id (one per dragged knob). */
   const gestures = new Map<string, ValueGesture>();
 
   function onParamChange(
@@ -103,18 +103,19 @@ export function useInsertParams(options: UseInsertParamsOptions): InsertParams {
         error.value = '';
         return;
       }
+      const gestureKey = `${index}:${control.id}`;
       if (!commit) {
-        let gesture = gestures.get(control.id);
+        let gesture = gestures.get(gestureKey);
         if (!gesture) {
           gesture = createValueGesture(apply, control.value);
-          gestures.set(control.id, gesture);
+          gestures.set(gestureKey, gesture);
         }
         gesture.update(value as number);
       } else {
-        const gesture = gestures.get(control.id);
+        const gesture = gestures.get(gestureKey);
         if (gesture) gesture.end(value as number);
         else apply(value as number, { commit: true });
-        gestures.delete(control.id);
+        gestures.delete(gestureKey);
       }
       error.value = '';
     } catch (err) {
