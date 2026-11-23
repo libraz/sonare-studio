@@ -111,16 +111,12 @@ async function placeSeparatedStems(
     const startPpq = clip.startPpq;
     const lengthPpq = clip.lengthPpq;
     const gain = clip.gain;
-    const sourceCount = project.sources().length;
-    const plans = saved.map(({ stem, meta }) => {
-      const sourceId = reusableAudioSourceId(meta.id, sourceCount);
-      return { stem, meta, sourceId };
-    });
-
-    assertCanAddTracks(store.tracks.length, plans.length);
+    assertCanAddTracks(store.tracks.length, saved.length);
     const result = executeAtomic((edit) => {
       const newClipIds: number[] = [];
-      for (const { stem, meta, sourceId } of plans) {
+      for (const { stem, meta } of saved) {
+        // Resolved per stem: identical stems share one content-hash asset and so one source.
+        const sourceId = reusableAudioSourceId(meta.id, project.sources().length);
         const name = nameStem(stem);
         const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
         const trackId = edit(1, () => project.addTrack({ kind: 'audio', name }));
