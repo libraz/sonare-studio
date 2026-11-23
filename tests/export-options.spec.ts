@@ -388,22 +388,22 @@ describe('filename derivation', () => {
 
   it('numbers stem entries and keeps duplicates unique', () => {
     const names = ['Drums', 'Bass', 'Bass'];
-    expect(names.map((name, i) => stemEntryName(name, i, names.length, '.wav'))).toEqual([
+    expect(names.map((name, i) => stemEntryName(name, i, names.length, '.wav', 'Track'))).toEqual([
       '01 Drums.wav',
       '02 Bass.wav',
       '03 Bass.wav',
     ]);
-    expect(stemEntryName('a:b', 0, 2, '.mp3')).toBe('01 a_b.mp3');
-    expect(stemEntryName('', 1, 2, '.mp3')).toBe('02 Track.mp3');
+    expect(stemEntryName('a:b', 0, 2, '.mp3', 'Track 1')).toBe('01 a_b.mp3');
+    expect(stemEntryName('', 1, 2, '.mp3', 'Track 2')).toBe('02 Track 2.mp3');
   });
 
   it('widens the ordinal padding for large track counts', () => {
-    expect(stemEntryName('T', 0, 120, '.wav')).toBe('001 T.wav');
-    expect(stemEntryName('T', 119, 120, '.wav')).toBe('120 T.wav');
+    expect(stemEntryName('T', 0, 120, '.wav', 'Track 1')).toBe('001 T.wav');
+    expect(stemEntryName('T', 119, 120, '.wav', 'Track 120')).toBe('120 T.wav');
   });
 
   it('rejects an ordinal outside the stem count', () => {
-    expect(() => stemEntryName('T', 3, 3, '.wav')).toThrow(RangeError);
+    expect(() => stemEntryName('T', 3, 3, '.wav', 'Track 4')).toThrow(RangeError);
   });
 });
 

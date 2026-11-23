@@ -354,20 +354,25 @@ export function stemsZipFileNameForEncoder(
 /**
  * Derives one deterministic zip entry name: a 1-based zero-padded index prefix
  * keeps entries ordered and unique even when track names collide
- * (e.g. '01 Drums.wav').
+ * (e.g. '01 Drums.wav'). `fallbackName` names a stem whose track name
+ * sanitizes to nothing, in the language the caller displays.
  */
 export function stemEntryName(
   stemName: string,
   index: number,
   total: number,
   extension: string,
+  fallbackName: string,
 ): string {
   if (!Number.isInteger(index) || index < 0 || !Number.isInteger(total) || total <= index) {
     throw new RangeError(`Invalid stem ordinal ${index + 1}/${total}`);
   }
   const width = Math.max(2, String(total).length);
   const ordinal = String(index + 1).padStart(width, '0');
-  return ensureFileExtension(`${ordinal} ${sanitizeFileBaseName(stemName, 'Track')}`, extension);
+  return ensureFileExtension(
+    `${ordinal} ${sanitizeFileBaseName(stemName, fallbackName)}`,
+    extension,
+  );
 }
 
 /** One file inside the stems archive. */

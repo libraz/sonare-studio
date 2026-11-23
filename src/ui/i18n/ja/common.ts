@@ -1,4 +1,4 @@
-/** Generic button and dialog labels shared across surfaces. */
+/** Generic labels and default names shared across surfaces. */
 export const common = {
   ok: 'OK',
   cancel: 'キャンセル',
@@ -6,4 +6,5 @@ export const common = {
   close: '閉じる',
   apply: '適用',
   delete: '削除',
+  trackDefaultName: 'トラック {number}',
 } as const;

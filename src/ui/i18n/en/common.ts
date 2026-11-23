@@ -1,4 +1,4 @@
-/** Generic button and dialog labels shared across surfaces. */
+/** Generic labels and default names shared across surfaces. */
 export const common = {
   ok: 'OK',
   cancel: 'Cancel',
@@ -6,4 +6,5 @@ export const common = {
   close: 'Close',
   apply: 'Apply',
   delete: 'Delete',
+  trackDefaultName: 'Track {number}',
 } as const;

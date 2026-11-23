@@ -412,7 +412,13 @@ export function useAudioExportRun(
           );
           try {
             await writer.add({
-              name: stemEntryName(stem.name, index, total, target.encoder.extension),
+              name: stemEntryName(
+                stem.name,
+                index,
+                total,
+                target.encoder.extension,
+                formatMessage(t.value.common.trackDefaultName, { number: index + 1 }),
+              ),
               bytes,
             });
           } finally {
