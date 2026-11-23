@@ -71,7 +71,13 @@ export function useArrangementRulerMenu(
         placeholder: t.value.shell.arrangement.clipActions.markerName,
         confirmLabel: t.value.shell.arrangement.clipActions.addMarkerConfirm,
       });
-      if (name) setMarker(null, ppq, name);
+      const trimmed = name?.trim() ?? '';
+      if (trimmed.length === 0) return;
+      try {
+        setMarker(null, ppq, trimmed);
+      } catch (err) {
+        error.value = describeError(err, t.value.notices.errors);
+      }
     })();
   }
 
