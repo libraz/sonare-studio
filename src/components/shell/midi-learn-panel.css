@@ -1,0 +1,38 @@
+.ml-row-head {
+  padding-bottom: var(--sp-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ml-col-head {
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+  text-align: center;
+}
+
+.ml-devices-head {
+  padding-bottom: var(--sp-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ml-btn {
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.ml-btn:hover:not(:disabled) {
+  box-shadow: var(--control-lift-hover);
+}
+
+.ml-btn:active:not(:disabled) {
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.ml-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
