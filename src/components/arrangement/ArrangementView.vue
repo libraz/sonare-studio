@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, markRaw, onBeforeUnmount, onMounted, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -7,7 +7,6 @@ import { buildKeyMap } from '@/compose/key-map';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
-import type { AutomationParam } from '@/project/automation';
 import { clipSplitBlockReason, resolveClipSplitTarget } from '@/project/clip-split';
 import {
   addMidiClip,
@@ -30,28 +29,22 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
-import { adjacentBarDelta, snapPpqToMeterGrid } from '@/project/time-signature';
+import { snapPpqToMeterGrid } from '@/project/time-signature';
 import { canTrackContainClip, clipKind, isAudioClip } from '@/project/types';
-import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
-import {
-  AUTOMATION_LANE_HEIGHT_PX,
-  automationLaneDomain,
-  buildRowLayout,
-  revealRowScrollY,
-  trackTakeRowCount,
-} from '@/ui/arrangement/automation-rows';
-import { visibleGroupRows } from '@/ui/arrangement/group-rows';
+import { AUTOMATION_LANE_HEIGHT_PX, automationLaneDomain } from '@/ui/arrangement/automation-rows';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useArrangementClipMenu } from '@/ui/arrangement/use-arrangement-clip-menu';
 import { useArrangementProcessing } from '@/ui/arrangement/use-arrangement-processing';
+import { useArrangementRows } from '@/ui/arrangement/use-arrangement-rows';
 import { useArrangementRulerMenu } from '@/ui/arrangement/use-arrangement-ruler-menu';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
   type ClipInteractionsView,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
+import { useClipKeyboardActions } from '@/ui/arrangement/use-clip-keyboard-actions';
 import { useCommonTakeSilence } from '@/ui/arrangement/use-common-take-silence';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
@@ -68,7 +61,6 @@ import TrackHeaderList from './TrackHeaderList.vue';
 import TranscribeDialog from './TranscribeDialog.vue';
 import {
   CHORD_LANE_HEIGHT_PX,
-  LANE_HEIGHT_PX,
   RULER_HEIGHT_PX,
   SECTION_LANE_HEIGHT_PX,
   TRACK_HEADER_WIDTH_PX,
@@ -170,9 +162,6 @@ const DEFAULT_PX_PER_PPQ = 10;
 const ZOOM_WHEEL_SENSITIVITY = 0.0035;
 /** Per-click multiplier for the arrangement's vertical track zoom. */
 const VERTICAL_ZOOM_STEP = 1.2;
-/** Bounds that keep compact overviews useful without making clips illegible. */
-const MIN_LANE_HEIGHT_PX = 28;
-const MAX_LANE_HEIGHT_PX = 112;
 
 // The TimelineRange and painter are plain (non-reactive) objects; views are
 // invalidated through the `revision` counter after every range mutation.
@@ -186,124 +175,26 @@ function bump(): void {
   revision.value++;
 }
 
-/** Vertical scroll offset of the track lanes in px (shared with the headers). */
-const scrollY = ref(0);
-/** View-local track-row height, shared by the canvas and track-header column. */
-const laneHeight = ref(LANE_HEIGHT_PX);
-
-// --- Automation sublane state ----------------------------------------------
-
-/** Ids of tracks whose automation sublane is expanded (view-local state). */
-const automationExpandedIds = ref<number[]>([]);
-
-/** Selected automation parameter per track id (absent = 'faderDb'). */
-const automationParams = ref<Record<number, AutomationParam>>({});
-
-/** Ids of tracks whose take sub-rows are expanded (view-local state). */
-const takesExpandedIds = ref<number[]>([]);
-
-/** Group tracks whose member rows are hidden in this arrangement view. */
-const collapsedGroupIds = ref<number[]>([]);
-
-/** Tracks participating in the current visual row layout. */
-const visibleTracks = computed(() => {
-  return visibleGroupRows(store.tracks, new Set(collapsedGroupIds.value));
-});
-
-/** Ids of the visible tracks in row order. */
-const visibleTrackIds = computed(() => visibleTracks.value.map((track) => track.id));
-
-/** Clips drawn and hit-tested in the currently visible track rows. */
-const visibleClips = computed(() => {
-  const ids = new Set(visibleTrackIds.value);
-  return store.clips.filter((clip) => ids.has(clip.trackId));
-});
-
-/** Row layout reflecting which tracks show take sub-rows or an automation sublane. */
-const rowLayout = computed(() => {
-  const expanded = new Set(automationExpandedIds.value);
-  const takesExpanded = new Set(takesExpandedIds.value);
-  return buildRowLayout(
-    visibleTracks.value.map((track) => expanded.has(track.id)),
-    laneHeight.value,
-    AUTOMATION_LANE_HEIGHT_PX,
-    visibleTracks.value.map((track) =>
-      takesExpanded.has(track.id) ? trackTakeRowCount(store.clips, track.id) : 0,
-    ),
-  );
-});
-
-/**
- * Scrolls the shared vertical offset so `trackId`'s row is fully visible.
- * The header column has no scroll state of its own (see TrackHeaderList's
- * `revealTrack` emit), so this is the only place a row is brought into view.
- */
-function onRevealTrack(trackId: number): void {
-  const index = visibleTracks.value.findIndex((track) => track.id === trackId);
-  if (index < 0) return;
-  const viewport = Math.max(0, range.heightPx - RULER_HEIGHT_PX);
-  const next = revealRowScrollY(rowLayout.value, index, scrollY.value, viewport);
-  if (next === null) return;
-  scrollY.value = clampScrollY(next);
-  bump();
-}
-
-// A clip added from the media browser can create a track below the viewport.
-// Keep the newly selected track and its clip visible without moving the view
-// again while the user edits other clips on that track.
-watch(
-  () => store.activeTrackId,
-  (trackId) => onRevealTrack(trackId),
-  { flush: 'post' },
-);
-
-function onToggleGroupCollapse(trackId: number, collapsed: boolean): void {
-  const ids = collapsedGroupIds.value.filter((id) => id !== trackId);
-  if (collapsed) ids.push(trackId);
-  collapsedGroupIds.value = ids;
-  scrollY.value = clampScrollY(scrollY.value);
-  bump();
-}
-
-watch(
-  () => store.tracks.map((track) => ({ id: track.id, kind: track.kind })),
-  (tracks) => {
-    const groupIds = new Set(
-      tracks.filter((track) => track.kind === 'group').map((track) => track.id),
-    );
-    const next = collapsedGroupIds.value.filter((id) => groupIds.has(id));
-    if (next.length !== collapsedGroupIds.value.length) collapsedGroupIds.value = next;
-  },
-);
-
-function onToggleAutomation(trackId: number, expanded: boolean): void {
-  const ids = automationExpandedIds.value.filter((id) => id !== trackId);
-  if (expanded) ids.push(trackId);
-  automationExpandedIds.value = ids;
-  // Collapsing shrinks the content extent below the current scroll offset.
-  scrollY.value = clampScrollY(scrollY.value);
-  bump();
-}
-
-function onAutomationParamChange(trackId: number, param: AutomationParam): void {
-  automationParams.value = { ...automationParams.value, [trackId]: param };
-}
-
-function onToggleTakes(trackId: number, expanded: boolean): void {
-  const ids = takesExpandedIds.value.filter((id) => id !== trackId);
-  if (expanded) ids.push(trackId);
-  takesExpandedIds.value = ids;
-  // Collapsing shrinks the content extent below the current scroll offset.
-  scrollY.value = clampScrollY(scrollY.value);
-  bump();
-}
-
-/** Clamps the lane scroll offset to the track content extent. */
-function clampScrollY(y: number): number {
-  const viewport = Math.max(0, range.heightPx - RULER_HEIGHT_PX);
-  const content = rowLayout.value.totalHeight;
-  return Math.min(Math.max(0, content - viewport), Math.max(0, y));
-}
+const {
+  scrollY,
+  laneHeight,
+  automationExpandedIds,
+  automationParams,
+  takesExpandedIds,
+  collapsedGroupIds,
+  visibleTracks,
+  visibleTrackIds,
+  visibleClips,
+  rowLayout,
+  clampScrollY,
+  onRevealTrack,
+  onToggleGroupCollapse,
+  onToggleAutomation,
+  onAutomationParamChange,
+  onToggleTakes,
+  zoomVertical,
+  onCanvasResize,
+} = useArrangementRows({ range, bump });
 
 /** Snap grid step in PPQ derived from the store (0 when snapping is off). */
 const gridPpq = computed(() => (store.snapEnabled ? 4 / store.snapDivision : 0));
@@ -511,29 +402,11 @@ function zoomHorizontal(factor: number): void {
   bump();
 }
 
-/** Zooms track rows vertically while keeping the current viewport position stable. */
-function zoomVertical(factor: number): void {
-  const previous = laneHeight.value;
-  const next = Math.min(
-    MAX_LANE_HEIGHT_PX,
-    Math.max(MIN_LANE_HEIGHT_PX, Math.round(previous * factor)),
-  );
-  if (next === previous) return;
-  laneHeight.value = next;
-  scrollY.value = clampScrollY(scrollY.value * (next / previous));
-  bump();
-}
-
 /** Fits the full arranged clip range into the timeline viewport. */
 function zoomToFit(): void {
   const endPpq = Math.max(4, ...store.clips.map((clip) => clip.startPpq + clip.lengthPpq));
   range.zoomAt(0, range.widthPx / endPpq / range.pxPerPpq);
   range.setStartPpq(0);
-  bump();
-}
-
-function onCanvasResize(): void {
-  scrollY.value = clampScrollY(scrollY.value);
   bump();
 }
 
@@ -550,81 +423,12 @@ function onSeek(ppq: number): void {
   emit('seek', ppq);
 }
 
-type ClipKeyboardAction =
-  | { clipId: number; kind: 'select' }
-  | { clipId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
-  | { clipId: number; kind: 'set'; controlId: string; value: number };
-
-/** Applies virtual-list clip actions through the same undoable project commands as pointer edits. */
-function onClipKeyboardAction(payload: ClipKeyboardAction): void {
-  const clip = store.clips.find((item) => item.id === payload.clipId);
-  if (!clip) return;
-  setActiveClip(clip.id);
-  if (payload.kind === 'select') return;
-  const track = store.tracks.find((item) => item.id === clip.trackId);
-  if (track?.frozen !== undefined) return;
-  // A key press that lands on the current value records no undo step.
-  const moveClipTo = (startPpq: number): void => {
-    if (startPpq !== clip.startPpq) moveClip(clip.id, startPpq);
-  };
-  const trimClipTo = (lengthPpq: number): void => {
-    if (lengthPpq !== clip.lengthPpq) trimClip(clip.id, clip.startPpq, lengthPpq);
-  };
-  try {
-    if (payload.kind === 'set') {
-      if (payload.controlId === 'start') {
-        moveClipTo(Math.max(0, payload.value));
-      } else if (payload.controlId === 'length') {
-        const bounds = sourceBoundsFor(clip.id);
-        const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
-        trimClipTo(Math.max(0.25, Math.min(maximum, payload.value)));
-      }
-      return;
-    }
-    const { direction, resize, coarse } = payload.adjustment;
-    const step = Math.max(0.0625, gridPpq.value) * (coarse ? 4 : 1);
-    if (direction === 'left' || direction === 'right') {
-      const delta =
-        store.snapEnabled && store.snapBar
-          ? adjacentBarDelta(
-              (ppq) => barRangeAt(store.timeSignatures, ppq),
-              clip.startPpq,
-              direction,
-              coarse,
-            )
-          : direction === 'left'
-            ? -step
-            : step;
-      if (resize) {
-        const bounds = sourceBoundsFor(clip.id);
-        const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
-        trimClipTo(Math.max(0.25, Math.min(maximum, clip.lengthPpq + delta)));
-      } else {
-        moveClipTo(Math.max(0, clip.startPpq + delta));
-      }
-      return;
-    }
-    const lanes = visibleTracks.value;
-    const currentTrackIndex = lanes.findIndex((item) => item.id === clip.trackId);
-    const trackDelta = direction === 'up' ? -1 : 1;
-    for (
-      let index = currentTrackIndex + trackDelta;
-      index >= 0 && index < lanes.length;
-      index += trackDelta
-    ) {
-      const destination = lanes[index];
-      if (
-        destination.frozen === undefined &&
-        canTrackContainClip(destination.kind, clipKind(clip))
-      ) {
-        moveClip(clip.id, clip.startPpq, destination.id);
-        break;
-      }
-    }
-  } catch (cause) {
-    error.value = describeError(cause, t.value.notices.errors);
-  }
-}
+const { onClipKeyboardAction } = useClipKeyboardActions({
+  error,
+  gridPpq,
+  visibleTracks,
+  sourceBoundsFor,
+});
 
 const { onClipContext } = useArrangementClipMenu({
   error,
@@ -662,16 +466,6 @@ function cutAtPlayhead(): void {
 }
 
 defineExpose({ cutAtPlayhead, zoomHorizontal, zoomToFit });
-
-// Track removal or take-lane changes (e.g. flattening a comp) can shrink the
-// content extent below the current scroll.
-watch(
-  () => rowLayout.value.totalHeight,
-  () => {
-    scrollY.value = clampScrollY(scrollY.value);
-    bump();
-  },
-);
 
 onMounted(async () => {
   try {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readSource, sourceWindow } from './helpers/source-text';
 
 const editor = readSource('src/components/piano-roll/PianoRollEditor.vue');
-const arrangement = readSource('src/components/arrangement/ArrangementView.vue');
+const clipKeyboard = readSource('src/ui/arrangement/use-clip-keyboard-actions.ts');
 const shortcuts = readSource('docs/en/shortcuts.md');
 
 describe('piano-roll editor wiring', () => {
@@ -32,9 +32,9 @@ describe('piano-roll editor wiring', () => {
 describe('arrangement keyboard clip move', () => {
   it('only targets lanes the pointer path can reach', () => {
     const handler = sourceWindow(
-      arrangement,
+      clipKeyboard,
       'function onClipKeyboardAction',
-      'const { onClipContext } = useArrangementClipMenu',
+      'return { onClipKeyboardAction }',
     );
     expect(handler).toContain('const lanes = visibleTracks.value;');
     expect(handler).not.toContain('store.tracks[');
