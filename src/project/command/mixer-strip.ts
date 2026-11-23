@@ -12,6 +12,7 @@ import {
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
   hasAudibleOutputRoute,
+  isMixerGainDb,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_STRIP_GAIN_DB,
@@ -128,7 +129,7 @@ export function setStripGain(
     return;
   }
   const strip = currentStrip(store, target);
-  if (!Number.isFinite(gainDb) || gainDb < MIN_STRIP_GAIN_DB || gainDb > MAX_STRIP_GAIN_DB) {
+  if (!isMixerGainDb(gainDb)) {
     throw new RangeError(
       `Strip gain must be within [${MIN_STRIP_GAIN_DB}, ${MAX_STRIP_GAIN_DB}] dB, got ${gainDb}`,
     );
@@ -325,8 +326,10 @@ export function setSend(
   }
   const sendSourceBusId = send === null ? undefined : sidechainTargetTopologyId(store, target);
   if (sendSourceBusId !== undefined) assertBusRouteAllowed(store, sendSourceBusId, busId);
-  if (send !== null && !Number.isFinite(send.levelDb)) {
-    throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
+  if (send !== null && !isMixerGainDb(send.levelDb)) {
+    throw new RangeError(
+      `Send level must be within [${MIN_STRIP_GAIN_DB}, ${MAX_STRIP_GAIN_DB}] dB, got ${send.levelDb}`,
+    );
   }
   const key = `strip-send:${String(target)}:${busId}`;
   const existing = strip.sends.find((entry) => entry.busId === busId);

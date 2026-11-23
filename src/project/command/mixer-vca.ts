@@ -1,5 +1,5 @@
 import type { VcaGroup } from '../mixer';
-import { MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
+import { isMixerGainDb, MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
 import { reconcileStructureTargetReferences } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
@@ -115,7 +115,7 @@ export function setVcaGroupGain(
   const groups = store.mixer.vcaGroups ?? [];
   const group = groups.find((entry) => entry.id === groupId);
   if (!group) throw new RangeError(`Unknown VCA group id: ${groupId}`);
-  if (!Number.isFinite(gainDb) || gainDb < MIN_STRIP_GAIN_DB || gainDb > MAX_STRIP_GAIN_DB) {
+  if (!isMixerGainDb(gainDb)) {
     throw new RangeError(
       `VCA gain must be within [${MIN_STRIP_GAIN_DB}, ${MAX_STRIP_GAIN_DB}] dB, got ${gainDb}`,
     );

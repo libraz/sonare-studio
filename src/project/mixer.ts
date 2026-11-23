@@ -587,6 +587,14 @@ export const MIN_STRIP_GAIN_DB = -96;
 export const MAX_STRIP_GAIN_DB = 24;
 
 /**
+ * Whether a level is a gain the mixer accepts: strip, bus and VCA faders and
+ * send levels all share the strip gain range.
+ */
+export function isMixerGainDb(value: number): boolean {
+  return Number.isFinite(value) && value >= MIN_STRIP_GAIN_DB && value <= MAX_STRIP_GAIN_DB;
+}
+
+/**
  * Gain sent to an engine return-bus lane. A muted return must use the engine's
  * silence floor rather than changing its stored fader value, so undo and an
  * unmute restore the exact previous mix level.

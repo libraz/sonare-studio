@@ -15,13 +15,7 @@ import {
   validateTrackInstrument,
 } from './instrument';
 import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx';
-import {
-  cloneStrip,
-  createDefaultStrip,
-  MAX_STRIP_GAIN_DB,
-  MIN_STRIP_GAIN_DB,
-  type MixerStrip,
-} from './mixer';
+import { cloneStrip, createDefaultStrip, isMixerGainDb, type MixerStrip } from './mixer';
 import { getWasmModule } from './runtime';
 import type { EditorTrack } from './types';
 
@@ -95,9 +89,7 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
   // caller can retain mutable references into a saved preset.
   const strip = cloneStrip(raw.strip as MixerStrip);
   if (
-    !Number.isFinite(strip.gainDb) ||
-    strip.gainDb < MIN_STRIP_GAIN_DB ||
-    strip.gainDb > MAX_STRIP_GAIN_DB ||
+    !isMixerGainDb(strip.gainDb) ||
     !Number.isFinite(strip.pan) ||
     strip.pan < -1 ||
     strip.pan > 1
@@ -133,7 +125,7 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
       !send ||
       typeof send.busId !== 'string' ||
       send.busId.length === 0 ||
-      !Number.isFinite(send.levelDb) ||
+      !isMixerGainDb(send.levelDb) ||
       typeof send.enabled !== 'boolean' ||
       (send.timing !== undefined && send.timing !== 'preFader' && send.timing !== 'postFader')
     ) {

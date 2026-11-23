@@ -5,6 +5,7 @@ import {
   canRouteReturnSolo,
   createDefaultStrip,
   isMixerChannelLayout,
+  isMixerGainDb,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
   MIN_STRIP_GAIN_DB,
@@ -121,7 +122,7 @@ export function setMixerBusGain(
   const store = useProjectStore();
   const bus = store.mixer.buses.find((entry) => entry.id === busId);
   if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
-  if (!Number.isFinite(gainDb) || gainDb < MIN_STRIP_GAIN_DB || gainDb > MAX_STRIP_GAIN_DB) {
+  if (!isMixerGainDb(gainDb)) {
     throw new RangeError(
       `Bus gain must be within [${MIN_STRIP_GAIN_DB}, ${MAX_STRIP_GAIN_DB}] dB, got ${gainDb}`,
     );
