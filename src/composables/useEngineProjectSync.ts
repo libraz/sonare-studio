@@ -462,6 +462,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(applyTimer);
       applyTimer = null;
     }
+    if (midiSyncTimer !== null) {
+      clearTimeout(midiSyncTimer);
+      midiSyncTimer = null;
+    }
     wakeIdleWaiters();
     scheduledClips = [];
     scheduledCount.value = 0;
