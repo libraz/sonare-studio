@@ -9,7 +9,7 @@ import { applyMasteringPresetWithOverrides, setMasteringPreset } from '@/project
 import type { MasteringChainState } from '@/project/mixer';
 import { getWasmModule } from '@/project/runtime';
 import { firstBlock } from '@/ui/disabled-reason';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { deleteChainPath, flattenChainConfig } from '@/ui/mastering/chain-config-path';
 import {
   filterPresetCatalog,
@@ -141,7 +141,11 @@ export function useMasteringPresetStage(
         return;
       }
       const id = corePreset(preset);
-      if (id === undefined) throw new RangeError(`Unknown mastering preset: ${preset}`);
+      if (id === undefined) {
+        throw new RangeError(
+          formatMessage(t.value.shell.mastering.unknownPreset, { name: preset }),
+        );
+      }
       setMasteringPreset(id);
     });
   }

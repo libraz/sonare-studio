@@ -52,8 +52,34 @@ import {
 } from './processor-controls';
 import { getWasmModule, useProjectStore } from './store';
 
-/** One quick-control descriptor (knob, toggle, or enum menu). */
-export type QuickControl = ProcessorControl;
+/** Stable identity of a NativeSynth quick-control label, resolved to text by the UI. */
+export type SynthControlLabelKey =
+  | 'cutoff'
+  | 'resonance'
+  | 'drive'
+  | 'attack'
+  | 'decay'
+  | 'sustain'
+  | 'release'
+  | 'gain'
+  | 'preDrive'
+  | 'body'
+  | 'ampDrive'
+  | 'output'
+  | 'tone'
+  | 'cabQ'
+  | 'pick'
+  | 'damp'
+  | 'engine'
+  | 'waveform'
+  | 'filterModel'
+  | 'filterOutput';
+
+/**
+ * One quick-control descriptor (knob, toggle, or enum menu). `name` is the
+ * English label; synth controls also carry a `labelKey` for localized text.
+ */
+export type QuickControl = ProcessorControl & { labelKey?: SynthControlLabelKey };
 
 /** Addresses what a quick-control rack edits. */
 export type QuickControlTarget =
@@ -96,6 +122,7 @@ const ampPresetCatalogCache = new WeakMap<object, MasteringAmpPresetCatalogEntry
 interface SynthControlSpec {
   id: keyof StoredSynthPatch & string;
   name: string;
+  labelKey: SynthControlLabelKey;
   scale?: 'linear' | 'log';
   unit?: string;
   /** Value shown when neither patch nor preset defines the field. */
@@ -105,6 +132,7 @@ interface SynthControlSpec {
 interface SynthEnumControlSpec {
   id: 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
   name: string;
+  labelKey: SynthControlLabelKey;
   table: keyof Pick<
     SynthEnumTables,
     'engineModes' | 'waveforms' | 'filterModels' | 'filterOutputs' | 'bodyTypes'
@@ -121,6 +149,7 @@ const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'cutoffHz',
     name: 'Cutoff',
+    labelKey: 'cutoff',
     scale: 'log',
     unit: 'Hz',
     fallback: 18000,
@@ -128,15 +157,16 @@ const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'resonanceQ',
     name: 'Resonance',
+    labelKey: 'resonance',
     scale: 'log',
     fallback: Math.SQRT1_2,
   },
-  { id: 'drive', name: 'Drive', fallback: 0 },
-  { id: 'ampAttackMs', name: 'Attack', unit: 'ms', fallback: 5 },
-  { id: 'ampDecayMs', name: 'Decay', unit: 'ms', fallback: 60 },
-  { id: 'ampSustain', name: 'Sustain', fallback: 0.7 },
-  { id: 'ampReleaseMs', name: 'Release', unit: 'ms', fallback: 120 },
-  { id: 'gain', name: 'Gain', fallback: 1 },
+  { id: 'drive', name: 'Drive', labelKey: 'drive', fallback: 0 },
+  { id: 'ampAttackMs', name: 'Attack', labelKey: 'attack', unit: 'ms', fallback: 5 },
+  { id: 'ampDecayMs', name: 'Decay', labelKey: 'decay', unit: 'ms', fallback: 60 },
+  { id: 'ampSustain', name: 'Sustain', labelKey: 'sustain', fallback: 0.7 },
+  { id: 'ampReleaseMs', name: 'Release', labelKey: 'release', unit: 'ms', fallback: 120 },
+  { id: 'gain', name: 'Gain', labelKey: 'gain', fallback: 1 },
 ];
 
 /** Editing range of a synth quick control: the patch editor's range for the field. */
@@ -148,13 +178,14 @@ function synthControlRange(id: string): { min: number; max: number } {
 
 /** Amp/body-oriented controls for plucked-string presets such as guitar/bass. */
 const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
-  { id: 'drive', name: 'Pre Drive', fallback: 0 },
-  { id: 'bodyMix', name: 'Body', fallback: 0.35 },
-  { id: 'busDrive', name: 'Amp Drive', fallback: 0 },
-  { id: 'gain', name: 'Output', fallback: 1 },
+  { id: 'drive', name: 'Pre Drive', labelKey: 'preDrive', fallback: 0 },
+  { id: 'bodyMix', name: 'Body', labelKey: 'body', fallback: 0.35 },
+  { id: 'busDrive', name: 'Amp Drive', labelKey: 'ampDrive', fallback: 0 },
+  { id: 'gain', name: 'Output', labelKey: 'output', fallback: 1 },
   {
     id: 'cutoffHz',
     name: 'Tone',
+    labelKey: 'tone',
     scale: 'log',
     unit: 'Hz',
     fallback: 18000,
@@ -162,20 +193,21 @@ const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'resonanceQ',
     name: 'Cab Q',
+    labelKey: 'cabQ',
     scale: 'log',
     fallback: Math.SQRT1_2,
   },
-  { id: 'ampAttackMs', name: 'Pick', unit: 'ms', fallback: 5 },
-  { id: 'ampReleaseMs', name: 'Damp', unit: 'ms', fallback: 120 },
+  { id: 'ampAttackMs', name: 'Pick', labelKey: 'pick', unit: 'ms', fallback: 5 },
+  { id: 'ampReleaseMs', name: 'Damp', labelKey: 'damp', unit: 'ms', fallback: 120 },
 ];
 
 /** NativeSynth enum fields exposed after the stable numeric quick controls. */
 const SYNTH_ENUM_CONTROLS: ReadonlyArray<SynthEnumControlSpec> = [
-  { id: 'engineMode', name: 'Engine', table: 'engineModes' },
-  { id: 'waveform', name: 'Waveform', table: 'waveforms' },
-  { id: 'filterModel', name: 'Filter Model', table: 'filterModels' },
-  { id: 'filterOutput', name: 'Filter Output', table: 'filterOutputs' },
-  { id: 'body', name: 'Body', table: 'bodyTypes' },
+  { id: 'engineMode', name: 'Engine', labelKey: 'engine', table: 'engineModes' },
+  { id: 'waveform', name: 'Waveform', labelKey: 'waveform', table: 'waveforms' },
+  { id: 'filterModel', name: 'Filter Model', labelKey: 'filterModel', table: 'filterModels' },
+  { id: 'filterOutput', name: 'Filter Output', labelKey: 'filterOutput', table: 'filterOutputs' },
+  { id: 'body', name: 'Body', labelKey: 'body', table: 'bodyTypes' },
 ];
 
 const WIND_OR_BRASS_PRESET_TOKENS = [
@@ -273,6 +305,7 @@ function synthEnumControls(
         kind: 'enum' as const,
         id: spec.id,
         name: spec.name,
+        labelKey: spec.labelKey,
         value,
         options,
         defaultValue: options[0]?.value ?? value,
@@ -466,6 +499,7 @@ export function listQuickControls(
         kind: 'number',
         id: spec.id,
         name: spec.name,
+        labelKey: spec.labelKey,
         value,
         ...synthControlRange(spec.id),
         defaultValue: spec.fallback,

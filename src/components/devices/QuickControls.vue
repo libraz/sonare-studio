@@ -394,10 +394,17 @@ function coupledNote(control: QuickControl): string {
   });
 }
 
+/** Localized control name; controls without a label key (inserts) keep their own name. */
+function controlName(control: QuickControl): string {
+  return control.labelKey
+    ? t.value.shell.devicesPanel.synthControls[control.labelKey]
+    : control.name;
+}
+
 /** Control title with its current value, plus the coupled-key remark when one applies. */
 function controlTooltip(control: QuickControl): string {
   const title = formatMessage(t.value.shell.devicesPanel.quickControlTitle, {
-    name: control.name,
+    name: controlName(control),
     value: controlDisplay(control),
   });
   const note = coupledNote(control);
@@ -460,12 +467,12 @@ onBeforeUnmount(() => {
             'qc-control-enum': control.kind === 'enum',
           }"
           :data-control="control.kind === 'number' ? undefined : control.id"
-          :aria-label="control.name"
+          :aria-label="controlName(control)"
           v-tooltip="controlTooltip(control)"
           @contextmenu="onKnobContextMenu(control, $event)"
         >
           <div v-if="control.kind === 'number'" class="qc-knob" role="slider" tabindex="0"
-            :data-control="control.id" :aria-label="control.name"
+            :data-control="control.id" :aria-label="controlName(control)"
             :aria-valuemin="control.min" :aria-valuemax="control.max" :aria-valuenow="shownValue(control)"
             @pointerdown="onKnobPointerDown(control, $event)" @pointermove="onKnobPointerMove"
             @pointerup="onKnobPointerUp" @pointercancel="onKnobPointerCancel"
@@ -480,7 +487,7 @@ onBeforeUnmount(() => {
             class="qc-toggle"
             :class="{ on: control.value }"
             :aria-pressed="control.value"
-            :aria-label="control.name"
+            :aria-label="controlName(control)"
             @click="onBooleanToggle(control)"
           >
             {{ control.value ? t.shell.devicesPanel.toggleOn : t.shell.devicesPanel.toggleOff }}
@@ -490,12 +497,12 @@ onBeforeUnmount(() => {
             class="qc-select"
             :model-value="control.value"
             :options="control.options"
-            :aria-label="control.name"
+            :aria-label="controlName(control)"
             size="sm"
             @change="(value) => onEnumChange(control, value)"
           />
         </div>
-        <span class="qc-name" v-tooltip="control.name">{{ control.name }}</span>
+        <span class="qc-name" v-tooltip="controlName(control)">{{ controlName(control) }}</span>
         <span class="qc-value">{{ controlDisplay(control) }}</span>
       </div>
     </div>
