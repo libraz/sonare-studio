@@ -317,11 +317,12 @@ async function pickAndReadArchive(spec: ArchivePickerSpec): Promise<PickedLocalF
 /**
  * Asks the user to pick a .szd project file and reads its bytes.
  *
+ * @param description Localized picker description.
  * @returns The picked file, or null when the user cancelled the dialog.
  */
-export function pickAndReadSzd(): Promise<PickedSzdFile | null> {
+export function pickAndReadSzd(description: string): Promise<PickedSzdFile | null> {
   return pickAndReadArchive({
-    description: 'Sonare Studio project',
+    description,
     extensions: [SZD_FILE_EXTENSION],
     excludeAcceptAllOption: true,
     maxBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
@@ -330,20 +331,26 @@ export function pickAndReadSzd(): Promise<PickedSzdFile | null> {
 
 /**
  * Asks the user to pick a whole-browser backup archive and reads its bytes.
+ *
+ * @param description Localized picker description.
  */
-export function pickAndReadBrowserBackup(): Promise<PickedLocalFile | null> {
+export function pickAndReadBrowserBackup(description: string): Promise<PickedLocalFile | null> {
   return pickAndReadArchive({
-    description: 'Sonare Studio browser backup',
+    description,
     extensions: [BACKUP_FILE_EXTENSION, '.zip'],
     excludeAcceptAllOption: false,
     maxBytes: MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES,
   });
 }
 
-/** Asks the user to pick a .dawproject archive and reads its bytes. */
-export function pickAndReadDawproject(): Promise<PickedLocalFile | null> {
+/**
+ * Asks the user to pick a .dawproject archive and reads its bytes.
+ *
+ * @param description Localized picker description.
+ */
+export function pickAndReadDawproject(description: string): Promise<PickedLocalFile | null> {
   return pickAndReadArchive({
-    description: 'DAWproject',
+    description,
     extensions: [DAWPROJECT_FILE_EXTENSION],
     excludeAcceptAllOption: true,
     maxBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
@@ -363,8 +370,14 @@ function pickExternalAudioViaInputElement(): Promise<PickedExternalAudioFile[] |
   });
 }
 
-/** Asks the user to pick external audio files referenced by a DAWproject archive. */
-export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAudioFile[] | null> {
+/**
+ * Asks the user to pick external audio files referenced by a DAWproject archive.
+ *
+ * @param description Localized picker description.
+ */
+export async function pickAndReadExternalAudioFiles(
+  description: string,
+): Promise<PickedExternalAudioFile[] | null> {
   const picker = (globalThis as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker;
   if (typeof picker === 'function') {
     try {
@@ -373,7 +386,7 @@ export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAud
         excludeAcceptAllOption: false,
         types: [
           {
-            description: 'Audio files',
+            description,
             accept: { 'audio/*': pickerAcceptExtensions(EXTERNAL_AUDIO_EXTENSIONS) },
           },
         ],

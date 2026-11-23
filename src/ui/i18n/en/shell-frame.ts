@@ -51,6 +51,32 @@ export const shellFrame = {
       message:
         'The portable file will be incomplete because this media could not be read:\n{items}\n\nExport a lossy file anyway?',
       confirm: 'Export anyway',
+      report: {
+        kind: {
+          'audio-asset': 'audio-asset',
+          soundfont: 'soundfont',
+          'stored-project': 'stored-project',
+        },
+        role: {
+          clip: 'clip',
+          take: 'take',
+          frozen: 'frozen',
+          instrument: 'instrument',
+          library: 'library',
+        },
+        reason: { missing: 'missing', unreadable: 'unreadable', 'encode-failed': 'encode-failed' },
+        project: 'project “{name}”',
+        track: 'track {id}',
+        clip: 'clip {id}',
+        separator: ', ',
+        line: '{kind} “{id}” ({location}): {reason}',
+      },
+    },
+    filePicker: {
+      project: 'Sonare Studio project',
+      browserBackup: 'Sonare Studio browser backup',
+      dawproject: 'DAWproject',
+      externalAudio: 'Audio files',
     },
     externalMediaRelink: {
       title: 'Choose external audio',

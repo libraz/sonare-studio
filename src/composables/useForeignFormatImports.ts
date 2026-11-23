@@ -124,7 +124,7 @@ export function useForeignFormatImports(
     const explicitRelinks = new Map<string, Uint8Array | null>();
     return async (path: string) => {
       if (explicitRelinks.has(path)) return explicitRelinks.get(path) ?? null;
-      pickedFiles ??= pickAndReadExternalAudioFiles();
+      pickedFiles ??= pickAndReadExternalAudioFiles(t.value.shell.project.filePicker.externalAudio);
       const files = await pickedFiles;
       if (!files || files.length === 0) return null;
       const match = matchPickedExternalAudioFile(path, files);
@@ -151,7 +151,9 @@ export function useForeignFormatImports(
         explicitRelinks.set(path, null);
         return null;
       }
-      const selected = await pickAndReadExternalAudioFiles();
+      const selected = await pickAndReadExternalAudioFiles(
+        t.value.shell.project.filePicker.externalAudio,
+      );
       const selectedMatch = matchPickedExternalAudioFile(path, selected ?? []);
       const resolved =
         selectedMatch.status === 'exact-path' || selectedMatch.status === 'unique-basename'
@@ -168,7 +170,7 @@ export function useForeignFormatImports(
     closeProjectMenu();
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      const picked = await pickAndReadDawproject();
+      const picked = await pickAndReadDawproject(t.value.shell.project.filePicker.dawproject);
       if (!picked) return;
       if (!picked.name.toLowerCase().endsWith('.dawproject')) {
         errorMessage.value = formatMessage(t.value.shell.project.importDawprojectInvalidType, {

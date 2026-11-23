@@ -309,6 +309,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     persistence.importBrowserBackupAction();
     await flushPromises();
 
+    expect(pickAndReadBrowserBackup).toHaveBeenCalledWith('Sonare Studio browser backup');
     expect(confirmAction).toHaveBeenCalledTimes(2);
     expect(confirmAction.mock.calls[1][0]).toContain('Audio: bad-audio');
     expect(confirmAction.mock.calls[1][0]).toContain('SoundFont: bad-font');
@@ -415,6 +416,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
 
     expect(autosave.saveNow).toHaveBeenCalledTimes(1);
     expect(useProjectStore().projectName).toBe('Imported Project');
+    expect(pickAndReadSzd).toHaveBeenCalledWith('Sonare Studio project');
   });
 
   it('keeps an imported bundle lease through autosave and releases it on success', async () => {
@@ -588,6 +590,8 @@ describe('useProjectPersistence autosave refresh after load', () => {
     await expect(options?.resolveExternalAudio?.('/Session Audio/Vox.wav')).resolves.toBe(bytes);
     await expect(options?.resolveExternalAudio?.('/Session Audio/Bass.wav')).resolves.toBeNull();
     expect(pickAndReadExternalAudioFiles).toHaveBeenCalledTimes(1);
+    expect(pickAndReadDawproject).toHaveBeenCalledWith('DAWproject');
+    expect(pickAndReadExternalAudioFiles).toHaveBeenCalledWith('Audio files');
   });
 
   it('requires an explicit per-path selection for ambiguous external audio basenames', async () => {

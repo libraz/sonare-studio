@@ -121,7 +121,10 @@ export function useProjectExport(options: ProjectExportOptions): ProjectExport {
     if (report.complete) return true;
     return options.confirmLossAction(
       formatMessage(t.value.shell.project.mediaCompleteness.message, {
-        items: formatMediaCompletenessReport(report),
+        items: formatMediaCompletenessReport(
+          report,
+          t.value.shell.project.mediaCompleteness.report,
+        ),
       }),
       {
         title: t.value.shell.project.mediaCompleteness.title,

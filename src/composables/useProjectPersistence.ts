@@ -417,7 +417,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   async function importSzdFile(launched?: PickedSzdFile): Promise<void> {
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      const picked = launched ?? (await pickAndReadSzd());
+      const picked = launched ?? (await pickAndReadSzd(t.value.shell.project.filePicker.project));
       if (!picked) return;
       // Guard against a non-project file slipping past the picker hint: the
       // archive must carry the .szd extension before we try to decode it.
@@ -652,7 +652,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         }))
       )
         return;
-      const picked = await pickAndReadBrowserBackup();
+      const picked = await pickAndReadBrowserBackup(t.value.shell.project.filePicker.browserBackup);
       if (!picked) return;
       const restored = await restoreBrowserBackup(picked.bytes);
       // The restore may have replaced the open project's slot. Saving must then

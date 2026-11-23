@@ -22,10 +22,10 @@ describe('native file picker accept lists', () => {
     const picker = vi.fn<Picker>(async () => []);
     (globalThis as { showOpenFilePicker?: unknown }).showOpenFilePicker = picker;
 
-    await pickAndReadSzd();
-    await pickAndReadBrowserBackup();
-    await pickAndReadDawproject();
-    await pickAndReadExternalAudioFiles();
+    await pickAndReadSzd('Files');
+    await pickAndReadBrowserBackup('Files');
+    await pickAndReadDawproject('Files');
+    await pickAndReadExternalAudioFiles('Files');
 
     expect(picker).toHaveBeenCalledTimes(4);
     for (const [options] of picker.mock.calls) {

@@ -52,6 +52,36 @@ export const shellFrame = {
       message:
         '次のメディアを読み込めないため、ポータブルファイルは不完全になります:\n{items}\n\n欠損を許可して書き出しますか?',
       confirm: '欠損ありで書き出す',
+      report: {
+        kind: {
+          'audio-asset': 'オーディオアセット',
+          soundfont: 'SoundFont',
+          'stored-project': '保存済みプロジェクト',
+        },
+        role: {
+          clip: 'クリップ',
+          take: 'テイク',
+          frozen: 'フリーズ',
+          instrument: '音源',
+          library: 'ライブラリ',
+        },
+        reason: {
+          missing: '見つかりません',
+          unreadable: '読み込めません',
+          'encode-failed': 'エンコードに失敗',
+        },
+        project: 'プロジェクト「{name}」',
+        track: 'トラック {id}',
+        clip: 'クリップ {id}',
+        separator: '、',
+        line: '{kind}「{id}」（{location}）: {reason}',
+      },
+    },
+    filePicker: {
+      project: 'Sonare Studio プロジェクト',
+      browserBackup: 'Sonare Studio ブラウザバックアップ',
+      dawproject: 'DAWproject',
+      externalAudio: '音声ファイル',
     },
     externalMediaRelink: {
       title: '外部オーディオを選択',

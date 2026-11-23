@@ -134,7 +134,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     if (options.mediaWarning) {
       options.mediaWarning.value = mediaReport.value.complete
         ? ''
-        : `${t.value.shell.media.missingWarning}\n${formatMediaCompletenessReport(mediaReport.value)}`;
+        : `${t.value.shell.media.missingWarning}\n${formatMediaCompletenessReport(
+            mediaReport.value,
+            t.value.shell.project.mediaCompleteness.report,
+          )}`;
     }
   }
 

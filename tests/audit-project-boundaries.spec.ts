@@ -13,6 +13,7 @@ import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { applyDocumentClipMetadata } from '@/project/store-load';
 import { buildClipMirror, buildTrackMirror, refreshTempoMeter } from '@/project/store-refresh';
 import type { EditorClip } from '@/project/types';
+import { MESSAGES } from '@/ui/i18n';
 import { documentClip } from './fakes/project';
 
 function projectFixture(): ProjectDocument {
@@ -122,9 +123,9 @@ describe('project utility boundaries', () => {
     const report = createMediaCompletenessReport([...issues, ...issues]);
     expect(report).toMatchObject({ complete: false });
     expect(report.issues).toHaveLength(1);
-    expect(formatMediaCompletenessReport(report)).toContain(
-      'project “Media audit”, track 1, clip 1',
-    );
+    expect(
+      formatMediaCompletenessReport(report, MESSAGES.en.shell.project.mediaCompleteness.report),
+    ).toContain('project “Media audit”, track 1, clip 1');
     expect(mediaFailureIssues(doc, 'soundfont', 'unknown', 'missing')[0]).toMatchObject({
       role: 'library',
       projectName: 'Media audit',
