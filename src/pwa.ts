@@ -29,7 +29,8 @@ const updateFailureState = ref<PwaUpdateFailure | null>(null);
 export const pwaUpdateFailure = readonly(updateFailureState);
 
 let pendingRegistration: ServiceWorkerRegistration | null = null;
-let reloadAfterControllerChange = false;
+/** The waiting worker told to activate; its taking control reloads the page. */
+let activatingWorker: ServiceWorker | null = null;
 let reloadPage = (): void => window.location.reload();
 let prepareReload: (() => Promise<boolean>) | null = null;
 
@@ -122,8 +123,9 @@ function observeRegistration(
   container.addEventListener?.('controllerchange', () => {
     const wasControlled = hadController;
     hadController = Boolean(container.controller);
-    if (reloadAfterControllerChange) {
-      reloadAfterControllerChange = false;
+    const activated = activatingWorker !== null && container.controller === activatingWorker;
+    activatingWorker = null;
+    if (activated) {
       reloadPage();
       return;
     }
@@ -166,14 +168,14 @@ export async function applyPwaUpdateAndReload(): Promise<void> {
   const registration =
     pendingRegistration ?? (container ? await container.getRegistration('/') : undefined);
   if (registration?.waiting) {
-    reloadAfterControllerChange = true;
+    activatingWorker = registration.waiting;
     updateNoticeState.value = null;
     registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     return;
   }
   await registration?.update().catch(() => undefined);
   if (registration?.waiting) {
-    reloadAfterControllerChange = true;
+    activatingWorker = registration.waiting;
     updateNoticeState.value = null;
     registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     return;

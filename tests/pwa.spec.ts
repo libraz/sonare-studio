@@ -124,6 +124,7 @@ describe('PWA registration', () => {
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(reload).not.toHaveBeenCalled();
+    container.controller = waiting;
     container.dispatchEvent(new Event('controllerchange'));
     expect(reload).toHaveBeenCalledTimes(1);
   });
