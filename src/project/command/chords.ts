@@ -417,15 +417,20 @@ export function detectChordsForClip(clipId: number): number {
  * Resolves to 0 when the wasm detector is unavailable or nothing is detected.
  *
  * @param clipId Editor id of an audio clip.
+ * @param signal Aborts the detection; it then rejects with an AbortError and merges nothing.
  * @returns The number of chord symbols detected in the clip.
  */
-export async function detectChordsFromAudioClip(clipId: number): Promise<number> {
+export async function detectChordsFromAudioClip(
+  clipId: number,
+  signal?: AbortSignal,
+): Promise<number> {
   const store = useProjectStore();
   const clip = requireClip(store, clipId);
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
   const wasm = await ensureWasm();
+  signal?.throwIfAborted();
   const detected = await analyzeAudioClipChords(
     clip,
     store.tempoBpm,
@@ -435,6 +440,7 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
     },
     store.tempoSegments,
   );
+  signal?.throwIfAborted();
   const current = store.clips.find((entry) => entry.id === clipId);
   if (
     !current ||

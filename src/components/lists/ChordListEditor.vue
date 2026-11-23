@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { chordToRoman, type ProgStyle } from '@libraz/libcantus';
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import EmptyState from '@/components/shell/EmptyState.vue';
@@ -549,23 +549,42 @@ async function estimateProgression(): Promise<void> {
   }
 }
 
+let detectGeneration = 0;
+let detectController: AbortController | null = null;
+
+// A detection belongs to the clip it started on; leaving that clip or the editor drops it.
+watch(
+  () => store.activeClip?.id,
+  () => detectController?.abort(),
+);
+onBeforeUnmount(() => detectController?.abort());
+
 async function detectFromClip(): Promise<void> {
   const clip = store.activeClip;
   const kind = detectKind.value;
   if (!clip || kind === null || isDetecting.value) return;
+  const generation = ++detectGeneration;
+  const controller = new AbortController();
+  detectController = controller;
+  const isCurrent = () => generation === detectGeneration && !controller.signal.aborted;
   errorMessage.value = '';
   estimateConfidence.value = new Map();
   try {
     isDetecting.value = true;
     const count =
-      kind === 'audio' ? await detectChordsFromAudioClip(clip.id) : detectChordsForClip(clip.id);
+      kind === 'audio'
+        ? await detectChordsFromAudioClip(clip.id, controller.signal)
+        : detectChordsForClip(clip.id);
+    if (!isCurrent()) return;
     if (count === 0) {
       errorMessage.value = t.value.shell.lists.chords.noneDetected;
     }
   } catch {
+    if (!isCurrent()) return;
     errorMessage.value = t.value.shell.lists.chords.detectFailed;
   } finally {
-    isDetecting.value = false;
+    if (generation === detectGeneration) isDetecting.value = false;
+    if (detectController === controller) detectController = null;
   }
 }
 
