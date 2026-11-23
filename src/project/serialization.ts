@@ -54,7 +54,7 @@ import { cloneStrip, createDefaultStrip, isDefaultMixerState } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import { getProject, useProjectStore } from './store';
 import { normalizeProcessorMidiLearnTarget } from './target-reference-registry';
-import { type EditorClip, type EditorNote, type EditorTrack, MAJOR_MODE_MASK } from './types';
+import { type EditorClip, type EditorTrack, MAJOR_MODE_MASK } from './types';
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 
@@ -137,21 +137,8 @@ function toDocumentAutomationLane(lane: AutomationLaneState): DocumentAutomation
   };
 }
 
-/** Deep-copies a note, dropping the editor id. */
-function toDocumentNote(note: EditorNote): DocumentNote {
-  const out: DocumentNote = {
-    pitch: note.pitch,
-    velocity: note.velocity,
-    startPpq: note.startPpq,
-    durationPpq: note.durationPpq,
-    channel: note.channel,
-  };
-  if (note.offVelocity !== undefined) out.offVelocity = note.offVelocity;
-  return out;
-}
-
-/** Deep-copies a stashed lead-follow note (already id-less, source-relative). */
-function toDocumentStashNote(note: DocumentNote): DocumentNote {
+/** Deep-copies a note into its document shape, dropping an editor id when there is one. */
+function toDocumentNote(note: DocumentNote): DocumentNote {
   const out: DocumentNote = {
     pitch: note.pitch,
     velocity: note.velocity,
@@ -263,7 +250,7 @@ function serializeTrack(
         leadTrackIndex,
         stash: track.leadFollow.stash.flatMap((entry) => {
           const clipIndex = trackClips.findIndex((clip) => clip.id === entry.clipId);
-          return clipIndex < 0 ? [] : [{ clipIndex, note: toDocumentStashNote(entry.note) }];
+          return clipIndex < 0 ? [] : [{ clipIndex, note: toDocumentNote(entry.note) }];
         }),
       };
     }
