@@ -3,6 +3,7 @@ export const shellFrame = {
   savedAt: '{time} に保存',
   savedAtTitle: 'このブラウザーへの最終自動保存時刻です。次回はここから再開できます。',
   clearSearch: '検索をクリア',
+  selectPlaceholder: '選択…',
   installPwa: 'アプリをインストール',
   autosaveFailed:
     '自動保存に失敗しました。最近の変更は保存されていません。手動でプロジェクトを保存してください。',

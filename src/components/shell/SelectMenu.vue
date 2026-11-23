@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="T extends string | number">
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
+import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 /**
@@ -38,7 +39,7 @@ const props = withDefaults(
     /** Compact trigger height. */
     size?: 'sm' | 'md';
   }>(),
-  { placeholder: 'Select…', disabled: false, size: 'md' },
+  { disabled: false, size: 'md' },
 );
 
 const emit = defineEmits<{
@@ -46,6 +47,7 @@ const emit = defineEmits<{
   change: [value: T];
 }>();
 
+const { t } = useI18n();
 const isDisabled = computed(() => props.disabled || !!props.reason);
 const open = ref(false);
 useShortcutBlockingOverlay(open);
@@ -55,7 +57,9 @@ const activeIndex = ref(-1);
 const menuStyle = ref<Record<string, string>>({});
 
 const selected = computed(() => props.options.find((o) => o.value === props.modelValue));
-const label = computed(() => selected.value?.label ?? props.placeholder);
+const label = computed(
+  () => selected.value?.label ?? props.placeholder ?? t.value.shell.selectPlaceholder,
+);
 
 // APG select-only combobox: focus stays on the trigger, so the active option is
 // announced through aria-activedescendant rather than by moving DOM focus.

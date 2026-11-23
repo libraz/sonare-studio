@@ -3,6 +3,7 @@ export const shellFrame = {
   savedAt: 'saved {time}',
   savedAtTitle: 'Last autosave to this browser. The project reopens here on your next visit.',
   clearSearch: 'Clear search',
+  selectPlaceholder: 'Select…',
   installPwa: 'Install app',
   autosaveFailed:
     'Autosave failed — your recent changes are not stored. Save the project manually.',
