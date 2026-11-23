@@ -111,9 +111,7 @@ const keyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 const fxPanelOpen = ref(false);
 
 const viewport = usePianoRollViewport({
-  // A transform targets a specific clip; close the popover on clip change.
   onClipChange: () => {
-    fxPanelOpen.value = false;
     playheadFollow.restart();
   },
 });
@@ -255,10 +253,6 @@ const canTransform = computed(
   () =>
     !contentReadOnly.value && store.clipId >= 0 && (store.activeClip?.kind ?? 'midi') === 'midi',
 );
-
-watch(contentReadOnly, (readOnly) => {
-  if (readOnly) fxPanelOpen.value = false;
-});
 
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>

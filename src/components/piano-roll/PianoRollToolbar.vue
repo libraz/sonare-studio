@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -169,6 +169,20 @@ function toggleOrnamentPanel(): void {
   ornamentOpen.value = !ornamentOpen.value;
   if (ornamentOpen.value) fxPanelOpen.value = false;
 }
+
+/** Closes the transform and decoration popovers, which both target the active clip. */
+function closeClipPopovers(): void {
+  fxPanelOpen.value = false;
+  ornamentOpen.value = false;
+}
+
+watch(() => props.clipId, closeClipPopovers);
+watch(
+  () => props.readOnly === true,
+  (readOnly) => {
+    if (readOnly) closeClipPopovers();
+  },
+);
 
 /** Legend chip click: focuses the track (activates its first clip, if any). */
 function onLegendClick(trackId: number): void {
