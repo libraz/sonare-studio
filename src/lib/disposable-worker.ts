@@ -33,6 +33,11 @@ export function workerEventError(event: ErrorEvent, fallback: string): Error {
   return new Error(event.message || fallback);
 }
 
+/** Error for a `messageerror`: the worker replied, but the reply could not be deserialized. */
+export function unreadableReplyError(fallback: string): Error {
+  return new Error(`${fallback}: its reply could not be read`);
+}
+
 /** Runs one request in a fresh worker; the promise settles exactly once. */
 export function runDisposableWorker<Res, T>(request: DisposableWorkerRequest<Res, T>): Promise<T> {
   const { signal, timeout } = request;
@@ -50,6 +55,7 @@ export function runDisposableWorker<Res, T>(request: DisposableWorkerRequest<Res
       if (worker) {
         worker.removeEventListener('message', onMessage as EventListener);
         worker.removeEventListener('error', onError as EventListener);
+        worker.removeEventListener('messageerror', onMessageError);
         try {
           worker.terminate();
         } catch {
@@ -75,6 +81,10 @@ export function runDisposableWorker<Res, T>(request: DisposableWorkerRequest<Res
       settle({ error: workerEventError(event, request.failMessage) });
     };
 
+    const onMessageError = (): void => {
+      settle({ error: unreadableReplyError(request.failMessage) });
+    };
+
     const onAbort = (): void => {
       settle({ error: abortError(signal?.reason, request.abortMessage) });
     };
@@ -87,6 +97,7 @@ export function runDisposableWorker<Res, T>(request: DisposableWorkerRequest<Res
       worker = request.create();
       worker.addEventListener('message', onMessage as EventListener);
       worker.addEventListener('error', onError as EventListener);
+      worker.addEventListener('messageerror', onMessageError);
       abortListener = onAbort;
       signal?.addEventListener('abort', abortListener, { once: true });
       if (timeout) {

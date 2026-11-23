@@ -173,6 +173,11 @@ let queue: Promise<void> = Promise.resolve();
 /** Highest session observed, updated before queued work is allowed to start. */
 let newestSessionId = 0;
 
+// A request that could not be deserialized has no readable id; `fatal` needs none to be honoured.
+scope.onmessageerror = () => {
+  post({ id: 0, type: 'fatal', error: 'Verovio worker could not read a request' });
+};
+
 scope.onmessage = (event: MessageEvent<VerovioRequest>) => {
   const request = event.data;
   newestSessionId = Math.max(newestSessionId, request.sessionId);

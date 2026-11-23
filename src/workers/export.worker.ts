@@ -110,6 +110,8 @@ export type ExportResponse =
   | { id: number; type: 'render'; result: ExportWorkerResult }
   | { id: number; type: 'cancelled' }
   | { id: number; type: 'destroy' }
+  /** The worker cannot tell which request failed, so the client treats it as dead. */
+  | { type: 'fatal'; error: string }
   | {
       id: number;
       type: 'error';
@@ -330,6 +332,11 @@ async function handle(request: ExportRequest): Promise<void> {
 
 /** Serializes request handling so responses follow request order. */
 let queue: Promise<void> = Promise.resolve();
+
+// A request that could not be deserialized has no readable id to answer under.
+scope.onmessageerror = () => {
+  post({ type: 'fatal', error: 'Export worker could not read a request' });
+};
 
 scope.onmessage = (event: MessageEvent<ExportRequest>) => {
   const request = event.data;

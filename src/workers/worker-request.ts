@@ -15,6 +15,8 @@ export interface WorkerRequestHandler<Req, Res> {
 export function serveWorkerRequests<Req, Res>(handler: WorkerRequestHandler<Req, Res>): void {
   const post = (reply: Res, transfer: Transferable[] = []): void => postMessage(reply, transfer);
   const fail = (error: unknown): void => post(handler.errorReply(error));
+  // A request that could not be deserialized still gets a reply, or its caller waits forever.
+  self.addEventListener('messageerror', () => fail(new Error('Worker request could not be read')));
   self.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (!handler.validate(event.data)) {
       fail(new Error(handler.invalidMessage));

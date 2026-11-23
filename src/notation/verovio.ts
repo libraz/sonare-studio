@@ -118,6 +118,7 @@ export class VerovioClient {
     this.worker = worker ?? createVerovioWorker();
     this.worker.addEventListener('message', this.handleMessage as EventListener);
     this.worker.addEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.addEventListener('messageerror', this.handleMessageError);
   }
 
   /** True once the worker has died fatally; the client is unusable and must be replaced. */
@@ -266,6 +267,11 @@ export class VerovioClient {
     this.handleFatalError(new VerovioFatalError(event.message || 'Verovio worker error'));
   };
 
+  // A reply that could not be deserialized belongs to an unknown request, so none can be trusted.
+  private readonly handleMessageError = (): void => {
+    this.handleFatalError(new VerovioFatalError('Verovio worker reply could not be read'));
+  };
+
   private handleFatalError(error: VerovioFatalError): void {
     if (this.disposed) {
       return;
@@ -279,6 +285,7 @@ export class VerovioClient {
   private teardownWorker(): void {
     this.worker.removeEventListener('message', this.handleMessage as EventListener);
     this.worker.removeEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.removeEventListener('messageerror', this.handleMessageError);
     this.worker.terminate();
   }
 

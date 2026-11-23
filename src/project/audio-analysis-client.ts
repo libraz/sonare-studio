@@ -1,3 +1,4 @@
+import { runDisposableWorker } from '@/lib/disposable-worker';
 import type { AudioAssetTags } from '@/persistence/assets';
 import type {
   AudioAnalysisWorkerRequest,
@@ -36,13 +37,6 @@ function createWorker(): Worker {
   });
 }
 
-function abortError(reason: unknown): Error {
-  if (reason instanceof Error) return reason;
-  const error = new Error('Audio analysis was aborted');
-  error.name = 'AbortError';
-  return error;
-}
-
 /**
  * Runs one request in a disposable worker. `accept` turns the worker's final
  * message into the result, or returns undefined for one that is not.
@@ -57,24 +51,27 @@ function runAnalysis<T>(
 ): Promise<T> {
   const { onProgress, signal } = options;
   const create = options.workerFactory ?? createWorker;
-  return new Promise<T>((resolve, reject) => {
-    let worker: Worker | null = null;
-    let settled = false;
-    const settle = (result: { value: T } | { error: unknown }): void => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      if (worker) {
-        worker.removeEventListener('message', onMessage as EventListener);
-        worker.removeEventListener('error', onError as EventListener);
-        worker.terminate();
-      }
-      worker = null;
-      if ('error' in result) reject(result.error);
-      else resolve(result.value);
-    };
-    const onMessage = (event: MessageEvent<AudioAnalysisWorkerResponse>): void => {
-      const response = event.data;
+  // An empty clip has nothing to analyse; an aborted signal still rejects first.
+  if (mono.length === 0 && !signal?.aborted) return Promise.resolve(empty);
+  return runDisposableWorker<AudioAnalysisWorkerResponse, T>({
+    create,
+    signal,
+    abortMessage: 'Audio analysis was aborted',
+    failMessage: 'Audio analysis worker failed',
+    post(worker) {
+      const { loudness } = options;
+      const request: AudioAnalysisWorkerRequest = {
+        kind,
+        samples: mono,
+        sampleRate,
+        ...(loudness !== undefined ? { loudness } : {}),
+      };
+      worker.postMessage(
+        request,
+        loudness !== undefined ? [mono.buffer, loudness.interleaved.buffer] : [mono.buffer],
+      );
+    },
+    receive(response, settle) {
       if (response?.type === 'progress') {
         if (Number.isFinite(response.fraction)) onProgress?.(response.fraction);
         return;
@@ -89,40 +86,7 @@ function runAnalysis<T>(
           ? { error: new Error('Audio analysis worker returned an invalid response') }
           : { value },
       );
-    };
-    const onError = (event: ErrorEvent): void => {
-      settle({ error: new Error(event.message || 'Audio analysis worker failed') });
-    };
-    function onAbort(): void {
-      settle({ error: abortError(signal?.reason) });
-    }
-    try {
-      if (signal?.aborted) {
-        settle({ error: abortError(signal.reason) });
-        return;
-      }
-      if (mono.length === 0) {
-        settle({ value: empty });
-        return;
-      }
-      worker = create();
-      worker.addEventListener('message', onMessage as EventListener);
-      worker.addEventListener('error', onError as EventListener);
-      signal?.addEventListener('abort', onAbort, { once: true });
-      const { loudness } = options;
-      const request: AudioAnalysisWorkerRequest = {
-        kind,
-        samples: mono,
-        sampleRate,
-        ...(loudness !== undefined ? { loudness } : {}),
-      };
-      worker.postMessage(
-        request,
-        loudness !== undefined ? [mono.buffer, loudness.interleaved.buffer] : [mono.buffer],
-      );
-    } catch (error) {
-      settle({ error });
-    }
+    },
   });
 }
 

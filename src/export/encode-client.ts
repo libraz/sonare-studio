@@ -1,5 +1,6 @@
 /** Main-thread facade for cancellable deterministic codec workers. */
 
+import { runDisposableWorker } from '@/lib/disposable-worker';
 import type {
   AudioEncodeWorkerRequest,
   AudioEncodeWorkerResponse,
@@ -86,54 +87,31 @@ export function encodeAudioInWorker(
   onProgress?: (fraction: number) => void,
   transferOwnership = false,
 ): Promise<Uint8Array> {
-  signal?.throwIfAborted();
-  const worker = workerFactory();
-  return new Promise<Uint8Array>((resolve, reject) => {
-    let settled = false;
-    const cleanup = (): void => {
-      signal?.removeEventListener('abort', onAbort);
-      worker.removeEventListener('message', onMessage as EventListener);
-      worker.removeEventListener('error', onError as EventListener);
-      worker.terminate();
-    };
-    const settle = (action: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      action();
-    };
-    const onAbort = (): void => {
-      settle(() =>
-        reject(signal?.reason ?? new DOMException('Audio encoding cancelled.', 'AbortError')),
-      );
-    };
-    const onMessage = (event: MessageEvent<AudioEncodeWorkerResponse>): void => {
-      const response = event.data;
+  return runDisposableWorker<AudioEncodeWorkerResponse, Uint8Array>({
+    create: workerFactory,
+    signal,
+    abortMessage: 'Audio encoding cancelled.',
+    failMessage: 'Audio encode worker failed',
+    post(worker) {
+      const input = transferableChannels(channels, transferOwnership);
+      const request: AudioEncodeWorkerRequest = {
+        type: 'encode',
+        encoderId,
+        channels: input.channels,
+        sampleRate,
+        // The protocol is deliberately whitelisted: AbortSignal, callbacks and
+        // future main-thread-only options never cross structured-clone bounds.
+        options: workerOptions(encoderId, options),
+      };
+      worker.postMessage(request, input.transfer);
+    },
+    receive(response, settle) {
       if (response.type === 'progress') {
-        if (!settled) onProgress?.(response.fraction);
+        onProgress?.(response.fraction);
         return;
       }
-      if (response.type === 'encoded') settle(() => resolve(response.bytes));
-      else settle(() => reject(new Error(response.error)));
-    };
-    const onError = (event: ErrorEvent): void => {
-      settle(() => reject(new Error(event.message || 'Audio encode worker failed')));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    worker.addEventListener('message', onMessage as EventListener);
-    worker.addEventListener('error', onError as EventListener);
-
-    const input = transferableChannels(channels, transferOwnership);
-    const request: AudioEncodeWorkerRequest = {
-      type: 'encode',
-      encoderId,
-      channels: input.channels,
-      sampleRate,
-      // The protocol is deliberately whitelisted: AbortSignal, callbacks and
-      // future main-thread-only options never cross structured-clone bounds.
-      options: workerOptions(encoderId, options),
-    };
-    worker.postMessage(request, input.transfer);
-    if (signal?.aborted) onAbort();
+      if (response.type === 'encoded') settle({ value: response.bytes });
+      else settle({ error: new Error(response.error) });
+    },
   });
 }

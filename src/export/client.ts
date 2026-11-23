@@ -143,6 +143,7 @@ export class ExportClient {
     this.worker = worker ?? createExportWorker();
     this.worker.addEventListener('message', this.handleMessage as EventListener);
     this.worker.addEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.addEventListener('messageerror', this.handleMessageError);
   }
 
   /**
@@ -231,6 +232,10 @@ export class ExportClient {
 
   private readonly handleMessage = (event: MessageEvent<ExportResponse>): void => {
     const response = event.data;
+    if (response.type === 'fatal') {
+      this.handleFatalError(new ExportWorkerError(response.error));
+      return;
+    }
     const entry = this.pending.get(response.id);
     if (!entry) {
       return;
@@ -307,16 +312,26 @@ export class ExportClient {
   }
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
-    // A worker-level script error is fatal for all in-flight renders.
+    this.handleFatalError(new ExportWorkerError(event.message || 'Export worker error'));
+  };
+
+  // A reply that could not be deserialized belongs to an unknown render, so none can be trusted.
+  private readonly handleMessageError = (): void => {
+    this.handleFatalError(new ExportWorkerError('Export worker reply could not be read'));
+  };
+
+  /** A dead worker is fatal for all in-flight renders. */
+  private handleFatalError(error: ExportWorkerError): void {
     this.disposed = true;
     this.teardownWorker();
     if (sharedClient === this) sharedClient = null;
-    this.rejectAll(new ExportWorkerError(event.message || 'Export worker error'));
-  };
+    this.rejectAll(error);
+  }
 
   private teardownWorker(): void {
     this.worker.removeEventListener('message', this.handleMessage as EventListener);
     this.worker.removeEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.removeEventListener('messageerror', this.handleMessageError);
     this.worker.terminate();
   }
 
