@@ -258,9 +258,12 @@ export function crossfadeClips(
  * once a forward edit leaves no overlapping clips, 'allow' returns to
  * 'disallow' in the same history entry. The way up needs no reconciler,
  * because the engine refuses an overlap until a command such as
- * {@link crossfadeClips} has switched the policy first.
+ * {@link crossfadeClips} has switched the policy first. An edit that left the
+ * clips untouched (the snapshot shares the array) cannot have removed an
+ * overlap, so it reads nothing.
  */
-function reconcileOverlapPolicy({ after }: PostEditContext): number | undefined {
+function reconcileOverlapPolicy({ before, after }: PostEditContext): number | undefined {
+  if (after.clips === before.clips) return undefined;
   const project = getProject();
   if (project.overlapPolicy !== 'allow' || lanesHoldOverlap(after.clips)) return undefined;
   project.setOverlapPolicy('disallow');
