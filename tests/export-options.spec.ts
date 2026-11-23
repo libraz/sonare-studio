@@ -437,7 +437,9 @@ describe('createStemsZipWriter', () => {
     const controller = new AbortController();
     const writer = createStemsZipWriter(controller.signal);
     controller.abort(new DOMException('cancelled', 'AbortError'));
-    expect(() => writer.add({ name: '01 A.wav', bytes: new Uint8Array([1]) })).toThrow();
+    await expect(
+      writer.add({ name: '01 A.wav', bytes: new Uint8Array([1]) }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
     await expect(writer.close()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

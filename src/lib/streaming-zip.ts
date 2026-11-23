@@ -155,7 +155,7 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
   if (options.signal?.aborted) onAbort();
 
   return {
-    add(name, bytes): Promise<void> {
+    async add(name, bytes): Promise<void> {
       options.signal?.throwIfAborted();
       if (closed) throw new Error('ZIP writer is closed');
       if (names.has(name)) throw new Error(`Duplicate ZIP entry: ${name}`);

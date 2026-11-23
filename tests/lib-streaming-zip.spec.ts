@@ -41,7 +41,7 @@ describe('streaming ZIP writer', () => {
     });
 
     await writer.add('one.txt', strToU8('one'));
-    expect(() => writer.add('two.txt', strToU8('two'))).toThrow('limited: ZIP entry count');
+    await expect(writer.add('two.txt', strToU8('two'))).rejects.toThrow('limited: ZIP entry count');
     await expect(writer.close()).resolves.toBeInstanceOf(Uint8Array);
   });
 
@@ -77,7 +77,7 @@ describe('streaming ZIP writer', () => {
     await writer.add('entry.txt', strToU8('entry'));
     await expect(writer.close()).rejects.toThrow('publish accounting failed');
     expect(meter.snapshot().activeBytes).toBe(0);
-    expect(() => writer.add('later.txt', strToU8('later'))).toThrow('closed');
+    await expect(writer.add('later.txt', strToU8('later'))).rejects.toThrow('closed');
     await expect(writer.close()).rejects.toThrow('publish accounting failed');
   });
 });
