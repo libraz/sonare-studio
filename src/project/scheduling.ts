@@ -35,7 +35,12 @@ import { type AudioClipSegment, audioClipSegments } from './comping';
 import type { MediaCompletenessIssue } from './media-completeness';
 import { audibleMidiProjector } from './midi-projection';
 import { useProjectStore } from './store';
-import { type NormalizedTempoMap, normalizeTempoMap, ppqDurationSamples } from './tempo-map';
+import {
+  canonicalTempoMap,
+  type NormalizedTempoMap,
+  normalizeTempoMap,
+  ppqDurationSamples,
+} from './tempo-map';
 import type { EditorClip, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
 
@@ -271,7 +276,8 @@ function* scheduleUnits(
   tempoMap: NormalizedTempoMap,
   targetRate: number,
 ): Generator<ScheduleUnit> {
-  const context = JSON.stringify([targetRate, tempoMap]);
+  // Keyed on what plays, so a breakpoint that changes nothing keeps every clip scheduled.
+  const context = JSON.stringify([targetRate, canonicalTempoMap(tempoMap)]);
   const clipsByTrack = new Map<number, EditorClip[]>();
   for (const clip of store.clips) {
     const list = clipsByTrack.get(clip.trackId);

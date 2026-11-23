@@ -141,6 +141,29 @@ export function normalizeTempoMap(
 }
 
 /**
+ * The same tempo map with every segment that only continues its predecessor
+ * merged away: an equal constant tempo, or a ramp carrying on at the same slope
+ * from the tempo already reached. Two maps that play identically compare equal.
+ */
+export function canonicalTempoMap(map: NormalizedTempoMap): NormalizedTempoMap {
+  const segments: NormalizedTempoSegment[] = [];
+  for (const segment of map.segments) {
+    const previous = segments.at(-1);
+    const reached =
+      previous === undefined
+        ? undefined
+        : previous.bpm + previous.slope * (segment.startPpq - previous.startPpq);
+    const continues =
+      previous !== undefined &&
+      reached !== undefined &&
+      Math.abs(segment.slope - previous.slope) < RAMP_EPSILON &&
+      Math.abs(segment.bpm - reached) < RAMP_EPSILON;
+    if (!continues) segments.push(segment);
+  }
+  return { segments };
+}
+
+/**
  * Converts a PPQ position to elapsed seconds. Positions before the first
  * segment use the first segment's bpm (a negative ppq yields negative
  * seconds, linearly).

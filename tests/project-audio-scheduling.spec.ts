@@ -463,6 +463,51 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(channels[0]).toEqual(new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
   });
 
+  it('keeps every scheduled clip when a redundant tempo breakpoint is added', async () => {
+    store.tracks = [makeTrack(1), makeTrack(2)];
+    store.tempoSegments = [{ startPpq: 0, bpm: 120 }];
+    store.clips = [
+      makeAudioClip(10, 1, { lengthPpq: 2 }),
+      makeAudioClip(20, 2, { startPpq: 4, lengthPpq: 2 }),
+    ];
+    const { handle, addClip, removeClip } = makeHandle(10);
+    let nextId = 1;
+    addClip.mockImplementation(() => nextId++);
+    const loadAudioAsset = async () => makeAsset(80);
+    const first = await scheduleProjectClips(handle, { loadAudioAsset });
+
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 16, bpm: 120 },
+    ];
+    const second = await scheduleProjectClips(handle, { loadAudioAsset, previous: first });
+    replaceScheduledProjectClips(handle, first, second);
+
+    expect(second.map((clip) => clip.engineClipId)).toEqual(first.map((clip) => clip.engineClipId));
+    expect(addClip).toHaveBeenCalledTimes(2);
+    expect(removeClip).not.toHaveBeenCalled();
+    expect(store.tempoSegments).toHaveLength(2);
+  });
+
+  it('reschedules every clip when a breakpoint changes the tempo', async () => {
+    store.tracks = [makeTrack(1)];
+    store.tempoSegments = [{ startPpq: 0, bpm: 120 }];
+    store.clips = [makeAudioClip(10, 1, { lengthPpq: 2 })];
+    const { handle, addClip } = makeHandle(10);
+    let nextId = 1;
+    addClip.mockImplementation(() => nextId++);
+    const loadAudioAsset = async () => makeAsset(80);
+    const first = await scheduleProjectClips(handle, { loadAudioAsset });
+
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 16, bpm: 90 },
+    ];
+    const second = await scheduleProjectClips(handle, { loadAudioAsset, previous: first });
+
+    expect(second[0].engineClipId).not.toBe(first[0].engineClipId);
+  });
+
   it('expands looping audio clips into repeated scheduled source windows', async () => {
     store.tracks = [makeTrack(1)];
     store.clips = [

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canonicalTempoMap,
   normalizeTempoMap,
   ppqDurationSamples,
   ppqDurationSeconds,
@@ -260,5 +261,36 @@ describe('translateTempoMapForExport', () => {
       { startPpq: 0, bpm: 90 },
       { startPpq: 12, bpm: 90 },
     ]);
+  });
+});
+
+describe('canonicalTempoMap', () => {
+  it('merges an equal constant tempo and a ramp that carries on at the same slope', () => {
+    const plain = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 8, bpm: 100, endBpm: 140 },
+      { startPpq: 16, bpm: 140 },
+    ]);
+    const noisy = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 120 },
+      { startPpq: 8, bpm: 100, endBpm: 120 },
+      { startPpq: 12, bpm: 120, endBpm: 140 },
+      { startPpq: 16, bpm: 140 },
+    ]);
+    expect(
+      canonicalTempoMap(noisy).segments.map(({ startPpq, bpm, slope }) => [startPpq, bpm, slope]),
+    ).toEqual(
+      canonicalTempoMap(plain).segments.map(({ startPpq, bpm, slope }) => [startPpq, bpm, slope]),
+    );
+  });
+
+  it('keeps a breakpoint that restarts a ramp or ends it', () => {
+    const map = normalizeTempoMap([
+      { startPpq: 0, bpm: 100, endBpm: 140 },
+      { startPpq: 8, bpm: 100, endBpm: 140 },
+      { startPpq: 16, bpm: 140 },
+    ]);
+    expect(canonicalTempoMap(map).segments.map((segment) => segment.startPpq)).toEqual([0, 8, 16]);
   });
 });
