@@ -1,6 +1,7 @@
 /** Worker endpoint for the synchronous, non-WASM sample-editor operations. */
 
 import { errorMessage } from '@/lib/errors';
+import { isFiniteNumber } from '@/lib/math';
 import {
   applyGainDb,
   applyGainDbInPlace,
@@ -20,6 +21,7 @@ import {
   trimToRange,
   trimToRangeInPlace,
 } from '@/ui/sample-editor/ops';
+import { isChannelList, isRecord, serveWorkerRequests } from './worker-request';
 
 export type SampleOperationRequest =
   | { type: 'gain'; channels: Float32Array[]; range: SampleRange; db: number; owned?: boolean }
@@ -85,17 +87,43 @@ function perform(request: SampleOperationRequest): Float32Array[] {
   }
 }
 
-self.addEventListener('message', (event: MessageEvent<SampleOperationRequest>) => {
-  try {
-    const channels = perform(event.data);
-    postMessage(
-      { type: 'done', channels } satisfies SampleOperationResponse,
+const OPERATION_TYPES = new Set<string>([
+  'gain',
+  'normalize',
+  'fade-in',
+  'fade-out',
+  'reverse',
+  'silence',
+  'trim',
+  'delete',
+  'duplicate',
+]);
+
+function validRequest(value: unknown): value is SampleOperationRequest {
+  if (!isRecord(value)) return false;
+  const { type, channels, range } = value;
+  return (
+    typeof type === 'string' &&
+    OPERATION_TYPES.has(type) &&
+    isChannelList(channels) &&
+    isRecord(range) &&
+    isFiniteNumber(range.startFrame) &&
+    isFiniteNumber(range.endFrame) &&
+    (type !== 'gain' || isFiniteNumber(value.db)) &&
+    (type !== 'normalize' || isFiniteNumber(value.targetDb)) &&
+    ((type !== 'delete' && type !== 'duplicate') || isFiniteNumber(value.fadeFrames))
+  );
+}
+
+serveWorkerRequests<SampleOperationRequest, SampleOperationResponse>({
+  validate: validRequest,
+  invalidMessage: 'Sample operation worker received an invalid request',
+  errorReply: (error) => ({ type: 'error', error: errorMessage(error) }),
+  handle: (request, post) => {
+    const channels = perform(request);
+    post(
+      { type: 'done', channels },
       channels.map((channel) => channel.buffer),
     );
-  } catch (error) {
-    postMessage({
-      type: 'error',
-      error: errorMessage(error),
-    } satisfies SampleOperationResponse);
-  }
+  },
 });

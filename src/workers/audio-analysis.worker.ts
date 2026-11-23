@@ -2,6 +2,7 @@ import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetTags } from '@/persistence/assets';
 import { analyzeAudioTags, type LoudnessInput } from '@/project/audio-tags';
+import { serveWorkerRequests } from './worker-request';
 
 /** One disposable request over a mono buffer: its asset tags, beats, or beat accents. */
 export interface AudioAnalysisWorkerRequest {
@@ -36,48 +37,36 @@ function validRequest(value: unknown): value is AudioAnalysisWorkerRequest {
   );
 }
 
-self.addEventListener('message', (event: MessageEvent<unknown>) => {
-  if (!validRequest(event.data)) {
-    postMessage({
-      type: 'error',
-      error: 'Audio analysis worker received an invalid request',
-    } satisfies AudioAnalysisWorkerResponse);
-    return;
-  }
-  const { kind, samples, sampleRate, loudness } = event.data;
-  ensureWasm()
-    .then((wasm) => {
-      if (kind === 'beats') {
-        postMessage({
-          type: 'beats',
-          beats: Array.from(wasm.detectBeats(samples, sampleRate)),
-          downbeats: Array.from(wasm.detectDownbeats(samples, sampleRate)),
-        } satisfies AudioAnalysisWorkerResponse);
-        return;
-      }
-      if (kind === 'meter') {
-        const analysis = wasm.analyze(samples, sampleRate);
-        postMessage({
-          type: 'meter',
-          beatTimes: analysis.beats.map((beat) => beat.timeSec),
-          beatStrengths: Array.from(analysis.beatObservations.onsetStrength),
-        } satisfies AudioAnalysisWorkerResponse);
-        return;
-      }
-      const tags = analyzeAudioTags(
-        samples,
-        sampleRate,
-        wasm,
-        (fraction) =>
-          postMessage({ type: 'progress', fraction } satisfies AudioAnalysisWorkerResponse),
-        loudness,
-      );
-      postMessage({ type: 'done', tags } satisfies AudioAnalysisWorkerResponse);
-    })
-    .catch((error: unknown) => {
-      postMessage({
-        type: 'error',
-        error: errorMessage(error),
-      } satisfies AudioAnalysisWorkerResponse);
-    });
+serveWorkerRequests<AudioAnalysisWorkerRequest, AudioAnalysisWorkerResponse>({
+  validate: validRequest,
+  invalidMessage: 'Audio analysis worker received an invalid request',
+  errorReply: (error) => ({ type: 'error', error: errorMessage(error) }),
+  handle: async ({ kind, samples, sampleRate, loudness }, post) => {
+    const wasm = await ensureWasm();
+    if (kind === 'beats') {
+      post({
+        type: 'beats',
+        beats: Array.from(wasm.detectBeats(samples, sampleRate)),
+        downbeats: Array.from(wasm.detectDownbeats(samples, sampleRate)),
+      });
+      return;
+    }
+    if (kind === 'meter') {
+      const analysis = wasm.analyze(samples, sampleRate);
+      post({
+        type: 'meter',
+        beatTimes: analysis.beats.map((beat) => beat.timeSec),
+        beatStrengths: Array.from(analysis.beatObservations.onsetStrength),
+      });
+      return;
+    }
+    const tags = analyzeAudioTags(
+      samples,
+      sampleRate,
+      wasm,
+      (fraction) => post({ type: 'progress', fraction }),
+      loudness,
+    );
+    post({ type: 'done', tags });
+  },
 });

@@ -7,6 +7,7 @@ import {
   type MusicXmlImportLimits,
   type MusicXmlImportResult,
 } from '@/notation/musicxml-import';
+import { isRecord, serveWorkerRequests } from './worker-request';
 
 export interface MusicXmlImportWorkerRequest {
   type: 'import';
@@ -19,24 +20,30 @@ export type MusicXmlImportWorkerResponse =
   | { type: 'imported'; result: MusicXmlImportResult }
   | { type: 'error'; error: { message: string; kind: 'musicxml-import' | 'unknown' } };
 
-const scope = self as unknown as DedicatedWorkerGlobalScope;
+function validRequest(value: unknown): value is MusicXmlImportWorkerRequest {
+  return (
+    isRecord(value) &&
+    value.type === 'import' &&
+    typeof value.xml === 'string' &&
+    (value.fileName === undefined || typeof value.fileName === 'string') &&
+    (value.limits === undefined || isRecord(value.limits))
+  );
+}
 
-scope.addEventListener('message', (event: MessageEvent<MusicXmlImportWorkerRequest>) => {
-  if (event.data.type !== 'import') return;
-  try {
-    const response: MusicXmlImportWorkerResponse = {
+serveWorkerRequests<MusicXmlImportWorkerRequest, MusicXmlImportWorkerResponse>({
+  validate: validRequest,
+  invalidMessage: 'MusicXML import worker received an invalid request',
+  errorReply: (error) => ({
+    type: 'error',
+    error: {
+      message: errorMessage(error),
+      kind: error instanceof MusicXmlImportError ? 'musicxml-import' : 'unknown',
+    },
+  }),
+  handle: (request, post) => {
+    post({
       type: 'imported',
-      result: importMusicXmlWithReport(event.data.xml, event.data.fileName, event.data.limits),
-    };
-    scope.postMessage(response);
-  } catch (error) {
-    const response: MusicXmlImportWorkerResponse = {
-      type: 'error',
-      error: {
-        message: errorMessage(error),
-        kind: error instanceof MusicXmlImportError ? 'musicxml-import' : 'unknown',
-      },
-    };
-    scope.postMessage(response);
-  }
+      result: importMusicXmlWithReport(request.xml, request.fileName, request.limits),
+    });
+  },
 });

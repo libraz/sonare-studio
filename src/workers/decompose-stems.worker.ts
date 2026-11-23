@@ -7,7 +7,9 @@
  */
 
 import { errorMessage } from '@/lib/errors';
+import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
+import { isChannelList, isRecord, serveWorkerRequests } from './worker-request';
 
 /** Request payload: planar channels to factor into `nComponents` components. */
 export interface DecomposeStemsWorkerRequest {
@@ -21,28 +23,32 @@ export type DecomposeStemsWorkerResponse =
   | { type: 'done'; components: Float32Array[][] }
   | { type: 'error'; error: string };
 
-self.addEventListener('message', (event: MessageEvent<DecomposeStemsWorkerRequest>) => {
-  const { channels, sampleRate, nComponents } = event.data;
-  ensureWasm()
-    .then((wasm) => {
-      const result = wasm.decomposeStemsLinked({
-        channels,
-        sampleRate,
-        nComponents,
-        init: 'nndsvd',
-      });
-      const transfer = result.components.flatMap((component) =>
-        component.map((channel) => channel.buffer),
-      );
-      postMessage(
-        { type: 'done', components: result.components } satisfies DecomposeStemsWorkerResponse,
-        transfer,
-      );
-    })
-    .catch((error: unknown) => {
-      postMessage({
-        type: 'error',
-        error: errorMessage(error),
-      } satisfies DecomposeStemsWorkerResponse);
+function validRequest(value: unknown): value is DecomposeStemsWorkerRequest {
+  return (
+    isRecord(value) &&
+    isChannelList(value.channels) &&
+    isFiniteNumber(value.sampleRate) &&
+    value.sampleRate > 0 &&
+    Number.isInteger(value.nComponents) &&
+    (value.nComponents as number) > 0
+  );
+}
+
+serveWorkerRequests<DecomposeStemsWorkerRequest, DecomposeStemsWorkerResponse>({
+  validate: validRequest,
+  invalidMessage: 'Component split worker received an invalid request',
+  errorReply: (error) => ({ type: 'error', error: errorMessage(error) }),
+  handle: async ({ channels, sampleRate, nComponents }, post) => {
+    const wasm = await ensureWasm();
+    const result = wasm.decomposeStemsLinked({
+      channels,
+      sampleRate,
+      nComponents,
+      init: 'nndsvd',
     });
+    const transfer = result.components.flatMap((component) =>
+      component.map((channel) => channel.buffer),
+    );
+    post({ type: 'done', components: result.components }, transfer);
+  },
 });

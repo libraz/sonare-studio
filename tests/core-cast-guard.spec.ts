@@ -22,8 +22,6 @@ const SRC_ALLOWED: Record<string, { count: number; reason: string }> = {
     count: 2,
     reason: "verovio's declared loadData and timemap differ from its runtime; worker global scope",
   },
-  'src/workers/musicxml-import.worker.ts': { count: 1, reason: 'worker global scope' },
-  'src/workers/audio-encode.worker.ts': { count: 1, reason: 'worker global scope' },
   'src/workers/export.worker.ts': { count: 1, reason: 'worker global scope' },
   'src/lib/web-midi.ts': { count: 1, reason: 'Web MIDI is missing from the DOM lib' },
   'src/project/document-schema.ts': {

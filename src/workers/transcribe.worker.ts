@@ -2,6 +2,7 @@ import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
 import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
+import { serveWorkerRequests } from './worker-request';
 
 /** Keep the worker boundary safe even when called outside the project adapter. */
 const MAX_POLYPHONIC_SAMPLES = 14_400_000;
@@ -98,55 +99,45 @@ function validResult(value: unknown): value is TranscribeResult {
   );
 }
 
-function postError(error: unknown): void {
-  postMessage({
-    type: 'error',
-    error: errorMessage(error),
-  } satisfies TranscribeWorkerResponse);
-}
-
-self.addEventListener('message', (event: MessageEvent<unknown>) => {
-  if (!validRequest(event.data)) {
-    postError(new Error('Transcription worker received an invalid request'));
-    return;
-  }
-  const request = event.data;
-  ensureWasm()
-    .then((wasm) => {
-      const sourceSampleRate = request.sourceSampleRate ?? request.sampleRate;
-      const samples =
-        sourceSampleRate === request.sampleRate
-          ? request.samples
-          : wasm.resample(request.samples, sourceSampleRate, request.sampleRate);
-      if (!(samples instanceof Float32Array) || samples.length === 0) {
-        throw new Error('Transcription worker resampling returned no samples');
-      }
-      if (request.polyphonic && samples.length > MAX_POLYPHONIC_SAMPLES) {
-        throw new RangeError(
-          `Polyphonic transcription is limited to ${MAX_POLYPHONIC_SAMPLES} detector samples`,
-        );
-      }
-      const result = wasm.transcribe({
-        samples,
-        sampleRate: request.sampleRate,
-        tempoBpm: request.tempoBpm ?? 60,
-        polyphonic: request.polyphonic,
-        ...(request.referenceHz !== undefined ? { referenceHz: request.referenceHz } : {}),
-        ...(request.minNoteDivision !== undefined
-          ? { minNoteDivision: request.minNoteDivision }
-          : {}),
-        ...(request.maxPolyphony !== undefined ? { maxPolyphony: request.maxPolyphony } : {}),
-      });
-      if (!validResult(result)) {
-        throw new Error('Transcription worker returned an invalid result');
-      }
-      postMessage({
-        type: 'done',
-        events: result.events,
-        noteCount: result.noteCount,
-        tempoBpm: result.tempoBpm,
-        tuningCents: result.tuningCents,
-      } satisfies TranscribeWorkerResponse);
-    })
-    .catch(postError);
+serveWorkerRequests<TranscribeWorkerRequest, TranscribeWorkerResponse>({
+  validate: validRequest,
+  invalidMessage: 'Transcription worker received an invalid request',
+  errorReply: (error) => ({ type: 'error', error: errorMessage(error) }),
+  handle: async (request, post) => {
+    const wasm = await ensureWasm();
+    const sourceSampleRate = request.sourceSampleRate ?? request.sampleRate;
+    const samples =
+      sourceSampleRate === request.sampleRate
+        ? request.samples
+        : wasm.resample(request.samples, sourceSampleRate, request.sampleRate);
+    if (!(samples instanceof Float32Array) || samples.length === 0) {
+      throw new Error('Transcription worker resampling returned no samples');
+    }
+    if (request.polyphonic && samples.length > MAX_POLYPHONIC_SAMPLES) {
+      throw new RangeError(
+        `Polyphonic transcription is limited to ${MAX_POLYPHONIC_SAMPLES} detector samples`,
+      );
+    }
+    const result = wasm.transcribe({
+      samples,
+      sampleRate: request.sampleRate,
+      tempoBpm: request.tempoBpm ?? 60,
+      polyphonic: request.polyphonic,
+      ...(request.referenceHz !== undefined ? { referenceHz: request.referenceHz } : {}),
+      ...(request.minNoteDivision !== undefined
+        ? { minNoteDivision: request.minNoteDivision }
+        : {}),
+      ...(request.maxPolyphony !== undefined ? { maxPolyphony: request.maxPolyphony } : {}),
+    });
+    if (!validResult(result)) {
+      throw new Error('Transcription worker returned an invalid result');
+    }
+    post({
+      type: 'done',
+      events: result.events,
+      noteCount: result.noteCount,
+      tempoBpm: result.tempoBpm,
+      tuningCents: result.tuningCents,
+    });
+  },
 });
