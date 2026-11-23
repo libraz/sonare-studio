@@ -80,7 +80,7 @@ onBeforeUnmount(() => {
           :class="{ active: activeTab === tab.id }"
           role="tab"
           :aria-selected="activeTab === tab.id"
-          :aria-controls="`settings-panel-${tab.id}`"
+          :aria-controls="activeTab === tab.id ? `settings-panel-${tab.id}` : undefined"
           @click="activeTab = tab.id"
         >
           {{ tab.label }}
