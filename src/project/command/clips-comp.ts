@@ -3,6 +3,7 @@ import { sanitizeCompSegments } from '../comping';
 import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore } from '../store';
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
 import { clearProjectClipWarp } from '../warp';
+import { carryClipFocus } from './clips-state';
 import { execute, executeAtomic } from './history';
 import { parkClipForReplacement, requireEditableClip, reusableAudioSourceId } from './utils';
 
@@ -234,9 +235,7 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       delete next.compSegments;
       return next;
     });
-    for (const [oldId, newId] of rebased) {
-      if (store.clipId === oldId) store.clipId = newId;
-    }
+    for (const [oldId, newId] of rebased) carryClipFocus(store, oldId, newId);
     store.refresh();
   });
 }

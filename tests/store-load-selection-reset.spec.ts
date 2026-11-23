@@ -27,7 +27,9 @@ describe('loadDocument selection', () => {
     await store.loadDocument(createTemplate('band'));
 
     expect([...store.trackSelection]).toEqual([store.activeTrackId]);
-    expect(store.clipSelection.size).toBe(0);
+    // Only the loaded document's active clip, if any, stays selected.
+    expect([...store.clipSelection]).toEqual(store.clipId >= 0 ? [store.clipId] : []);
+    expect(store.clipSelection.has(1) && store.clipId !== 1).toBe(false);
     expect(store.selection.size).toBe(0);
   });
 

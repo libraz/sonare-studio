@@ -65,6 +65,7 @@ import {
   splitClipWithin,
   trimClipWithin,
 } from './clips-internal';
+import { setActiveClip } from './clips-state';
 import { execute, executeAtomic } from './history';
 import {
   requireEditableClip,
@@ -229,9 +230,7 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
         (mutation) => edit(1, mutation),
       );
     }
-    store.clipId = copyId;
-    store.activeTrackId = source.trackId;
-    store.selection = new Set();
+    setActiveClip(copyId);
     return copyId;
   });
 }
@@ -457,8 +456,7 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
       if (Object.keys(annotations).length > 0) nextAnnotations[newClipId] = annotations;
     }
     store.scoreAnnotations = nextAnnotations;
-    store.clipId = newClipId;
-    store.activeTrackId = trackId;
+    setActiveClip(newClipId);
     return newClipId;
   });
 }
@@ -788,9 +786,7 @@ export async function consolidateAudioClips(
             assetId,
           },
         ];
-        store.refresh();
-        store.clipId = createdClipId;
-        store.activeTrackId = trackId;
+        setActiveClip(createdClipId);
         return createdClipId;
       });
       if (registeredSourceId !== null) setAudioSourceId(assetId, registeredSourceId);

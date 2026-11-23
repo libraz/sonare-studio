@@ -483,6 +483,11 @@ export const useProjectStore = defineStore('project', () => {
     if (trackSelection.value.size === 0 && activeTrackId.value >= 0) {
       trackSelection.value = new Set([activeTrackId.value]);
     }
+    // The active clip is always part of the clip selection; a focus change that
+    // did not choose a selection of its own selects the active clip alone.
+    if (clipId.value >= 0 && !clipSelection.value.has(clipId.value)) {
+      clipSelection.value = new Set([clipId.value]);
+    }
     const current = nextClips.find((clip) => clip.id === clipId.value) ?? null;
     clipStartPpq.value = current?.startPpq ?? 0;
     clipLengthPpq.value = current?.lengthPpq ?? 0;

@@ -688,7 +688,8 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
         { channel: 0, pitch: 60, points: [{ ppq: 0.25, value: 40 }] },
       ]);
       // The copy's notes get fresh editor ids.
-      expect(copy?.notes[0].id).not.toBe(store.notes[0].id);
+      const source = store.clips.find((c) => c.id === clipId);
+      expect(copy?.notes[0].id).not.toBe(source?.notes[0].id);
 
       expect(undo()).toBe(true);
       expect(store.clips.some((c) => c.id === copyId)).toBe(false);

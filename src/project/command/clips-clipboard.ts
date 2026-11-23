@@ -15,6 +15,7 @@ import { installProjectClipWarp } from '../warp';
 import { clipsCollidingWith } from './clip-lane';
 import { deleteClip } from './clips-editing';
 import { shapeClipWithin } from './clips-internal';
+import { setActiveClip } from './clips-state';
 import { executeAtomic } from './history';
 import { requireEditableTrack, validatePpq } from './utils';
 
@@ -171,9 +172,7 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
         store.scoreAnnotations = { ...store.scoreAnnotations, [newClipId]: annotations };
       }
     }
-    store.activeTrackId = trackId;
-    store.clipId = newClipId;
-    store.selection = new Set();
+    setActiveClip(newClipId);
     return newClipId;
   });
 }

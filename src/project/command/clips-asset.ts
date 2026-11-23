@@ -3,6 +3,7 @@ import { getProject, placeholderSourceAudio, setAudioSourceId, useProjectStore }
 import { normalizeTempoMap } from '../tempo-map';
 import { isAudioClip } from '../types';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
+import { carryClipFocus } from './clips-state';
 import { executeAtomic } from './history';
 import { parkClipForReplacement, requireEditableClip, reusableAudioSourceId } from './utils';
 
@@ -89,7 +90,7 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
           }
         : entry,
     );
-    if (store.clipId === clipId) store.clipId = newClipId;
+    carryClipFocus(store, clipId, newClipId);
     store.refresh();
     return newClipId;
   });

@@ -264,6 +264,24 @@ export function setActiveClip(clipId: number): void {
   store.refresh();
 }
 
+/**
+ * Moves the editor focus from a clip whose id an edit replaced to its new id:
+ * the active clip follows, and the new id takes the old one's place in the
+ * clip selection so a multi-clip selection survives the rebase.
+ */
+export function carryClipFocus(
+  store: ReturnType<typeof useProjectStore>,
+  oldClipId: number,
+  newClipId: number,
+): void {
+  if (store.clipId === oldClipId) store.clipId = newClipId;
+  if (store.clipSelection.has(oldClipId)) {
+    store.clipSelection = new Set(
+      [...store.clipSelection].map((id) => (id === oldClipId ? newClipId : id)),
+    );
+  }
+}
+
 /** Sets the arrangement selection without creating an undo-history entry. */
 export function setClipSelection(clipIds: Iterable<number>, activeClipId?: number): void {
   const store = useProjectStore();
