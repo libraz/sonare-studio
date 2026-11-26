@@ -56,7 +56,7 @@ async function openRollMenu(page, note) {
 async function selectAllInRoll(page, note) {
   const point = await notePoint(page, note);
   await page.mouse.click(point.x, point.y);
-  await page.keyboard.press('Meta+a');
+  await page.keyboard.press('ControlOrMeta+a');
   await page.waitForFunction(
     () => window.__sonareDebug.selectionCount() === window.__sonareDebug.noteCount(),
     null,
@@ -98,7 +98,7 @@ export async function run(ctx) {
   }
 
   // Back to the straight feel, then through the piano-roll note menu.
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (straight) => {
       const starts = window.__sonareDebug

@@ -93,6 +93,6 @@ export async function run({ page, fail }) {
     { timeout: 30000 },
   );
   console.info('alternate audio take aligned to a covering reference through the clip menu');
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction((id) => !window.__sonareDebug.clipSettings(id)?.warpEnabled, take.id);
 }

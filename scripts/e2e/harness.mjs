@@ -72,6 +72,36 @@ export function laneMeterSampler(page, trackId) {
  */
 export const APPLY_WATCH_MS = 600;
 
+/** Checks the worklet capture request while the input take is armed. */
+export async function assertInputCaptureRequest(page, fail) {
+  const { recording, options } = await page.evaluate(() => ({
+    recording: window.__sonareDebug.apiRecordingEnabled,
+    options: window.__sonareDebug.lastCaptureOptions(),
+  }));
+  if (recording === false) {
+    fail('API recording is off; this check needs the E2E bundle');
+    return;
+  }
+  const fields = Object.keys(options ?? {})
+    .sort()
+    .join(',');
+  if (
+    fields !== 'capacityFrames,numChannels,punch,recordOffsetSamples,source' ||
+    options.source !== 'input' ||
+    !Number.isSafeInteger(options.capacityFrames) ||
+    options.capacityFrames <= 0 ||
+    !Number.isSafeInteger(options.numChannels) ||
+    options.numChannels <= 0 ||
+    !Number.isFinite(options.recordOffsetSamples) ||
+    options.recordOffsetSamples < 0 ||
+    !Number.isFinite(options.punch?.startPpq) ||
+    !Number.isFinite(options.punch?.endPpq) ||
+    options.punch.endPpq <= options.punch.startPpq
+  ) {
+    fail(`unexpected worklet capture request: ${JSON.stringify(options)}`);
+  }
+}
+
 /**
  * Resolves after two animation frames, so a rAF-scheduled canvas redraw queued by
  * the last state change has painted.
@@ -142,6 +172,22 @@ export async function untilDoneAcceptingConfirms(page, isDone, timeoutMs) {
     await page.waitForTimeout(200);
   }
   throw new Error(`timed out after ${timeoutMs} ms waiting for the action to finish`);
+}
+
+/** Runs a scenario's render probes over one short audible region and restores the shared loop. */
+export async function withRenderLoop(page, range, run) {
+  const previous = await page.evaluate(() => window.__sonareDebug.loopRange());
+  const setLoop = ({ startPpq, endPpq, enabled }) =>
+    page.evaluate(
+      (loop) => window.__sonareDebug.setLoopRange(loop.startPpq, loop.endPpq, loop.enabled),
+      { startPpq, endPpq, enabled },
+    );
+  await setLoop({ ...range, enabled: true });
+  try {
+    return await run();
+  } finally {
+    await setLoop(previous);
+  }
 }
 
 /** Launches the browser the scenarios drive. */

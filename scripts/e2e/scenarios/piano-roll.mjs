@@ -30,8 +30,8 @@ export async function run(ctx) {
   );
   console.info(`note created: ${seededCount} -> ${seededCount + 1}`);
 
-  // Cmd+Z must undo the creation.
-  await page.keyboard.press('Meta+z');
+  // The platform undo shortcut must undo the creation.
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction((before) => window.__sonareDebug.noteCount() === before, seededCount, {
     timeout: 5000,
   });

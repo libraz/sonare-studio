@@ -18,11 +18,12 @@ export async function run(ctx) {
     const rulerBox7 = await page.locator('.arrangement-canvas').boundingBox();
     await page.mouse.click(rulerBox7.x + 2, rulerBox7.y + 14);
     await page.click('.transport-bar .transport-key.play');
-    // 120 BPM region: the playhead advances ~2 PPQ per second.
-    const fastStart = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    // Use the audio clock: the worklet can render slower than wall time in headless runs.
+    const fastStart = await page.evaluate(() => window.__sonareDebug.playheadClock());
     await page.waitForTimeout(1500);
-    const fastEnd = await page.evaluate(() => window.__sonareDebug.positionPpq());
-    const fastRate = (fastEnd - fastStart) / 1.5;
+    const fastEnd = await page.evaluate(() => window.__sonareDebug.playheadClock());
+    const fastRate =
+      (fastEnd.ppq - fastStart.ppq) / (fastEnd.audioSeconds - fastStart.audioSeconds);
     if (!(fastRate > 1.4 && fastRate < 2.6)) {
       fail(`playhead rate in the 120 BPM region off: ${fastRate.toFixed(2)} PPQ/s`);
     }
@@ -30,10 +31,11 @@ export async function run(ctx) {
     await page.waitForFunction(() => window.__sonareDebug.positionPpq() > 4.5, null, {
       timeout: 8000,
     });
-    const slowStart = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    const slowStart = await page.evaluate(() => window.__sonareDebug.playheadClock());
     await page.waitForTimeout(1500);
-    const slowEnd = await page.evaluate(() => window.__sonareDebug.positionPpq());
-    const slowRate = (slowEnd - slowStart) / 1.5;
+    const slowEnd = await page.evaluate(() => window.__sonareDebug.playheadClock());
+    const slowRate =
+      (slowEnd.ppq - slowStart.ppq) / (slowEnd.audioSeconds - slowStart.audioSeconds);
     if (!(slowRate > 0.6 && slowRate < 1.4)) {
       fail(`playhead rate in the 60 BPM region off: ${slowRate.toFixed(2)} PPQ/s`);
     }

@@ -173,8 +173,8 @@ export async function run(ctx) {
 const PDF_PART_NAME = 'ピアノ';
 const FONT_UNAVAILABLE = 'could not be downloaded';
 
-/** Clicks PDF and resolves with the downloaded bytes, or null when the export ends without one. */
-async function exportPdf(page) {
+/** Clicks PDF and observes the terminal outcome of this attempt. */
+async function exportPdf(page, expectMissingFont = false) {
   const button = page.locator('button.tb-action').filter({ hasText: /^\s*PDF\s*$/ });
   await page.waitForFunction(
     () =>
@@ -185,15 +185,22 @@ async function exportPdf(page) {
     { timeout: 120000 },
   );
   const notice = page.locator('.score-error').filter({ hasText: FONT_UNAVAILABLE });
+  const previousNotices = await notice.elementHandles();
   const downloaded = page.waitForEvent('download', { timeout: 120000 }).catch(() => null);
   await button.click();
-  // A notice left by the previous attempt clears as this export starts.
-  await notice.waitFor({ state: 'detached', timeout: 10000 });
-  const failed = notice
-    .waitFor({ state: 'visible', timeout: 120000 })
-    .then(() => null)
-    .catch(() => null);
-  const download = await Promise.race([downloaded, failed]);
+  // Require a prior error to clear without mistaking the fresh offline error for it.
+  await Promise.all(
+    previousNotices.map((previous) =>
+      page.waitForFunction((oldNotice) => !oldNotice.isConnected, previous, { timeout: 10000 }),
+    ),
+  );
+  const outcome = expectMissingFont
+    ? Promise.race([
+        downloaded,
+        notice.waitFor({ state: 'visible', timeout: 120000 }).then(() => null),
+      ])
+    : downloaded;
+  const download = await outcome;
   return download ? downloadBytes(download) : null;
 }
 
@@ -212,7 +219,7 @@ async function checkOfflinePdfFont(page, context, fail) {
     .first()
     .waitFor({ state: 'attached', timeout: 120000 });
 
-  const offlineFirst = await exportPdf(page);
+  const offlineFirst = await exportPdf(page, true);
   const notice =
     (await page
       .locator('.score-error')

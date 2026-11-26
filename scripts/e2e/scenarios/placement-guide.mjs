@@ -435,7 +435,7 @@ export async function run(ctx) {
 
   // Undo restores both the melody's F4 and the backing's thinned E4 in the
   // same step.
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (n) => window.__sonareDebug.noteCount() === n,
     backingCountBefore + 3,

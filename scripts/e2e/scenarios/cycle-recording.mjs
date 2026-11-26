@@ -1,4 +1,6 @@
 /** Cycle recording: loop takes, comp switching, flatten. */
+import { assertInputCaptureRequest } from '../harness.mjs';
+
 export const name = 'cycle-recording';
 
 export async function run(ctx) {
@@ -34,8 +36,18 @@ export async function run(ctx) {
     await page.waitForFunction(() => window.__sonareDebug.isRecording() === true, null, {
       timeout: 10000,
     });
-    // One loop pass is 2 s (4 ppq at 120 bpm); capture two complete passes.
-    await page.waitForTimeout(4700);
+    await assertInputCaptureRequest(page, fail);
+    // One loop pass is 2 s (4 PPQ at 120 BPM). Stop after the worklet
+    // has actually captured two passes, even when its clock lags wall time.
+    await page.evaluate(async () => {
+      const deadline = performance.now() + 20000;
+      while (performance.now() < deadline) {
+        const progress = await window.__sonareDebug.captureProgress();
+        if (progress && progress.capturedFrames >= 4 * progress.sampleRate) return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('worklet did not capture two complete loop passes');
+    });
     await page.click('.transport-bar .record-button');
     await page.waitForFunction(
       (id) => window.__sonareDebug.clipTakesInfo(id).length === 1,

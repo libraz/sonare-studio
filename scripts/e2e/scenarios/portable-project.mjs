@@ -279,7 +279,7 @@ async function editAndUndo(page) {
     before,
     { timeout: 15000 },
   );
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (count) => window.__sonareDebug.activeNotes().length === count,
     before,

@@ -10,6 +10,8 @@ export async function run(ctx) {
     const startPpq = Math.ceil(lastEnd / 4) * 4 + 4;
     const trackId = debug.addAudioTrack('Bus routing E2E');
     await debug.addToneClip(trackId, 2, 330, 0.5, startPpq);
+    // A silent tail keeps playback active well beyond the live probe window.
+    await debug.addToneClip(trackId, 2, 330, 0, startPpq + 8);
     const a = debug.addMixerBus('E2E Aux A');
     const b = debug.addMixerBus('E2E Aux B');
     debug.setTrackOutput(trackId, a);
@@ -66,6 +68,7 @@ export async function run(ctx) {
         await page.waitForTimeout(70);
       }
       await page.click('.transport-bar .transport-key.stop');
+      await page.locator('.transport-bar .transport-key.stop:disabled').waitFor();
       if (mute) await bStrip.locator('.bus-toggle.mute').click();
       return peak;
     };
@@ -108,6 +111,8 @@ export async function run(ctx) {
         `PRE ${pre.peakDb.toFixed(1)}, POST ${post.peakDb.toFixed(1)}, 5.1 fold ${folded.peakDb.toFixed(1)} dB`,
     );
   } finally {
+    const stop = page.locator('.transport-bar .transport-key.stop');
+    if (await stop.isEnabled().catch(() => false)) await stop.click();
     await page.evaluate(({ trackId, a, b }) => {
       const debug = window.__sonareDebug;
       if (!debug) return;

@@ -271,7 +271,7 @@ export async function run({ page, fail }) {
   if (afterEdit.notes.length !== before.notes.length + 1) {
     fail(`reopened Lead note edit did not add exactly one note at ${JSON.stringify(editPoint)}`);
   }
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (expected) => window.__sonareDebug.activeNotes().length === expected,
     before.notes.length,

@@ -1,7 +1,17 @@
 /** Mastering tab: add processors to the project mastering chain. */
+import { withRenderLoop } from '../harness.mjs';
+
 export const name = 'mastering-chain';
 
-export async function run(ctx) {
+export function run(ctx) {
+  // The shared demo reached the 90 s E2E deadline; this 2-PPQ audible loop keeps the
+  // repeated mastering preview and export comparisons within the scenario budget.
+  return withRenderLoop(ctx.page, { startPpq: 0, endPpq: 2 }, () =>
+    exerciseStreamingPresetAndChain(ctx),
+  );
+}
+
+async function exerciseStreamingPresetAndChain(ctx) {
   const { page, fail } = ctx;
 
   await page.click('.dock-tabs button:has-text("Mastering")');

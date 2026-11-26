@@ -29,7 +29,7 @@ async function openChordGenerator(page) {
 
 async function openPrechorusDrums(page) {
   await page.locator('.section-lane').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('Meta+Shift+f');
+  await page.keyboard.press('ControlOrMeta+Shift+f');
   await page.waitForFunction(() => document.querySelectorAll('.section-band').length >= 8);
   const section = page.locator('.section-band').nth(5);
   await section.waitFor({ state: 'visible' });
@@ -171,14 +171,14 @@ export async function run({ page, baseUrl, fail }) {
     ) {
       fail('reroll did not create a second pre-chorus variation');
     }
-    await page.keyboard.press('Meta+z');
+    await page.keyboard.press('ControlOrMeta+z');
     await page.waitForFunction(
       (expected) =>
         JSON.stringify(window.__sonareDebug.projectDocument().tracks[0].clips[0].notes) ===
         expected,
       JSON.stringify(builtDrums.clips[0].notes),
     );
-    await page.keyboard.press('Meta+Shift+z');
+    await page.keyboard.press('ControlOrMeta+Shift+z');
     await page.waitForFunction(
       (expected) =>
         JSON.stringify(window.__sonareDebug.projectDocument().tracks[0].clips[0].notes) ===

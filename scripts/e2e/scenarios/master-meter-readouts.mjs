@@ -81,7 +81,15 @@ export async function run(ctx) {
     await page.waitForFunction(() => (window.__sonareDebug.meterPeakDb() ?? -120) > -20, null, {
       timeout: 15000,
     });
-    await page.waitForTimeout(1500);
+    // Short-term loudness stays unmeasured until its 3 s window has filled.
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('.master-strip .master-meter .mm-cell .mm-value')].every(
+          (cell) => Number.isFinite(Number.parseFloat(cell.textContent ?? '')),
+        ),
+      null,
+      { timeout: 15000 },
+    );
 
     const open = await readout(page);
     const labels = open.cells.map((cell) => cell.label);

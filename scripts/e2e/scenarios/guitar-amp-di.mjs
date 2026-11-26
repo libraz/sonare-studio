@@ -1,7 +1,17 @@
 /** Audio DI: add an amp, change the rig, bypass it, and compare real WAV output. */
+import { withRenderLoop } from '../harness.mjs';
+
 export const name = 'guitar-amp-di';
 
-export async function run(ctx) {
+export function run(ctx) {
+  // The shared demo reached the 90 s E2E deadline; this 2-PPQ DI loop keeps the assistant
+  // render bounded while leaving the fixture audible.
+  return withRenderLoop(ctx.page, { startPpq: 0, endPpq: 2 }, () =>
+    exerciseAmpRigAndMixSuggestion(ctx),
+  );
+}
+
+async function exerciseAmpRigAndMixSuggestion(ctx) {
   const { page, fail } = ctx;
   const fixture = await page.evaluate(async () => {
     const debug = window.__sonareDebug;

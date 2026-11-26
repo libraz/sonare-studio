@@ -1,4 +1,6 @@
 /** Audio: record from the fake microphone. */
+import { assertInputCaptureRequest } from '../harness.mjs';
+
 export const name = 'audio-record';
 
 export async function run(ctx) {
@@ -89,6 +91,7 @@ export async function run(ctx) {
     }));
     throw new Error(`recording never started: ${JSON.stringify(state)}`);
   }
+  await assertInputCaptureRequest(page, fail);
   // The engine's input-capture meter must register the fake microphone tone.
   await page.waitForFunction(() => window.__sonareDebug.inputLevel() > 0.001, null, {
     timeout: 5000,

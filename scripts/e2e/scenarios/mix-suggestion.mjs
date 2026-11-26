@@ -1,8 +1,50 @@
 /** Measure a real project, apply the mix suggestion, then undo it as one edit. */
+import { openEmptyProject, openFreshPage, skipTour } from '../fresh-page.mjs';
+
 export const name = 'mix-suggestion';
 
 export async function run(ctx) {
-  const { page, fail } = ctx;
+  const { context, page } = await openFreshPage(ctx.page);
+  try {
+    await openEmptyProject(page, ctx.baseUrl);
+    await skipTour(page);
+    await page.click('.dock-tabs button:has-text("Mixer")');
+    await page.click('.transport-bar .transport-key.play');
+    await page.waitForFunction(() => window.__sonareDebug.engineStarted(), null, {
+      timeout: 15000,
+    });
+    await page.evaluate(async () => {
+      const debug = window.__sonareDebug;
+      const first = debug.addAudioTrack('Vocal 1');
+      const second = debug.addAudioTrack('Vocal 2');
+      await debug.addToneClip(first, 0.75, 440, 0.35, 0);
+      await debug.addToneClip(second, 0.75, 660, 0.35, 0);
+      const bus = debug.addMixerBus('Assistant fixture bus');
+      debug.setTrackOutput(first, bus);
+    });
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 20000,
+    });
+    await page.evaluate(() => window.__sonareDebug.whenEngineSyncIdle());
+    const vocal = page
+      .locator('.channel-strip')
+      .filter({ has: page.locator('.strip-name', { hasText: 'Vocal 1' }) });
+    await vocal.locator('.strip-pan .numeric-readout').click();
+    const panInput = vocal.locator('input.numeric-readout-input');
+    await panInput.fill('-0.75');
+    await panInput.press('Enter');
+    await panInput.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 20000,
+    });
+    await page.evaluate(() => window.__sonareDebug.whenEngineSyncIdle());
+    await runAssistantScenario({ page, fail: ctx.fail });
+  } finally {
+    await context.close();
+  }
+}
+
+async function runAssistantScenario({ page, fail }) {
   const trackId = await page.evaluate(() => window.__sonareDebug.trackIds()[0]);
   const readMix = () =>
     page.evaluate(() => {
@@ -42,8 +84,30 @@ export async function run(ctx) {
     await dialog.locator('.suggest-mix-tracks tbody tr').first().waitFor({ timeout: 90000 });
     const rows = await dialog.locator('.suggest-mix-tracks tbody tr').count();
     if (rows === 0) fail('mix assistant did not measure any tracks');
+    await page.evaluate(() => window.__sonareDebug.resetApiCalls());
     await dialog.getByRole('button', { name: 'Apply suggestion' }).click();
     await dialog.waitFor({ state: 'hidden', timeout: 10000 });
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 20000,
+    });
+    await page.evaluate(() => window.__sonareDebug.whenEngineSyncIdle());
+    const apiRecording = await page.evaluate(() => ({
+      enabled: window.__sonareDebug.apiRecordingEnabled,
+      calls: window.__sonareDebug.apiCalls(),
+    }));
+    if (!apiRecording.enabled) {
+      fail('API recording is off; this check needs the E2E bundle');
+    } else {
+      for (const name of [
+        'SonareEngine#setStripPan',
+        'SonareEngine#setStripInsertBypassed',
+        'SonareEngine#setTrackOutputBus',
+      ]) {
+        if (!apiRecording.calls.includes(name)) {
+          fail(`mix suggestion did not reach libsonare ${name}`);
+        }
+      }
+    }
 
     const after = await readMix();
     if (after === before) fail('mix assistant applied no mixer changes');

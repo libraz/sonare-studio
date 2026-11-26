@@ -10,7 +10,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 
 ## Module functions
 
-40 of 327 reached.
+40 of 342 reached.
 
 | Call | Scenarios |
 | --- | --- |
@@ -29,12 +29,13 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `assignNoteTargets` | — |
 | `attachOpfsClipStream` | — |
 | `autoTune` | — |
+| `automationTargetKindNames` | — |
 | `bassChroma` | — |
 | `bindMicrophoneInput` | audio-record |
 | `bindWebMidi` | — |
 | `biquadFilter` | — |
 | `capabilities` | — |
-| `capabilityCatalog` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-to-midi-production, audio-transcribe, bus-strips, export-formats, first-play-mixer, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, multitrack-stems-handoff, pop-arrangement, portable-project, stem-separation, strip-sends, takes-comping, vca-strips |
+| `capabilityCatalog` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-to-midi-production, audio-transcribe, bus-strips, export-formats, first-play-mixer, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, mix-suggestion, multitrack-stems-handoff, pop-arrangement, portable-project, stem-separation, strip-sends, takes-comping, vca-strips |
 | `chirp` | — |
 | `chordFunctionalAnalysis` | — |
 | `chordFunctions` | — |
@@ -69,6 +70,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `detectOnsets` | — |
 | `downmix` | — |
 | `ebur128LoudnessRangeLu` | — |
+| `encodeAudio` | — |
 | `engineAbiVersion` | — |
 | `estimateMeter` | — |
 | `estimateRoom` | — |
@@ -103,6 +105,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `isInitialized` | — |
 | `isSonareError` | — |
 | `isWebMidiAvailable` | — |
+| `istft` | — |
 | `keyModeFromAnalysis` | — |
 | `lufs` | — |
 | `lufsMultichannel` | — |
@@ -126,10 +129,10 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `masteringDynamicsCompressor` | — |
 | `masteringDynamicsGate` | — |
 | `masteringDynamicsTransientShaper` | — |
-| `masteringInsertNames` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, automation-write, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-equivalence, export-formats, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, lane-meters, language-ja, layouts, long-master-export-preflight, loudness, master-fader, master-limiter, master-meter-readouts, mastering-chain, meter-map, midi-fx, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, pop-audio-adjust, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-inserts, rack-instrument, realtime-midi, sample-editor-flow, score-chord-symbols, score-pdf-cjk, secondary-dominant-guidance, sidechain, stem-separation, step-input, step-sequencer, strip-sends, takes-comping, tempo-map, tempo-map-edit, timeline-markers, vca-strips, warp, warp-toggle |
+| `masteringInsertNames` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, automation-write, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-equivalence, export-formats, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, lane-meters, language-ja, layouts, long-master-export-preflight, loudness, master-fader, master-limiter, master-meter-readouts, mastering-chain, meter-map, midi-fx, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, pop-audio-adjust, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-inserts, rack-instrument, realtime-midi, sample-editor-flow, score-chord-symbols, score-pdf-cjk, secondary-dominant-guidance, sidechain, stem-separation, step-input, step-sequencer, strip-sends, takes-comping, tempo-map, tempo-map-edit, timeline-markers, vca-strips, warp, warp-toggle |
 | `masteringInsertParamInfo` | groove, guitar-amp-di, long-master-export-preflight, master-limiter, master-meter-readouts, mastering-chain, mix-suggestion, rack-inserts, sidechain |
 | `masteringInsertParamNames` | groove, guitar-amp-di, lane-meters, long-master-export-preflight, master-limiter, mastering-chain, meter-map, midi-fx, ornaments, placement-guide, rack-inserts, realtime-midi, step-sequencer, tempo-map, tempo-map-edit, timeline-markers |
-| `masteringInsertTiming` | export-dialog, long-master-export-preflight, mix-suggestion, rack-inserts, sidechain |
+| `masteringInsertTiming` | bus-master-sidechain, export-dialog, freeze-bounce, guitar-amp-di, long-master-export-preflight, master-limiter, master-meter-readouts, mix-suggestion, rack-inserts, sidechain |
 | `masteringNormalizeLoudness` | — |
 | `masteringPairAnalysisNames` | — |
 | `masteringPairProcessorNames` | — |
@@ -199,17 +202,22 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `midi2AssignablePerNoteController` | — |
 | `midi2Cc` | — |
 | `midi2ChannelPressure` | — |
+| `midi2ControlToMidi1` | — |
+| `midi2ControlToMidi1Control14` | — |
 | `midi2NoteOff` | — |
 | `midi2NoteOn` | — |
+| `midi2NoteOnVelocityToMidi1` | — |
 | `midi2PerNoteManagement` | — |
 | `midi2PerNotePitchBend` | — |
 | `midi2PitchBend` | — |
+| `midi2PitchBendToMidi1` | — |
 | `midi2PolyPressure` | — |
 | `midi2Program` | — |
 | `midi2RegisteredController` | — |
 | `midi2RegisteredPerNoteController` | — |
 | `midi2RelativeAssignableController` | — |
 | `midi2RelativeRegisteredController` | — |
+| `midi2VelocityToMidi1` | — |
 | `midiBankProgram` | gs-efx-sf2, multi-timbral |
 | `midiCc` | — |
 | `midiCcIndexForName` | — |
@@ -217,14 +225,19 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `midiCcName` | — |
 | `midiCcToBreakpoint` | — |
 | `midiChannelPressure` | — |
+| `midiControl14ToMidi2` | — |
+| `midiControlToMidi2` | — |
 | `midiNoteOff` | audio-arrangement-edit, audio-to-midi-production, audio-transcribe, baroque-organ-compose, boot, cc-lane, composition-flow, dawproject-roundtrip, drum-kit, export-midi, expression-maps, generation-seed, gm-voice, groove, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, midi-clip-envelope, midi-fx, midi2-clip-import, multi-timbral, musicxml-roundtrip, opfs-restore, ornaments, piano-roll, placement-guide, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, score-chord-symbols, score-pdf-cjk, secondary-dominant-guidance, step-input, step-sequencer |
 | `midiNoteOn` | audio-arrangement-edit, audio-to-midi-production, audio-transcribe, baroque-organ-compose, boot, cc-lane, composition-flow, dawproject-roundtrip, drum-kit, export-midi, expression-maps, generation-seed, gm-voice, groove, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, midi-clip-envelope, midi-fx, midi2-clip-import, multi-timbral, musicxml-roundtrip, opfs-restore, ornaments, piano-roll, placement-guide, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, score-chord-symbols, score-pdf-cjk, secondary-dominant-guidance, step-input, step-sequencer |
+| `midiNoteOnVelocityToMidi2` | — |
 | `midiParamToCc` | — |
 | `midiPitchBend` | — |
+| `midiPitchBendToMidi2` | — |
 | `midiPolyPressure` | — |
 | `midiProgram` | audio-to-midi-production, export-midi |
 | `midiRouteEvents` | — |
 | `midiToHz` | — |
+| `midiVelocityToMidi2` | — |
 | `mixStereo` | — |
 | `mixingAssistantSourceClassFromName` | — |
 | `mixingAssistantSourceClassNames` | — |
@@ -263,6 +276,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `preemphasis` | — |
 | `projectAbiVersion` | — |
 | `pseudoCqt` | — |
+| `readAudioTags` | — |
 | `realtimeVoiceChangerPresetConfig` | — |
 | `realtimeVoiceChangerPresetJson` | — |
 | `realtimeVoiceChangerPresetNames` | — |
@@ -284,7 +298,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `samplesToFrames` | — |
 | `scaleCorrectionSemitones` | — |
 | `scaleMaskForMode` | — |
-| `scalePitchClassEnabled` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `scalePitchClassEnabled` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `scaleQuantizeMidi` | — |
 | `segmentAgglomerative` | — |
 | `segmentCrossSimilarity` | — |
@@ -329,7 +343,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `trimSilence` | — |
 | `tuningToReferenceHz` | — |
 | `vectorNormalize` | — |
-| `version` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `version` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `vocalEditAbiVersion` | — |
 | `voiceChange` | — |
 | `voiceChangerAbiVersion` | — |
@@ -337,7 +351,8 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `vqt` | — |
 | `vqtToAudio` | — |
 | `waveformPeakPyramid` | — |
-| `waveformPeaks` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, bus-strips, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, multitrack-stems-handoff, pop-arrangement, portable-project, sample-editor-flow, stem-separation, strip-sends, takes-comping, vca-strips, warp-toggle |
+| `waveformPeaks` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, bus-strips, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, mix-suggestion, multitrack-stems-handoff, pop-arrangement, portable-project, sample-editor-flow, stem-separation, strip-sends, takes-comping, vca-strips, warp-toggle |
+| `webMidiEventContextTime` | — |
 | `writeOpfsClip` | — |
 | `zeroCrossingRate` | — |
 | `zeroCrossings` | — |
@@ -448,6 +463,19 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `HrtfSet#destroy` | — |
 | `HrtfSet.fromBytes` | — |
 | `new HrtfSet` | — |
+
+## `LiveSession`
+
+0 of 6 reached.
+
+| Call | Scenarios |
+| --- | --- |
+| `LiveSession#capturedMidi` | — |
+| `LiveSession#destroy` | — |
+| `LiveSession#status` | — |
+| `LiveSession.audioDevices` | — |
+| `LiveSession.midiSources` | — |
+| `new LiveSession` | — |
 
 ## `Mixer`
 
@@ -574,53 +602,69 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 
 ## `Project`
 
-44 of 91 reached.
+44 of 110 reached.
 
 | Call | Scenarios |
 | --- | --- |
+| `Project#addAudioSource` | — |
 | `Project#addAutomationLane` | — |
-| `Project#addClip` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-formats, export-midi, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi-clip-envelope, midi-fx, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, sidechain, stem-separation, step-input, strip-sends, takes-comping, track-and-clip, vca-strips, warp, warp-toggle |
+| `Project#addClip` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-formats, export-midi, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi-clip-envelope, midi-fx, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, sidechain, stem-separation, step-input, strip-sends, takes-comping, track-and-clip, vca-strips, warp, warp-toggle |
 | `Project#addLoopRecordingTakes` | — |
 | `Project#addMidiClip` | gs-efx-sf2, multi-timbral, rack-instrument |
-| `Project#addTrack` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-formats, export-midi, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi-clip-envelope, midi-fx, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, sidechain, stem-separation, step-input, strip-sends, takes-comping, track-and-clip, vca-strips, warp, warp-toggle |
+| `Project#addTrack` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, autosave-restore, baroque-organ-compose, boot, bus-master-sidechain, bus-routing, bus-strips, cc-lane, composition-flow, cycle-recording, dawproject-roundtrip, drum-kit, export-formats, export-midi, expression-maps, first-play-mixer, freeze-bounce, freeze-bounce-ui, generation-seed, gm-voice, groove, gs-efx-sf2, guitar-amp-di, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi-clip-envelope, midi-fx, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, ornaments, placement-guide, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, sidechain, stem-separation, step-input, strip-sends, takes-comping, track-and-clip, vca-strips, warp, warp-toggle |
 | `Project#analyzeTempo` | — |
 | `Project#annotateChords` | audio-analysis, audio-arrangement-edit, baroque-organ-compose, composition-flow, dawproject-roundtrip, generation-seed, imported-song-edit, jpop-long-form, jpop-section-variations, placement-guide, pop-arrangement, project-save-reopen, score-chord-symbols, secondary-dominant-guidance |
 | `Project#annotateKeys` | — |
+| `Project#annotateSections` | — |
 | `Project#applyVocalEdit` | — |
 | `Project#assertNotBusy` | — |
 | `Project#assistSidecars` | — |
 | `Project#autoTempo` | — |
+| `Project#automationLanes` | — |
 | `Project#bakeMidiFx` | midi-fx |
+| `Project#barStartPpq` | — |
 | `Project#bounce` | rack-instrument |
 | `Project#bounceRequest` | — |
 | `Project#bounceResult` | — |
-| `Project#clearHistory` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `Project#chordAnnotations` | — |
+| `Project#clearHistory` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `Project#clearPartRig` | — |
 | `Project#clearSoundFont` | — |
 | `Project#clips` | audio-arrangement-edit, gs-efx-sf2, imported-song-edit, midi2-clip-import, portable-project, project-revisions, project-switch-sync |
 | `Project#compile` | — |
-| `Project#destroy` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `Project#countInFrames` | — |
+| `Project#destinationInstruments` | — |
+| `Project#destroy` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `Project#duplicateClip` | pop-arrangement |
 | `Project#editAutomationLane` | — |
+| `Project#endPpq` | — |
 | `Project#exportClipFile` | export-midi |
 | `Project#exportSmf` | audio-to-midi-production, export-midi, midi2-clip-import |
 | `Project#importClipFile` | midi2-clip-import |
 | `Project#importExternalStems` | — |
 | `Project#importSmf` | audio-arrangement-edit, gs-efx-sf2, imported-song-edit, midi2-clip-import, portable-project, project-revisions, project-switch-sync |
+| `Project#keyAnnotations` | — |
 | `Project#lastBounceCompileResult` | — |
 | `Project#loadSoundFont` | gs-efx-sf2, multi-timbral |
 | `Project#markers` | audio-arrangement-edit, gs-efx-sf2, imported-song-edit, midi2-clip-import, portable-project, project-revisions, project-switch-sync |
+| `Project#midiEvents` | — |
+| `Project#mixerScene` | — |
 | `Project#moveClip` | audio-arrangement-edit, audio-edit-to-master, cycle-recording, pop-arrangement, sample-editor-flow |
 | `Project#partRig` | — |
+| `Project#positionAtPpq` | — |
+| `Project#ppqToSec` | — |
 | `Project#previewMidiFxCount` | — |
 | `Project#readAll` | — |
 | `Project#redo` | audio-arrangement-edit, jpop-section-variations, pop-arrangement |
 | `Project#rehydrateVocalEdits` | — |
+| `Project#relinkSource` | — |
 | `Project#removeAutomationLane` | — |
 | `Project#removeClip` | audio-edit-to-master, baroque-organ-compose, cycle-recording, jpop-section-variations, pop-clipboard, sample-editor-flow |
 | `Project#removeTrack` | bus-master-sidechain, bus-routing, cc-lane, cycle-recording, drum-kit, expression-maps, freeze-bounce, gm-voice, groove, guitar-amp-di, midi-clip-envelope, midi-fx, ornaments, sidechain, step-input, vca-strips, warp, warp-toggle |
 | `Project#removeWarpMap` | warp, warp-toggle |
 | `Project#renameTrack` | autosave-restore, placement-guide |
+| `Project#secToPpq` | — |
+| `Project#sectionAnnotations` | — |
 | `Project#setAssistSidecar` | — |
 | `Project#setAudioSourceMetadata` | — |
 | `Project#setClipCompSegments` | — |
@@ -631,18 +675,19 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `Project#setClipTakes` | — |
 | `Project#setClipWarpMode` | audio-alignment, warp, warp-toggle |
 | `Project#setClipWarpRef` | audio-alignment, warp, warp-toggle |
+| `Project#setDestinationInstrument` | — |
 | `Project#setMarker` | — |
 | `Project#setMaxHistoryBytes` | — |
-| `Project#setMaxUndoDepth` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `Project#setMaxUndoDepth` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `Project#setMidiEvents` | audio-arrangement-edit, audio-to-midi-production, audio-transcribe, baroque-organ-compose, boot, cc-lane, composition-flow, dawproject-roundtrip, drum-kit, export-midi, expression-maps, generation-seed, gm-voice, groove, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, midi-clip-envelope, midi-fx, midi2-clip-import, multi-timbral, musicxml-roundtrip, opfs-restore, ornaments, piano-roll, placement-guide, pop-clipboard, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, score-chord-symbols, score-pdf-cjk, secondary-dominant-guidance, step-input, step-sequencer |
-| `Project#setMixerSceneJson` | — |
+| `Project#setMixerScene` | — |
 | `Project#setOverlapPolicy` | audio-arrangement-edit, dawproject-roundtrip |
 | `Project#setPartRig` | — |
 | `Project#setProgram` | — |
-| `Project#setSampleRate` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `Project#setSampleRate` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `Project#setSourceAudio` | — |
-| `Project#setTempoSegments` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping, tempo-map, tempo-map-edit, warp, warp-toggle |
-| `Project#setTimeSignatures` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, meter-map, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `Project#setTempoSegments` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping, tempo-map, tempo-map-edit, warp, warp-toggle |
+| `Project#setTimeSignatures` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, meter-map, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, pop-arrangement, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 | `Project#setTrackGain` | — |
 | `Project#setTrackKind` | — |
 | `Project#setTrackMidiDestination` | — |
@@ -653,7 +698,8 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `Project#setWarpMap` | audio-alignment, warp, warp-toggle |
 | `Project#snapToGrid` | — |
 | `Project#soundFontManifest` | gs-efx-sf2, multi-timbral |
-| `Project#sources` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, bus-master-sidechain, bus-routing, bus-strips, cycle-recording, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, multitrack-stems-handoff, pop-arrangement, portable-project, project-save-reopen, sample-editor-flow, sidechain, stem-separation, strip-sends, takes-comping, vca-strips, warp, warp-toggle |
+| `Project#soundFontPresetCount` | — |
+| `Project#sources` | audio-alignment, audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-import, audio-record, audio-to-midi-production, audio-transcribe, automation-ramp, bus-master-sidechain, bus-routing, bus-strips, cycle-recording, dawproject-roundtrip, export-formats, first-play-mixer, freeze-bounce, freeze-bounce-ui, guitar-amp-di, loudness, master-fader, master-meter-readouts, mix-suggestion, multitrack-stems-handoff, pop-arrangement, portable-project, project-save-reopen, sample-editor-flow, sidechain, stem-separation, strip-sends, takes-comping, vca-strips, warp, warp-toggle |
 | `Project#splitClip` | audio-arrangement-edit |
 | `Project#tempoSegments` | audio-arrangement-edit, gs-efx-sf2, imported-song-edit, midi2-clip-import, portable-project, project-revisions, project-switch-sync |
 | `Project#timeSignatures` | audio-arrangement-edit, gs-efx-sf2, imported-song-edit, midi2-clip-import, portable-project, project-revisions, project-switch-sync |
@@ -664,11 +710,12 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `Project#undo` | audio-alignment, audio-arrangement-edit, audio-transcribe, groove, imported-song-edit, jpop-section-variations, meter-map, midi-fx, piano-roll, placement-guide, pop-arrangement, pop-audio-adjust, portable-project, project-save-reopen, sample-editor-flow, secondary-dominant-guidance, tempo-map-edit |
 | `Project#unresolvedAudioSourceIds` | — |
 | `Project#unresolvedAudioSources` | — |
+| `Project#unresolvedSoundFontUris` | — |
 | `Project#validateMidiNotes` | — |
 | `Project#vocalEditDependencies` | — |
 | `Project.fromJson` | — |
 | `Project.fromJsonWithDiagnostics` | — |
-| `new Project` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
+| `new Project` | audio-analysis, audio-arrangement-edit, audio-edit-to-master, audio-to-midi-production, autosave-restore, baroque-organ-compose, boot, bus-strips, composition-flow, dawproject-roundtrip, export-formats, export-midi, first-play-mixer, freeze-bounce-ui, generation-seed, gs-efx-sf2, imported-song-edit, jpop-long-form, jpop-section-variations, language-ja, long-master-export-preflight, loudness, master-fader, master-meter-readouts, midi2-clip-import, mix-suggestion, mixer-snapshots, multi-timbral, multitrack-stems-handoff, musicxml-roundtrip, opfs-restore, portable-project, project-revisions, project-save-reopen, project-switch-sync, pwa-offline, rack-instrument, sample-editor-flow, score-chord-symbols, score-pdf-cjk, stem-separation, strip-sends, takes-comping |
 
 ## `ProjectTimeline`
 
@@ -681,7 +728,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 
 ## `RealtimeEngine`
 
-17 of 154 reached.
+17 of 159 reached.
 
 | Call | Scenarios |
 | --- | --- |
@@ -702,6 +749,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `RealtimeEngine#channelBuffer` | — |
 | `RealtimeEngine#clearBusInsertParameterBases` | — |
 | `RealtimeEngine#clearControllerBindings` | — |
+| `RealtimeEngine#clearInputTrack` | — |
 | `RealtimeEngine#clearMidiCcBindings` | — |
 | `RealtimeEngine#clearMidiFx` | — |
 | `RealtimeEngine#clearMidiInputSource` | — |
@@ -722,6 +770,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `RealtimeEngine#finishOfflineRender` | — |
 | `RealtimeEngine#flushControlCommands` | — |
 | `RealtimeEngine#freezeOffline` | — |
+| `RealtimeEngine#inputMonitor` | — |
 | `RealtimeEngine#insertParameterConstructedValue` | — |
 | `RealtimeEngine#laneIndexOf` | — |
 | `RealtimeEngine#legatoFallbackCount` | — |
@@ -730,6 +779,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `RealtimeEngine#markers` | — |
 | `RealtimeEngine#meterTargetInsertGainReduction` | — |
 | `RealtimeEngine#metronome` | — |
+| `RealtimeEngine#midiCcBindings` | — |
 | `RealtimeEngine#monitorChannelBuffer` | — |
 | `RealtimeEngine#parameterInfo` | — |
 | `RealtimeEngine#parameters` | — |
@@ -796,6 +846,8 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `RealtimeEngine#setControllerVelocityMeaningful` | — |
 | `RealtimeEngine#setExternalMidiClockEnabled` | — |
 | `RealtimeEngine#setGraph` | — |
+| `RealtimeEngine#setInputMonitor` | — |
+| `RealtimeEngine#setInputTrack` | — |
 | `RealtimeEngine#setLoop` | — |
 | `RealtimeEngine#setLoopFromMarkers` | — |
 | `RealtimeEngine#setMarkers` | — |
@@ -876,12 +928,12 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 
 ## `SonareEngine`
 
-42 of 141 reached.
+43 of 146 reached.
 
 | Call | Scenarios |
 | --- | --- |
 | `SonareEngine#addAutomationPoint` | — |
-| `SonareEngine#addClip` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, bus-master-sidechain, bus-routing, cycle-recording, first-play-mixer, freeze-bounce, master-fader, master-meter-readouts, pop-arrangement, sidechain, tempo-map, tempo-map-edit, vca-strips, warp-toggle |
+| `SonareEngine#addClip` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, bus-master-sidechain, bus-routing, cycle-recording, first-play-mixer, freeze-bounce, master-fader, master-meter-readouts, mix-suggestion, pop-arrangement, sidechain, tempo-map, tempo-map-edit, vca-strips, warp-toggle |
 | `SonareEngine#addMarker` | — |
 | `SonareEngine#addParameter` | — |
 | `SonareEngine#armCapture` | audio-record, cycle-recording |
@@ -894,11 +946,12 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#canSetStripSidechain` | — |
 | `SonareEngine#captureStatus` | audio-record, cycle-recording |
 | `SonareEngine#capturedAudio` | audio-record, cycle-recording |
+| `SonareEngine#clearInputTrack` | — |
 | `SonareEngine#clearInsertAutomationLanes` | — |
 | `SonareEngine#clearMidiFx` | audio-record, audio-to-midi-production, boot, composition-flow, groove, imported-song-edit, midi-clip-envelope, placement-guide, project-revisions, project-switch-sync, step-input, track-and-clip |
 | `SonareEngine#clearMidiInputSource` | — |
 | `SonareEngine#clearParameters` | — |
-| `SonareEngine#configureCapture` | audio-record, cycle-recording, input-monitor |
+| `SonareEngine#configureCapture` | audio-record, cycle-recording |
 | `SonareEngine#countInEndSample` | — |
 | `SonareEngine#destroy` | — |
 | `SonareEngine#enqueueWorkletClipPageRequest` | — |
@@ -908,24 +961,25 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#finishOfflineRender` | — |
 | `SonareEngine#flushOfflineMirror` | — |
 | `SonareEngine#freezeOffline` | — |
+| `SonareEngine#inputMonitor` | — |
 | `SonareEngine#insertAutomationTargetKey` | — |
-| `SonareEngine#lateMidiInputCount` | — |
+| `SonareEngine#lateMidiEventCount` | — |
 | `SonareEngine#legatoFallbackCount` | — |
 | `SonareEngine#loadSoundFont` | — |
 | `SonareEngine#marker` | — |
 | `SonareEngine#markers` | — |
 | `SonareEngine#mirrorMidiInput` | — |
 | `SonareEngine#mixerLanes` | — |
-| `SonareEngine#onMeter` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync |
-| `SonareEngine#onMidiOut` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync |
-| `SonareEngine#onScope` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync |
+| `SonareEngine#onMeter` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync |
+| `SonareEngine#onMidiOut` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync |
+| `SonareEngine#onScope` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync |
 | `SonareEngine#onSyncError` | — |
-| `SonareEngine#onTelemetry` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, boot, first-play-mixer, master-fader, master-meter-readouts, pop-arrangement, project-revisions, project-switch-sync, step-input |
+| `SonareEngine#onTelemetry` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, boot, first-play-mixer, master-fader, master-meter-readouts, mix-suggestion, pop-arrangement, project-revisions, project-switch-sync, step-input |
 | `SonareEngine#parameters` | — |
 | `SonareEngine#pollInsertGainReduction` | automation-write, bus-master-sidechain, bus-routing, cycle-recording, export-equivalence, first-play-mixer, lane-meters, layouts, master-fader, master-limiter, master-meter-readouts, mastering-chain, mix-suggestion, mixer-strips, placement-guide, rack-inserts, rack-instrument, realtime-midi, realtime-mute, sidechain, step-sequencer, tempo-map, tempo-map-edit, vca-strips, warp, warp-toggle |
 | `SonareEngine#pollMeters` | — |
 | `SonareEngine#pollScope` | — |
-| `SonareEngine#pollTelemetry` | audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, automation-write, boot, bus-routing, cycle-recording, export-equivalence, first-play-mixer, lane-meters, master-fader, master-limiter, master-meter-readouts, project-switch-sync, realtime-midi, realtime-mute, sidechain, tempo-map, tempo-map-edit |
+| `SonareEngine#pollTelemetry` | audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, automation-write, boot, bus-routing, cycle-recording, export-equivalence, first-play-mixer, lane-meters, master-fader, master-limiter, master-meter-readouts, mix-suggestion, project-switch-sync, realtime-midi, realtime-mute, sidechain, tempo-map, tempo-map-edit |
 | `SonareEngine#popWorkletClipPageRequest` | — |
 | `SonareEngine#postSync` | — |
 | `SonareEngine#pumpWorkletClipPages` | — |
@@ -937,10 +991,11 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#pushMidiInputNoteOn` | — |
 | `SonareEngine#pushMidiInputPitchBend` | — |
 | `SonareEngine#pushMidiInputPolyPressure` | — |
+| `SonareEngine#pushMidiInputProgram` | — |
 | `SonareEngine#pushMidiInputUmp` | — |
 | `SonareEngine#pushMidiNoteOff` | audio-to-midi-production, composition-flow, groove, imported-song-edit, placement-guide, project-revisions, score, secondary-dominant-guidance, step-input |
 | `SonareEngine#pushMidiNoteOn` | audio-to-midi-production, composition-flow, groove, imported-song-edit, piano-roll, placement-guide, project-revisions, secondary-dominant-guidance, step-input |
-| `SonareEngine#pushMidiPanic` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, automation-write, boot, bus-routing, cycle-recording, export-equivalence, first-play-mixer, lane-meters, master-fader, master-limiter, master-meter-readouts, meter-map, placement-guide, pop-arrangement, project-revisions, project-switch-sync, realtime-midi, realtime-mute, score-annotations, sidechain, step-input, tempo-map, tempo-map-edit, timeline-markers |
+| `SonareEngine#pushMidiPanic` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, automation-write, boot, bus-routing, cycle-recording, export-equivalence, first-play-mixer, lane-meters, master-fader, master-limiter, master-meter-readouts, meter-map, mix-suggestion, placement-guide, pop-arrangement, project-revisions, project-switch-sync, realtime-midi, realtime-mute, score-annotations, sidechain, step-input, tempo-map, tempo-map-edit, timeline-markers |
 | `SonareEngine#pushMidiPitchBend` | — |
 | `SonareEngine#pushMidiPolyPressure` | — |
 | `SonareEngine#pushMidiProgram` | — |
@@ -978,12 +1033,14 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#setBusSidechain` | bus-master-sidechain |
 | `SonareEngine#setBusStrip` | bus-master-sidechain, mix-suggestion |
 | `SonareEngine#setClipPagePrefetchFrames` | — |
-| `SonareEngine#setExternalMidiClockEnabled` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync |
+| `SonareEngine#setExternalMidiClockEnabled` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync |
+| `SonareEngine#setInputMonitor` | audio-record, input-monitor |
+| `SonareEngine#setInputTrack` | — |
 | `SonareEngine#setLoop` | — |
 | `SonareEngine#setLoopFromMarkers` | — |
-| `SonareEngine#setMarkers` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync, timeline-markers |
-| `SonareEngine#setMetronome` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, boot, first-play-mixer, master-fader, master-meter-readouts, pop-arrangement, project-revisions, project-switch-sync, step-input |
-| `SonareEngine#setMidiClips` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, piano-roll, placement-guide, pop-arrangement, pop-clipboard, project-revisions, project-switch-sync, secondary-dominant-guidance, step-input, step-sequencer, tempo-map, tempo-map-edit, warp, warp-toggle |
+| `SonareEngine#setMarkers` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync, timeline-markers |
+| `SonareEngine#setMetronome` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, boot, first-play-mixer, master-fader, master-meter-readouts, mix-suggestion, pop-arrangement, project-revisions, project-switch-sync, step-input |
+| `SonareEngine#setMidiClips` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, mix-suggestion, piano-roll, placement-guide, pop-arrangement, pop-clipboard, project-revisions, project-switch-sync, secondary-dominant-guidance, step-input, step-sequencer, tempo-map, tempo-map-edit, warp, warp-toggle |
 | `SonareEngine#setMidiDestinationExternal` | audio-record, audio-to-midi-production, boot, composition-flow, groove, imported-song-edit, midi-clip-envelope, placement-guide, project-revisions, project-switch-sync, rack-instrument, step-input, track-and-clip |
 | `SonareEngine#setMidiFx` | — |
 | `SonareEngine#setMidiInputSource` | — |
@@ -1004,16 +1061,16 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#setStripSurroundPan` | — |
 | `SonareEngine#setSynthInstrument` | audio-record, audio-to-midi-production, boot, composition-flow, groove, imported-song-edit, midi-clip-envelope, placement-guide, project-revisions, project-switch-sync, rack-instrument, step-input, track-and-clip |
 | `SonareEngine#setTempo` | — |
-| `SonareEngine#setTempoSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync, tempo-map, tempo-map-edit, warp, warp-toggle |
+| `SonareEngine#setTempoSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, mix-suggestion, project-revisions, project-switch-sync, tempo-map, tempo-map-edit, warp, warp-toggle |
 | `SonareEngine#setTimeSignature` | — |
-| `SonareEngine#setTimeSignatureSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, meter-map, project-revisions, project-switch-sync |
+| `SonareEngine#setTimeSignatureSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, meter-map, mix-suggestion, project-revisions, project-switch-sync |
 | `SonareEngine#setTrackBuses` | bus-master-sidechain, bus-routing, export-equivalence, mix-suggestion, sidechain |
-| `SonareEngine#setTrackLanes` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, placement-guide, pop-arrangement, project-revisions, project-switch-sync, sidechain, step-input, track-and-clip, vca-strips, warp, warp-toggle |
+| `SonareEngine#setTrackLanes` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, mix-suggestion, placement-guide, pop-arrangement, project-revisions, project-switch-sync, sidechain, step-input, track-and-clip, vca-strips, warp, warp-toggle |
 | `SonareEngine#setTrackMonitorMode` | — |
 | `SonareEngine#setTrackOutputBus` | bus-master-sidechain, bus-routing, mix-suggestion, sidechain |
 | `SonareEngine#setTrackSends` | export-equivalence, mix-suggestion |
-| `SonareEngine#setTrackSoloMute` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, lane-meters, master-fader, master-meter-readouts, midi-clip-envelope, placement-guide, pop-arrangement, project-revisions, project-switch-sync, realtime-midi, realtime-mute, sidechain, step-input, track-and-clip, vca-strips, warp, warp-toggle |
-| `SonareEngine#setWarpVoiceCapacity` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, placement-guide, pop-arrangement, pop-audio-adjust, project-revisions, project-switch-sync, sidechain, step-input, tempo-map, tempo-map-edit, track-and-clip, vca-strips, warp, warp-toggle |
+| `SonareEngine#setTrackSoloMute` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, lane-meters, master-fader, master-meter-readouts, midi-clip-envelope, mix-suggestion, placement-guide, pop-arrangement, project-revisions, project-switch-sync, realtime-midi, realtime-mute, sidechain, step-input, track-and-clip, vca-strips, warp, warp-toggle |
+| `SonareEngine#setWarpVoiceCapacity` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, mix-suggestion, placement-guide, pop-arrangement, pop-audio-adjust, project-revisions, project-switch-sync, sidechain, step-input, tempo-map, tempo-map-edit, track-and-clip, vca-strips, warp, warp-toggle |
 | `SonareEngine#startWorkletClipPagePolling` | — |
 | `SonareEngine#suspend` | — |
 | `SonareEngine#syncMixer` | — |

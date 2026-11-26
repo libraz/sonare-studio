@@ -161,7 +161,7 @@ export async function run({ page, fail }) {
   }
   // The pointer does not move across the Undo. Both the note stripe and the
   // already-open theory card must react to the restored harmony.
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(() => window.__sonareDebug.chordCount() === 4);
   await nextPaint(page);
   const undoneSafety = await cardLines(page, 'Safety');

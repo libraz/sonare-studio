@@ -270,9 +270,9 @@ export async function run({ page, baseUrl, fail }) {
     return;
   }
 
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await waitForClip(page, take.id, { startPpq: 0 });
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await waitForClip(page, take.id, { startPpq: moveStart });
   console.info('audio clip moved on the arrangement grid and restored through Undo/Redo');
 
@@ -315,9 +315,9 @@ export async function run({ page, baseUrl, fail }) {
     return;
   }
   const trimLength = trimmed.lengthPpq;
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await waitForClip(page, moved.id, { lengthPpq: moved.lengthPpq });
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await waitForClip(page, moved.id, { lengthPpq: trimLength });
   console.info('audio clip edge trim followed the snap grid and restored through Undo/Redo');
 
@@ -362,7 +362,7 @@ export async function run({ page, baseUrl, fail }) {
     fail(`audio split produced non-contiguous windows: ${JSON.stringify({ splitClip, pieces })}`);
     return;
   }
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     ({ count, trackId }) =>
       window.__sonareDebug.clipCount() === count &&
@@ -371,7 +371,7 @@ export async function run({ page, baseUrl, fail }) {
         .filter((clip) => clip.trackId === trackId && clip.kind === 'audio').length === 1,
     { count: countBeforeSplit, trackId: splitClip.trackId },
   );
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await page.waitForFunction(
     ({ count, trackId }) =>
       window.__sonareDebug.clipCount() === count + 1 &&
@@ -422,9 +422,9 @@ export async function run({ page, baseUrl, fail }) {
     },
     { id: editedLeft.id, fade },
   );
-  await page.keyboard.press('Meta+z');
-  await page.keyboard.press('Meta+z');
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     ({ id, baseline }) => {
       const settings = window.__sonareDebug.clipSettings(id);
@@ -437,9 +437,9 @@ export async function run({ page, baseUrl, fail }) {
     },
     { id: editedLeft.id, baseline },
   );
-  await page.keyboard.press('Meta+Shift+z');
-  await page.keyboard.press('Meta+Shift+z');
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await page.waitForFunction(
     ({ id, fade }) => {
       const settings = window.__sonareDebug.clipSettings(id);

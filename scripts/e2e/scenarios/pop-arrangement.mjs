@@ -104,7 +104,7 @@ export async function run({ page, fail }) {
     `section duplicated: ${withAudio.length} aligned MIDI/audio clips and ${before.chords.length} chords`,
   );
 
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (count) => window.__sonareDebug.clipCount() === count,
     withAudio.length,
@@ -122,7 +122,7 @@ export async function run({ page, fail }) {
   ) {
     fail('Undo did not restore the original chord track with the clips');
   }
-  await page.keyboard.press('Meta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
   await page.waitForFunction(
     (count) => window.__sonareDebug.clipCount() === count * 2,
     withAudio.length,

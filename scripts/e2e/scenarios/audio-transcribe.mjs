@@ -152,7 +152,7 @@ export async function run({ page, fail }) {
     );
   }
 
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     ({ clips, tracks, notes }) =>
       window.__sonareDebug.clipCount() === clips &&
@@ -215,7 +215,7 @@ export async function run({ page, fail }) {
     );
   }
 
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     ({ clips, tracks, notes }) =>
       window.__sonareDebug.clipCount() === clips &&

@@ -226,7 +226,7 @@ export async function run({ page, baseUrl, fail }) {
   if (addedLead?.pitch !== 64 || addedLead.channel !== 0) {
     fail(`new imported melody note changed pitch/channel: ${JSON.stringify(addedLead)}`);
   }
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (count) => window.__sonareDebug.activeNotes().length === count,
     leadBefore.length,
@@ -260,7 +260,7 @@ export async function run({ page, baseUrl, fail }) {
     fail(`drum hit changed GM instrument or channel: ${JSON.stringify(addedDrum)}`);
   }
   await page.mouse.move(0, 0);
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     (count) => window.__sonareDebug.activeNotes().length === count,
     drumBefore.length,

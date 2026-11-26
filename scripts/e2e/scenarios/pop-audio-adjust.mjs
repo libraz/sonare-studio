@@ -46,7 +46,7 @@ export async function run({ page, fail }) {
     fail(`audio adjustments did not reach the clip: ${JSON.stringify(adjusted)}`);
   }
 
-  for (let undo = 0; undo < 3; undo++) await page.keyboard.press('Meta+z');
+  for (let undo = 0; undo < 3; undo++) await page.keyboard.press('ControlOrMeta+z');
   const restored = await page.evaluate((id) => window.__sonareDebug.clipSettings(id), audio.id);
   if (
     !restored ||

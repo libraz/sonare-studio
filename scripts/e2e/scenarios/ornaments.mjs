@@ -68,7 +68,7 @@ export async function run(ctx) {
   console.info(`ornaments applied: ${values.length} ${chosen.label.toLowerCase()} marks`);
 
   // One undo takes every mark back.
-  await page.keyboard.press('Meta+z');
+  await page.keyboard.press('ControlOrMeta+z');
   await page.waitForFunction(
     () => Object.keys(window.__sonareDebug.noteArticulations()).length === 0,
     null,
