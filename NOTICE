@@ -5,6 +5,10 @@ sonare studio is licensed under the GNU Affero General Public License v3.0 or
 later; see LICENSE. The built app bundles the third-party components below,
 each under its own licence. Development-only tools are not listed.
 
+The test SoundFont scripts/e2e/fixtures/minimal_gs.sf2 contains a synthetic
+1 kHz sine wave. The source script beside it, generate-minimal-gs.mjs,
+reproduces the complete bank byte for byte without external input.
+
 ================================================================================
 libsonare (audio engine, sonare.wasm)
 ================================================================================
