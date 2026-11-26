@@ -1,10 +1,78 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   INSERT_PARAM_DOMAIN_FALLBACK,
   insertParamDomain,
   insertParamDomainEntries,
 } from '@/project/insert-param-domains';
-import { FAKE_INSERT_PARAMS } from './fake-wasm';
+import { coreWasmBinary } from './core-package';
+import {
+  FAKE_INSERT_PARAMS,
+  FAKE_OFFLINE_PROCESSOR_PARAMS,
+  FAKE_UNMIRRORED_INSERTS,
+} from './fake-wasm';
+
+describe('packed insert parameter catalog', () => {
+  it('matches every fake parameter row to the shipped descriptors', async () => {
+    const actual = await vi.importActual<typeof import('@libraz/libsonare')>('@libraz/libsonare');
+    await actual.init({ wasmBinary: coreWasmBinary() });
+    const insertNames = actual.masteringInsertNames();
+    const shipped: readonly string[] = insertNames;
+    const processorCatalog = actual.masteringProcessorCatalog();
+
+    const differences: Array<{
+      processor: string;
+      missing: string[];
+      extra: string[];
+    }> = [];
+    const compare = (processor: string, packedNames: string[], fakeNames: string[] | undefined) => {
+      const fake = new Set(fakeNames ?? []);
+      const packed = new Set(packedNames);
+      const missing = [...packed].filter((name) => !fake.has(name)).sort();
+      const extra = [...fake].filter((name) => !packed.has(name)).sort();
+      if (fakeNames === undefined || missing.length || extra.length) {
+        differences.push({ processor, missing, extra });
+      }
+    };
+    // A shipped insert is either mirrored exactly or listed as unmirrored, so a new one forces a choice.
+    for (const insert of insertNames) {
+      if (FAKE_INSERT_PARAMS[insert] === undefined && FAKE_UNMIRRORED_INSERTS.includes(insert))
+        continue;
+      compare(insert, actual.masteringInsertParamNames(insert), FAKE_INSERT_PARAMS[insert]);
+    }
+    for (const insert of FAKE_UNMIRRORED_INSERTS) {
+      if (!shipped.includes(insert) || FAKE_INSERT_PARAMS[insert] !== undefined) {
+        differences.push({ processor: insert, missing: [], extra: ['listed as unmirrored'] });
+      }
+    }
+    for (const processor of Object.keys(FAKE_INSERT_PARAMS)) {
+      if (!shipped.includes(processor)) {
+        differences.push({
+          processor,
+          missing: [],
+          extra: [...FAKE_INSERT_PARAMS[processor]].sort(),
+        });
+      }
+    }
+    // The fake catalog carries a chosen subset of the offline processors.
+    for (const [processor, fakeNames] of Object.entries(FAKE_OFFLINE_PROCESSOR_PARAMS)) {
+      const entry = processorCatalog.find((candidate) => candidate.id === processor);
+      const descriptors =
+        entry?.offlineParams ?? (entry?.kind === 'offline' ? entry.params : undefined);
+      if (!descriptors) {
+        differences.push({ processor, missing: [], extra: [...fakeNames].sort() });
+        continue;
+      }
+      compare(
+        processor,
+        descriptors.map((descriptor) =>
+          typeof descriptor === 'string' ? descriptor : descriptor.name,
+        ),
+        fakeNames,
+      );
+    }
+    expect(differences, 'fake insert rows must match the packed catalog').toEqual([]);
+  });
+});
 
 describe('insertParamDomain', () => {
   it('only declares domains for parameter names the engine catalog exposes', () => {

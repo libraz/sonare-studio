@@ -90,6 +90,7 @@ import {
   type NoteProvenanceHints,
   refreshTempoMeter,
 } from './store-refresh';
+import { normalizeProjectInsertParams } from './strip-insert-params';
 import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import {
   DEFAULT_SECTION_COLOR,
@@ -578,7 +579,7 @@ export const useProjectStore = defineStore('project', () => {
    *
    * @param doc Document produced by serializeProject() or a template.
    */
-  async function loadDocument(doc: ProjectDocument): Promise<void> {
+  async function loadDocument(doc: ProjectDocument): Promise<ProjectDocument> {
     if (
       !Number.isInteger(doc.schemaVersion) ||
       doc.schemaVersion < 1 ||
@@ -586,14 +587,17 @@ export const useProjectStore = defineStore('project', () => {
     ) {
       throw new Error(`Unsupported project document schema version: ${doc.schemaVersion}`);
     }
+    const previousWasmModuleAtEntry = currentWasmModule();
+    const mod = await ensureWasm();
+    doc = normalizeProjectInsertParams(doc, mod, {
+      sampleRate: doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE,
+    });
     // A stored return solo with no slot left for its discard sink loads unsoloed.
     const loadedBuses = busesWithRoutableSolo(doc.mixer?.buses ?? [], doc.tracks);
     const engineBusTotal = engineBusCount(loadedBuses, doc.tracks);
     if (engineBusTotal > MAX_MIXER_BUSES) {
       throw new RangeError(`Mixer bus limit exceeded (${engineBusTotal}/${MAX_MIXER_BUSES})`);
     }
-    const previousWasmModuleAtEntry = currentWasmModule();
-    const mod = await ensureWasm();
     let restorePreviousState: (() => void) | null = null;
     setWasmModule(mod);
     const created = new mod.Project();
@@ -896,6 +900,7 @@ export const useProjectStore = defineStore('project', () => {
       created.destroy();
       throw error;
     }
+    return doc;
   }
 
   /**

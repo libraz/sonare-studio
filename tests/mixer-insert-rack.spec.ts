@@ -159,7 +159,7 @@ describe('InsertRack sidechain source options', () => {
     });
 
     await wrapper.find('.insert-name').trigger('click');
-    expect(wrapper.findAll('.insert-param-toggle')).toHaveLength(2);
+    expect(wrapper.findAll('.insert-param-toggle')).toHaveLength(1);
     expect(wrapper.find('.insert-param-select').exists()).toBe(true);
 
     await wrapper.find('.insert-param-toggle').trigger('click');

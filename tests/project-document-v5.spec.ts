@@ -35,6 +35,7 @@ beforeAll(async () => {
     wasmBinary: coreWasmBinary(),
   } as Parameters<typeof wasm.init>[0]);
   setWasmModule(wasm);
+  wasm.masteringProcessorCatalog();
 });
 
 describe('unit conversions', () => {
@@ -114,7 +115,7 @@ describe('mastering overrides', () => {
     });
   });
 
-  it('migrates every 1.x preset parameter set without a drop, onto the 2.0 preset values', () => {
+  it('migrates each 1.x preset onto its 2.0 values and reports the retired declipper blend', () => {
     // masteringPresetParams of every preset, recorded from the 1.x core.
     const recorded: { keys: string[]; presets: Record<string, Array<number | boolean>> } =
       JSON.parse(
@@ -125,7 +126,13 @@ describe('mastering overrides', () => {
       expect(presetNames.has(name), name).toBe(true);
       const flat = Object.fromEntries(recorded.keys.map((key, i) => [key, values[i]]));
       const { overrides, dropped } = upgradeMasteringOverrides(flat, name, wasm);
-      expect(dropped, name).toEqual([]);
+      expect(dropped, name).toEqual([
+        {
+          key: 'repair.declip.lpcBlend',
+          value: flat['repair.declip.lpcBlend'],
+          reason: 'The declipper no longer blends interpolation into LPC',
+        },
+      ]);
       const current = leaves(wasm.masteringPresetParams(name as wasm.MasteringPreset));
       for (const [path, value] of Object.entries(leaves(overrides))) {
         if (typeof value === 'number')

@@ -19,4 +19,34 @@ describe('buildReport clipping with many regions', () => {
     expect(report.clipping?.regionCount).toBe(count * 2);
     expect(report.clipping?.firstRegionStartSample).toBe(5);
   });
+
+  it('omits unmeasured loudness windows and dynamic range', () => {
+    const report = buildReport(new Float32Array([0]), new Float32Array([0]), 48000, 1, {
+      multichannelLufs: () => ({ integratedLufs: Number.NEGATIVE_INFINITY }),
+      dynamicRangeDb: () => undefined,
+    });
+
+    expect(report.lufs).toBe(Number.NEGATIVE_INFINITY);
+    expect(report).not.toHaveProperty('momentaryLufs');
+    expect(report).not.toHaveProperty('shortTermLufs');
+    expect(report).not.toHaveProperty('loudnessRangeLu');
+    expect(report).not.toHaveProperty('dynamicRangeDb');
+  });
+
+  it('preserves measured silence and an infinite dynamic range', () => {
+    const report = buildReport(new Float32Array([0.25, 0]), new Float32Array([0, 0]), 48000, 2, {
+      multichannelLufs: () => ({
+        integratedLufs: -19,
+        momentaryLufs: Number.NEGATIVE_INFINITY,
+        shortTermLufs: Number.NEGATIVE_INFINITY,
+      }),
+      dynamicRangeDb: () => Number.POSITIVE_INFINITY,
+    });
+
+    expect(report.lufs).toBe(-19);
+    expect(report.momentaryLufs).toBe(Number.NEGATIVE_INFINITY);
+    expect(report.shortTermLufs).toBe(Number.NEGATIVE_INFINITY);
+    expect(report).not.toHaveProperty('loudnessRangeLu');
+    expect(report.dynamicRangeDb).toBe(Number.POSITIVE_INFINITY);
+  });
 });

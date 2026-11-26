@@ -106,7 +106,7 @@ describe('track freeze and bounce-in-place', () => {
 
     it('takes the release tail from the engine instead of a fixed freeze tail', async () => {
       const voxId = addAudioTrack({ name: 'Vox' });
-      addInsert(voxId, 'effects.reverb.plate', { decaySeconds: 6 });
+      addInsert(voxId, 'effects.reverb.plate', { decaySec: 6 });
 
       await freezeTrack(voxId, { render, ingest });
 
@@ -243,7 +243,7 @@ describe('track freeze and bounce-in-place', () => {
 
     it('keeps the requested clip length while rendering a reverb tail', async () => {
       const gtrId = addAudioTrack({ name: 'Gtr' });
-      addInsert(gtrId, 'effects.reverb.plate', { decaySeconds: 6 });
+      addInsert(gtrId, 'effects.reverb.plate', { decaySec: 6 });
 
       const clipId = await bounceTrackRange(gtrId, 4, 12, { render, ingest });
 

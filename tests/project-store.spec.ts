@@ -67,6 +67,12 @@ describe('project store', () => {
     project.setTempoSegments([{ startPpq: 0, bpm: 110 }]);
     project.setTempoSegments([{ startPpq: 0, bpm: 120 }]);
 
+    expect(() => Reflect.apply(project.setMaxUndoDepth, project, [undefined])).toThrowError(
+      new TypeError('depth must be an integer'),
+    );
+    expect(() => project.setMaxUndoDepth(0)).toThrow(RangeError);
+    expect(() => project.setMaxUndoDepth(500_000_001)).toThrow(RangeError);
+
     project.undo();
     project.undo();
     project.undo();

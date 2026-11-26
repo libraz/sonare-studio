@@ -204,7 +204,7 @@ describe('mergeMixerSnapshot', () => {
             name: 'FX Snap',
             gainDb: -4,
             strip: strip({
-              inserts: [{ processor: 'saturation.tape', params: { drive: 0.3 }, enabled: true }],
+              inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.3 }, enabled: true }],
             }),
           },
         ],
@@ -215,7 +215,7 @@ describe('mergeMixerSnapshot', () => {
     const { mixer: nextMixer } = mergeMixerSnapshot(snap, [track(1)]);
     expect(nextMixer.buses[0]).toMatchObject({ id: 'fx', name: 'FX Snap', gainDb: -4 });
     expect(nextMixer.buses[0].strip?.inserts).toEqual([
-      { processor: 'saturation.tape', params: { drive: 0.3 }, enabled: true },
+      { processor: 'saturation.tape', params: { driveDb: 0.3 }, enabled: true },
     ]);
     expect(nextMixer.vcaGroups?.[0]).toEqual({ id: 'vca-1', name: 'Snap VCA', gainDb: -5 });
   });
@@ -273,7 +273,7 @@ describe('mergeMixerSnapshot', () => {
             {
               id: 'snapshot-track-insert',
               processor: 'saturation.tape',
-              params: { drive: 0.4 },
+              params: { driveDb: 0.4 },
               enabled: true,
             },
           ],

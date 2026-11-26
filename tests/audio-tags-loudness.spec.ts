@@ -4,12 +4,6 @@ import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import { type AudioAnalysisFunctions, analyzeAudioTags } from '@/project/audio-tags';
 
-vi.mock('@/lib/wasm', async () => {
-  const { createFakeWasmModule } = await import('./fake-wasm');
-  const fakeModule = createFakeWasmModule();
-  return { ensureWasm: async () => fakeModule };
-});
-
 const SAMPLE_RATE = 48000;
 
 /** Returns the tags the import would store, without touching storage. */
@@ -81,6 +75,21 @@ describe('asset loudness tag', () => {
       channels: 2,
     });
     expect(tags.lufs).toBeUndefined();
+  });
+});
+
+describe('asset tempo tag', () => {
+  it('leaves BPM absent when detectBpm finds no tempo', () => {
+    const mono = new Float32Array([0.1, 0.2]);
+    const detectBpm = vi.fn<NonNullable<AudioAnalysisFunctions['detectBpm']>>();
+    detectBpm.mockReturnValueOnce(undefined).mockReturnValueOnce(112.5);
+
+    expect(analyzeAudioTags(mono, SAMPLE_RATE, { detectBpm })).not.toHaveProperty('bpm');
+    expect(analyzeAudioTags(mono, SAMPLE_RATE, { detectBpm })).toEqual({ bpm: 112.5 });
+    expect(detectBpm.mock.calls).toEqual([
+      [mono, SAMPLE_RATE],
+      [mono, SAMPLE_RATE],
+    ]);
   });
 });
 

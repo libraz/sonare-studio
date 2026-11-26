@@ -54,12 +54,12 @@ describe('engine declaration helpers', () => {
       ...createDefaultStrip(),
       inserts: [
         { processor: 'dynamics.compressor', params: {}, enabled: false },
-        { processor: 'saturation.tape', params: { drive: 0.5 }, enabled: true },
+        { processor: 'saturation.tape', params: { driveDb: 0.5 }, enabled: true },
       ],
     };
 
     expect(engineBusStrip(strip)?.inserts).toEqual([
-      { processor: 'saturation.tape', params: { drive: 0.5 }, enabled: true },
+      { processor: 'saturation.tape', params: { driveDb: 0.5 }, enabled: true },
     ]);
     expect(strip.inserts).toHaveLength(2);
   });

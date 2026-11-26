@@ -16,6 +16,6 @@ export interface MatchEqAnalysis {
   curve: MatchEqCurveResult;
   /** Tonal-balance bands, low to high. */
   tonalBalance: MatchTonalBalanceBand[];
-  /** Loudness comparison, or null when a silent take gave no loudness. */
-  loudness: Required<MatchReferenceLoudnessResult> | null;
+  /** Required source/reference measurements; gain is absent if either side is silent. */
+  loudness: MatchReferenceLoudnessResult;
 }

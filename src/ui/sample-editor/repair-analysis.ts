@@ -36,7 +36,7 @@ export function repairChannelLabel(index: number, count: number): string {
 
 /**
  * Lists the defects a channel actually shows (non-zero counts, a found hum)
- * plus its noise floor.
+ * plus its noise floor when there is a measurement.
  *
  * @param defects - One channel's defect block from the analysis.
  */
@@ -52,8 +52,11 @@ export function repairDefectItems(defects: MasteringAudioProfileDefects): Repair
   if (defects.hum.fundamentalHz > 0) {
     items.push({ kind: 'hum', value: `${Math.round(defects.hum.fundamentalHz)} Hz` });
   }
-  if (Number.isFinite(defects.noise.floorDbfs)) {
-    items.push({ kind: 'noise', value: `${defects.noise.floorDbfs.toFixed(0)} dBFS` });
+  const noiseFloor = defects.noise.floorDbfs;
+  if (noiseFloor === Number.NEGATIVE_INFINITY) {
+    items.push({ kind: 'noise', value: '-∞ dBFS' });
+  } else if (noiseFloor !== undefined && Number.isFinite(noiseFloor)) {
+    items.push({ kind: 'noise', value: `${noiseFloor.toFixed(0)} dBFS` });
   }
   return items;
 }

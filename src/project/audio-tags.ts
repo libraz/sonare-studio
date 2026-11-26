@@ -35,7 +35,7 @@ export interface AudioAnalysisFunctions {
     sampleRate: number,
   ) => Pick<BpmAnalysisResult, 'bpm'> & Partial<Pick<BpmAnalysisResult, 'confidence'>>;
   /** Returns the detected tempo in BPM (mono samples + sample rate). */
-  detectBpm?: (samples: Float32Array, sampleRate: number) => number;
+  detectBpm?: (samples: Float32Array, sampleRate: number) => number | undefined;
   /** Returns the detected key; an off-pitch recording is read on its own pitch grid. */
   detectKey?: (
     samples: Float32Array,

@@ -12,7 +12,6 @@ function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
     peakDbR: -6,
     rmsDbL: -12,
     rmsDbR: -12,
-    correlation: 0,
     ...levels,
   };
   return fakeMeterSource(full);
@@ -144,6 +143,23 @@ describe('MasterMeterReadout', () => {
     });
     await tick(wrapper);
     expect(wrapper.find('.mm-corr-fill').classes()).toContain('neg');
+  });
+
+  it('shows measured silence and waits for a correlation reading', async () => {
+    wrapper = mount(MasterMeterReadout, {
+      props: { bridge: sourceWith({ integratedLufs: -Infinity }) },
+    });
+    await tick(wrapper);
+    expect(wrapper.findAll('.mm-lufs .mm-value').map((cell) => cell.text())).toEqual([
+      '—',
+      '—',
+      '-∞',
+    ]);
+    expect(wrapper.find('.mm-corr').exists()).toBe(false);
+
+    await wrapper.setProps({ bridge: sourceWith({ integratedLufs: -Infinity, correlation: 0 }) });
+    await tick(wrapper, 400);
+    expect(wrapper.find('.mm-corr').attributes('aria-valuenow')).toBe('0');
   });
 
   it('stays hidden for a source without loudness data', async () => {

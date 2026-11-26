@@ -36,7 +36,7 @@ import {
   setVcaGroupMute,
   setVcaGroupSolo,
 } from '@/project/commands';
-import type { InsertSlot } from '@/project/mixer';
+import { createDefaultStrip, type InsertSlot } from '@/project/mixer';
 import {
   loadProjectDocument,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -66,6 +66,65 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
   it('writes schema version 5', () => {
     expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(5);
     expect(serializeProject().schemaVersion).toBe(5);
+  });
+
+  it('normalizes a saved v5 detector key and preserves full strip width', async () => {
+    const doc = serializeProject();
+    const bandAbsorption = Array.from({ length: 6 }, () => 0.1);
+    doc.tracks[0].mixer = {
+      ...createDefaultStrip(),
+      width: 2,
+      inserts: [
+        {
+          processor: 'eq.parametric',
+          enabled: true,
+          params: { 'band0.frequencyHz': 1000, 'band0.dynamic': true, 'band0.lookaheadMs': 2 },
+        },
+        {
+          processor: 'effects.acoustic.roomMorph',
+          enabled: true,
+          params: JSON.parse(JSON.stringify({ bandAbsorption })),
+        },
+      ],
+    };
+
+    await loadProjectDocument(doc);
+
+    expect(store.tracks[0].mixer?.width).toBe(2);
+    expect(store.tracks[0].mixer?.inserts[0].params).toEqual({
+      'band0.frequencyHz': 1000,
+      'band0.dynamic': true,
+      'band0.detectorDelayMs': 2,
+    });
+    expect(doc.tracks[0].mixer.inserts[0].params).toHaveProperty(['band0.lookaheadMs'], 2);
+    expect(store.tracks[0].mixer?.inserts[1].params).toEqual({ bandAbsorption });
+  });
+
+  it('rejects indexed v5 insert refusals before replacing the open project', async () => {
+    const previousTrack = store.tracks[0];
+    const doc = serializeProject();
+    doc.mixer = {
+      buses: [],
+      master: {
+        ...createDefaultStrip(),
+        inserts: [
+          { processor: 'eq.tilt', enabled: true, params: {} },
+          { processor: 'eq.tilt', enabled: true, params: { unknownParam: false } },
+        ],
+      },
+    };
+    const unknown = loadProjectDocument(doc);
+    await expect(unknown).rejects.toBeInstanceOf(TypeError);
+    await expect(unknown).rejects.toThrow(
+      'mixer.master.inserts[1]: masteringInsertTiming: unknown key params.unknownParam',
+    );
+    doc.mixer.master.inserts[1].params = { tiltDb: Number.POSITIVE_INFINITY };
+    const outOfDomain = loadProjectDocument(doc);
+    await expect(outOfDomain).rejects.toBeInstanceOf(RangeError);
+    await expect(outOfDomain).rejects.toThrow(
+      'mixer.master.inserts[1]: masteringInsertTiming: params.tiltDb must be finite',
+    );
+    expect(store.tracks[0]).toBe(previousTrack);
   });
 
   it('omits instrument/mixer fields while everything is default', () => {
@@ -563,7 +622,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
 
   it('persists mixer snapshot slots with document-track-index bindings', async () => {
     const trackId = store.tracks[0].id;
-    addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+    addInsert(trackId, 'saturation.tape', { driveDb: 0.4 });
     const processorId = store.tracks[0].mixer?.inserts[0].id as string;
     store.automationLanes = [
       {

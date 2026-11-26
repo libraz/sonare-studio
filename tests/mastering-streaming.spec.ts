@@ -51,7 +51,29 @@ describe('streamingTargetsFromPreview', () => {
     expect(streamingTargetsFromPreview({ platforms: [] })).toEqual([]);
   });
 
-  it('drops entries without a name and leaves an absent loudness absent', () => {
+  it('preserves measured silence and an absent normalization gain', () => {
+    expect(
+      streamingTargetsFromPreview({
+        platforms: [
+          {
+            name: 'Spotify',
+            integratedLufs: Number.NEGATIVE_INFINITY,
+            truePeakDbtp: Number.NEGATIVE_INFINITY,
+            ceilingRisk: false,
+          },
+        ],
+      }),
+    ).toStrictEqual([
+      {
+        name: 'Spotify',
+        integratedLufs: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: Number.NEGATIVE_INFINITY,
+        ceilingRisk: false,
+      },
+    ]);
+  });
+
+  it('drops entries without a name and preserves platforms with no gain', () => {
     const result = streamingTargetsFromPreview({
       platforms: [
         {
@@ -61,11 +83,21 @@ describe('streamingTargetsFromPreview', () => {
           normalizationGainDb: 0,
           ceilingRisk: false,
         },
-        { name: 'YouTube', truePeakDbtp: -3, normalizationGainDb: 0, ceilingRisk: false },
+        {
+          name: 'YouTube',
+          integratedLufs: Number.NEGATIVE_INFINITY,
+          truePeakDbtp: -3,
+          ceilingRisk: false,
+        },
       ],
     });
     expect(result).toEqual([
-      { name: 'YouTube', truePeakDbtp: -3, normalizationGainDb: 0, ceilingRisk: false },
+      {
+        name: 'YouTube',
+        integratedLufs: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: -3,
+        ceilingRisk: false,
+      },
     ]);
   });
 });
@@ -128,5 +160,60 @@ describe('streaming target helpers', () => {
         { name: 'Spotify', targetLufs: -14, ceilingDbtp: -1 },
       ]),
     ).toBeNull();
+  });
+
+  it('requires measured true peak instead of relabeling sample peak as dBTP', () => {
+    expect(
+      streamingTargetsFromReport({ peakDb: -1, lufs: -14 }, [
+        { name: 'Spotify', targetLufs: -14, ceilingDbtp: -1 },
+      ]),
+    ).toBeNull();
+  });
+
+  it('keeps a silent report measured and leaves normalization gain absent', () => {
+    const targets = streamingTargetsFromReport(
+      {
+        peakDb: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: Number.NEGATIVE_INFINITY,
+        lufs: Number.NEGATIVE_INFINITY,
+      },
+      [{ name: 'Spotify', targetLufs: -14, ceilingDbtp: -1 }],
+    );
+    expect(targets).toEqual([
+      {
+        name: 'Spotify',
+        integratedLufs: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: Number.NEGATIVE_INFINITY,
+        ceilingRisk: false,
+      },
+    ]);
+    expect(targets?.[0]).not.toHaveProperty('normalizationGainDb');
+  });
+
+  it('treats absent true peak differently from measured silent true peak', () => {
+    const platforms = [{ name: 'Spotify', targetLufs: -14, ceilingDbtp: -1 }];
+    expect(
+      streamingTargetsFromReport(
+        { peakDb: Number.NEGATIVE_INFINITY, lufs: Number.NEGATIVE_INFINITY },
+        platforms,
+      ),
+    ).toBeNull();
+    expect(
+      streamingTargetsFromReport(
+        {
+          peakDb: Number.NEGATIVE_INFINITY,
+          lufs: Number.NEGATIVE_INFINITY,
+          truePeakDbtp: Number.NEGATIVE_INFINITY,
+        },
+        platforms,
+      ),
+    ).toEqual([
+      {
+        name: 'Spotify',
+        integratedLufs: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: Number.NEGATIVE_INFINITY,
+        ceilingRisk: false,
+      },
+    ]);
   });
 });

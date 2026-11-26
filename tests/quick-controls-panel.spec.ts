@@ -168,7 +168,7 @@ describe('QuickControls.vue', () => {
       props: { target: { type: 'insert', trackId, index: 0 } },
     });
 
-    expect(wrapper.findAll('.qc-toggle')).toHaveLength(2);
+    expect(wrapper.findAll('.qc-toggle')).toHaveLength(1);
     expect(wrapper.find('.qc-select').exists()).toBe(true);
 
     await wrapper.find('.qc-toggle').trigger('click');

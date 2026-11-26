@@ -8,22 +8,12 @@ const hoisted = vi.hoisted(() => ({
   captured: [] as EngineCreateOptions[],
 }));
 
-vi.mock('@libraz/libsonare/worklet', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@libraz/libsonare/worklet')>();
-  return {
-    ...actual,
-    init: vi.fn(async () => undefined),
-    SonareEngine: {
-      create: vi.fn(async (_ctx: unknown, options: EngineCreateOptions) => {
-        hoisted.captured.push(options);
-        throw new Error('captured');
-      }),
-    },
-  };
-});
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: vi.fn(async () => ({})),
+}));
 vi.mock('@libraz/libsonare/wasm?url', () => ({ default: '/sonare.wasm' }));
 
-import { SonareRealtimeEngineNode } from '@libraz/libsonare/worklet';
+import { SonareEngine, SonareRealtimeEngineNode } from '@libraz/libsonare/worklet';
 import { createEngine } from '@/engine/engine';
 import { fakeAudioContext } from './fakes/engine';
 
@@ -32,6 +22,7 @@ class NodeConstructionReached extends Error {}
 describe('createEngine options', () => {
   afterEach(() => {
     hoisted.captured.length = 0;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -47,6 +38,10 @@ describe('createEngine options', () => {
         close = vi.fn(async () => undefined);
       },
     );
+    vi.spyOn(SonareEngine, 'create').mockImplementation(async (_ctx, options) => {
+      hoisted.captured.push(options as EngineCreateOptions);
+      throw new Error('captured');
+    });
     await expect(createEngine()).rejects.toThrow('captured');
     const [options] = hoisted.captured;
     expect(options).toBeDefined();

@@ -38,6 +38,7 @@ describe('recorder input processor crash', () => {
   it('tears down the binding and notifies onInputProcessorError, not onMicrophoneLost', async () => {
     const handle = fakeEngineHandle({
       engine: {
+        setInputMonitor: vi.fn(),
         node: {},
         configureCapture: vi.fn(),
         resetCapture: vi.fn(async () => {}),

@@ -731,9 +731,9 @@ describe('DeviceRack.vue', () => {
   it('can add modulation processors when the runtime insert catalog exposes them', async () => {
     const wrapper = mount(DeviceRack);
 
-    await selectOption(wrapper, '.add-insert', 'Rotary (modulation)');
+    await selectOption(wrapper, '.add-insert', 'Modulation Rotary (effects)');
 
-    expect(store.tracks[0].mixer?.inserts[0].processor).toBe('modulation.rotary');
+    expect(store.tracks[0].mixer?.inserts[0].processor).toBe('effects.modulation.rotary');
     expect(wrapper.find('[data-control="speed"]').exists()).toBe(true);
   });
 

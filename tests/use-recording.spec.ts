@@ -698,7 +698,7 @@ describe('useRecording', () => {
       channels: [new Float32Array(24000)],
       sampleRate: 48000,
       startPpq: 0,
-      overflowCount: 12,
+      droppedFrames: 37,
     });
 
     expect(await recording.record()).toBe(true);
@@ -709,6 +709,22 @@ describe('useRecording', () => {
     expect(recording.error.value).toBe(
       'Recording reached the capture buffer limit; the end of the take was dropped.',
     );
+  });
+
+  it('does not mark a take partial when no frames were dropped', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    fake.setResult({
+      channels: [new Float32Array(24000)],
+      sampleRate: 48000,
+      startPpq: 0,
+      droppedFrames: 0,
+    });
+
+    expect(await recording.record()).toBe(true);
+    expect(await recording.stopRecord()).not.toBeNull();
+    expect(recording.error.value).toBeNull();
   });
 
   it('pre-rolls the count-in with a temporary metronome and restores it', async () => {
@@ -1336,6 +1352,51 @@ describe('useRecording', () => {
     recording.dispose();
     expect(fake.rec.dispose).toHaveBeenCalledTimes(1);
     expect(recording.micReady.value).toBe(false);
+  });
+
+  it('unsubscribes old recorder listeners before resetting its binding', async () => {
+    const { recording, fake, factory } = setup();
+    await recording.requestMic();
+    vi.mocked(fake.rec.dispose).mockImplementation(() => fake.emitLevel(0.6));
+
+    recording.setVoiceChangerPreset('brightIdol');
+
+    expect(fake.rec.dispose).toHaveBeenCalledOnce();
+    expect(recording.micReady.value).toBe(false);
+    expect(recording.inputLevel.value).toBe(0);
+    fake.emitLevel(0.9);
+    expect(recording.inputLevel.value).toBe(0);
+    await recording.requestMic();
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the old recorder before replacing its engine binding', async () => {
+    const { recording, handleRef, fake, factory } = setup();
+    await recording.requestMic();
+    vi.mocked(fake.rec.dispose).mockImplementation(() => fake.emitLevel(0.7));
+    handleRef.value = fakeEngineHandle({ ctx: { sampleRate: 44_100 } });
+
+    await recording.requestMic();
+
+    expect(fake.rec.dispose).toHaveBeenCalledOnce();
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(recording.micReady.value).toBe(true);
+    expect(recording.inputLevel.value).toBe(0);
+  });
+
+  it('clears recording scope state even when recorder disposal throws', async () => {
+    const { recording, fake } = setup();
+    await recording.requestMic();
+    const failure = new TypeError('recorder disposal failed');
+    vi.mocked(fake.rec.dispose).mockImplementation(() => {
+      throw failure;
+    });
+
+    expect(() => recording.dispose()).toThrow(failure);
+    expect(recording.micReady.value).toBe(false);
+    expect(recording.inputLevel.value).toBe(0);
+    expect(recording.isRecording.value).toBe(false);
+    expect(recording.state.value).toBe('idle');
   });
 
   it('clears the count-in timer when its owning scope is stopped', async () => {

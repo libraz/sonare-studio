@@ -33,8 +33,6 @@ type StreamingRetuneProcessorOptions = StreamingRetuneConfig & {
   numChannels?: number;
 };
 
-type EngineProcessor = InstanceType<typeof SonareRealtimeEngineWorkletProcessor>;
-
 type WorkletGlobal = typeof globalThis & {
   SonareEmbindInitPromise?: Promise<void>;
 };
@@ -126,38 +124,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
   }
 
   private dispatch(data: unknown): void {
-    if (!this.bridge || data === null || typeof data !== 'object') {
-      return;
-    }
-    const type = (data as { type?: unknown }).type;
-    if (typeof type === 'number') {
-      this.bridge.receiveCommand(data as Parameters<EngineProcessor['receiveCommand']>[0]);
-    } else if (type === 'captureRequest') {
-      // Capture and transport RPCs have dedicated handlers that post the
-      // matching response back over the port; routing them into receiveSync
-      // would silently drop them and hang the caller's promise.
-      this.bridge.receiveCaptureRequest(
-        data as Parameters<EngineProcessor['receiveCaptureRequest']>[0],
-      );
-    } else if (type === 'transportRequest') {
-      this.bridge.receiveTransportRequest(
-        data as Parameters<EngineProcessor['receiveTransportRequest']>[0],
-      );
-    } else if (type === 'insertGainReductionRequest') {
-      this.bridge.receiveInsertGainReductionRequest(
-        data as Parameters<EngineProcessor['receiveInsertGainReductionRequest']>[0],
-      );
-    } else if (type === 'engineReadRequest') {
-      this.bridge.receiveReadRequest(data as Parameters<EngineProcessor['receiveReadRequest']>[0]);
-    } else if (typeof type === 'string' && type.startsWith('sync')) {
-      // The facade's control-plane contract: every `sync*` message must reach
-      // the bridge (libsonare does not export a canonical list, so match the
-      // documented prefix contract).
-      this.bridge.receiveSync(data as Parameters<EngineProcessor['receiveSync']>[0]);
-    } else {
-      // Ring commands posted after an ordered message wait for its sequence.
-      this.bridge.noteSyncSequence((data as { syncSequence?: unknown }).syncSequence);
-    }
+    this.bridge?.receiveMessage(data);
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {

@@ -26,8 +26,24 @@ import type { TempoSegment } from './types';
 /** Project tempo used when a document or input carries no usable tempo. */
 export const DEFAULT_TEMPO_BPM = 120;
 
-/** Engine-side BPM floor; every BPM value is clamped to it. */
-const BPM_FLOOR = 1e-6;
+/** Inclusive limits on an explicitly authored tempo. */
+export const BPM_FLOOR = 1e-6;
+export const BPM_CEILING = 100_000;
+
+/** Preserves the playback floor applied to an older positive tempo, including ramp targets. */
+export function preserveLegacyTempoFloor(bpm: number): number {
+  return bpm > 0 && bpm < BPM_FLOOR ? BPM_FLOOR : bpm;
+}
+
+/** Copies a tempo row for a core call, preserving omission and the zero ramp sentinel. */
+export function preserveLegacyTempoSegmentFloor(segment: TempoSegment): TempoSegment {
+  const { startPpq, bpm, endBpm } = segment;
+  return {
+    startPpq,
+    bpm: preserveLegacyTempoFloor(bpm),
+    ...(endBpm === undefined ? {} : { endBpm: preserveLegacyTempoFloor(endBpm) }),
+  };
+}
 
 /** Minimum |endBpm - bpm| for a segment to count as a ramp. */
 const RAMP_EPSILON = 1e-9;

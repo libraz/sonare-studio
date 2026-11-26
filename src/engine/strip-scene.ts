@@ -24,6 +24,19 @@ export interface BusSceneOptions {
   channelLayout?: MixerChannelLayout;
 }
 
+/** Serializes the insert slots after the live or offline request has been validated. */
+function sceneInserts(
+  strip: MixerStrip | undefined,
+  insertCatalog: ReadonlySet<string> | null | undefined,
+): MixSceneInsert[] {
+  return (strip?.inserts ?? []).map((slot, index) => {
+    if (insertCatalog && !insertCatalog.has(slot.processor)) {
+      throw new RangeError(`Unsupported insert processor: ${slot.processor} at inserts[${index}]`);
+    }
+    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } } as MixSceneInsert;
+  });
+}
+
 /**
  * Builds the scene declaring one BUS strip's insert chain (group tracks;
  * exported for tests). Mirrors {@link stripScene} but yields the bus
@@ -35,12 +48,7 @@ export function busScene(
   insertCatalog?: ReadonlySet<string> | null,
   options: BusSceneOptions = {},
 ): MixSceneBusInput {
-  const inserts = (strip?.inserts ?? []).map((slot) => {
-    if (insertCatalog && !insertCatalog.has(slot.processor)) {
-      throw new Error(`Unsupported insert processor: ${slot.processor}`);
-    }
-    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } } as MixSceneInsert;
-  });
+  const inserts = sceneInserts(strip, insertCatalog);
   // The bus carries the same output trim/width/polarity stages a strip exposes;
   // each is emitted only when non-default so an unshaped bus stays byte-identical.
   const bus: MixSceneBusInput = { id: `bus-${busId}`, role: 'submix', inserts };
@@ -85,12 +93,7 @@ export function stripScene(
   strip: MixerStrip | undefined,
   insertCatalog?: ReadonlySet<string> | null,
 ): MixSceneStripInput {
-  const inserts = (strip?.inserts ?? []).map((slot) => {
-    if (insertCatalog && !insertCatalog.has(slot.processor)) {
-      throw new Error(`Unsupported insert processor: ${slot.processor}`);
-    }
-    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } } as MixSceneInsert;
-  });
+  const inserts = sceneInserts(strip, insertCatalog);
   const id = target === 'master' ? 'master' : `track-${target}`;
   const sceneStrip: MixSceneStripInput = { id, inserts };
   if (target === 'master') {

@@ -150,6 +150,7 @@ watch(
       <span class="mm-value">-{{ formatLevel(gainReduction) }}</span>
     </div>
     <div
+      v-if="levels.correlation !== undefined"
       class="mm-corr"
       role="meter"
       :aria-label="t.shell.mixer.loudness.correlation"

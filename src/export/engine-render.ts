@@ -77,6 +77,7 @@ import { effectiveTrackInstrument } from '@/project/instrument';
 import { audibleOutputBusId, effectiveTrackMute, masteringChainIsActive } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { hasSoundFontSlotConflict } from '@/project/soundfont-conflicts';
+import { normalizeProjectInsertParams } from '@/project/strip-insert-params';
 import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
 import { buildAudioClips, preflightAudioClipMemory } from './engine-render-clips';
 import {
@@ -190,11 +191,14 @@ export async function renderProjectWithEngine(
   input: ProjectDocument,
   options: EngineRenderOptions = {},
 ): Promise<MixdownResult> {
-  const doc = programOutputDocument(input);
-  const sampleRate = options.sampleRate ?? doc.sampleRate;
+  const sampleRate = options.sampleRate ?? input.sampleRate;
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Render sample rate must be finite and > 0, got ${sampleRate}`);
   }
+  const runtimeWasm = await ensureWasm();
+  const doc = programOutputDocument(
+    normalizeProjectInsertParams(input, runtimeWasm, { sampleRate }),
+  );
   if (doc.mixer?.masterLayout && doc.mixer.masterLayout !== 'stereo') {
     throw new RangeError('Surround master export is unavailable; select a stereo master layout');
   }
@@ -222,24 +226,23 @@ export async function renderProjectWithEngine(
   let masteringCapability: MasteringCapabilityLookup =
     options.masteringCapability ?? (() => undefined);
   if (!createEngine || deps === undefined) {
-    const wasm = await ensureWasm();
-    resampleAudio ??= wasm.resample;
+    resampleAudio ??= runtimeWasm.resample;
     if (!options.resolvePreset) {
-      resolvePreset = (preset: string) => resolvePresetName(wasm, preset);
+      resolvePreset = (preset: string) => resolvePresetName(runtimeWasm, preset);
     }
-    const catalog = wasm.masteringProcessorCatalog?.();
+    const catalog = runtimeWasm.masteringProcessorCatalog?.();
     if (!options.insertLatency) {
       resolveInsertLatency = insertLatencyResolverFromCatalog(
         catalog,
         sampleRate,
-        wasm.masteringInsertTiming,
+        runtimeWasm.masteringInsertTiming,
       );
     }
     if (!options.insertTail) {
       resolveInsertTail = insertTailResolverFromTiming(
         catalog,
         sampleRate,
-        wasm.masteringInsertTiming,
+        runtimeWasm.masteringInsertTiming,
       );
     }
     if (!options.masteringCapability) {
@@ -247,7 +250,7 @@ export async function renderProjectWithEngine(
     }
     if (!createEngine) {
       createEngine = (rate, blockSize) =>
-        new wasm.RealtimeEngine({
+        new runtimeWasm.RealtimeEngine({
           sampleRate: rate,
           maxBlockSize: blockSize,
           commandCapacity: 4096,

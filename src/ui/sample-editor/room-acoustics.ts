@@ -5,7 +5,7 @@
  * injected libsonare surface, like the other wasm-delegated operations.
  */
 
-import type { MaterialPresetName, RirDiagnostic } from '@libraz/libsonare';
+import type { AcousticResult, MaterialPresetName, RirDiagnostic } from '@libraz/libsonare';
 import { clamp, minOf } from '@/lib/math';
 import type { SampleRange } from './ops';
 import {
@@ -142,82 +142,84 @@ export function synthesizeRirChannels(
 
 /** Display-oriented subset of libsonare's room estimation result. */
 export interface RoomEstimateSummary {
-  volume: number;
-  length: number;
-  width: number;
-  height: number;
-  drrDb: number;
+  volume?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  drrDb?: number;
   confidence: number;
-  rt60Mid: number;
-  absorptionMean: number;
-}
-
-interface AcousticAnalysisResult {
-  rt60: number;
-  edt: number;
-  c50: number;
-  c80: number;
-  d50: number;
-  rt60Bands: Float32Array;
-  edtBands: Float32Array;
-  c50Bands: Float32Array;
-  c80Bands: Float32Array;
-  confidence: number;
-  isBlind: boolean;
+  rt60Mid?: number;
+  absorptionMean?: number;
 }
 
 /** Display-oriented subset of libsonare's acoustic analysis result. */
 export interface AcousticAnalysisSummary {
   kind: 'impulse' | 'blind';
-  rt60: number;
-  edt: number;
-  c50: number;
-  c80: number;
-  d50: number;
+  rt60?: number;
+  edt?: number;
+  c50?: number;
+  c80?: number;
+  d50?: number;
   confidence: number;
-  rt60Mean: number;
-  edtMean: number;
+  rt60Mean?: number;
+  edtMean?: number;
   isBlind: boolean;
 }
 
-function averageFinite(values: ArrayLike<number> | undefined, min = -Infinity): number {
+function averageFinite(values: ArrayLike<number> | undefined, min = -Infinity): number | undefined {
   const finite = Array.from(values ?? []).filter((value) => Number.isFinite(value) && value >= min);
   return finite.length > 0
     ? finite.reduce((sum, value) => sum + value, 0) / finite.length
-    : Number.NaN;
+    : undefined;
 }
 
 function acousticSummary(
-  result: AcousticAnalysisResult,
+  result: AcousticResult,
   kind: AcousticAnalysisSummary['kind'],
 ): AcousticAnalysisSummary {
+  const rt60Mean = averageFinite(result.rt60Bands, 0);
+  const edtMean = averageFinite(result.edtBands, 0);
   return {
     kind,
-    rt60: result.rt60,
-    edt: result.edt,
-    c50: result.c50,
-    c80: result.c80,
-    d50: result.d50,
+    ...(result.rt60 === undefined ? {} : { rt60: result.rt60 }),
+    ...(result.edt === undefined ? {} : { edt: result.edt }),
+    ...(result.c50 === undefined ? {} : { c50: result.c50 }),
+    ...(result.c80 === undefined ? {} : { c80: result.c80 }),
+    ...(result.d50 === undefined ? {} : { d50: result.d50 }),
     confidence: result.confidence,
-    rt60Mean: averageFinite(result.rt60Bands, 0),
-    edtMean: averageFinite(result.edtBands, 0),
+    ...(rt60Mean === undefined ? {} : { rt60Mean }),
+    ...(edtMean === undefined ? {} : { edtMean }),
     isBlind: result.isBlind,
   };
 }
 
-/** Formats a measured value with its unit suffix, or a bare dash when it was not measured. */
-export function formatMeasure(value: number, digits: number, suffix: string): string {
-  return Number.isFinite(value) ? `${value.toFixed(digits)}${suffix}` : '—';
+/** Formats a measured value with its unit suffix, or uses the label for an unmeasured value. */
+export function formatMeasure(
+  value: number | undefined,
+  digits: number,
+  suffix: string,
+  unmeasured = '—',
+): string {
+  if (value === Number.POSITIVE_INFINITY) return `∞${suffix}`;
+  if (value === Number.NEGATIVE_INFINITY) return `-∞${suffix}`;
+  return value !== undefined && Number.isFinite(value)
+    ? `${value.toFixed(digits)}${suffix}`
+    : unmeasured;
 }
 
 /**
- * True when the estimate measured a room shape. The estimator reports NaN
- * dimensions when no decay is measurable.
+ * True when the estimate measured a room shape. Dimensions are absent when no
+ * decay is measurable.
  */
-export function roomEstimateHasGeometry(estimate: RoomEstimateSummary): boolean {
+export function roomEstimateHasGeometry(
+  estimate: RoomEstimateSummary,
+): estimate is RoomEstimateSummary & { length: number; width: number; height: number } {
   return (
+    estimate.length !== undefined &&
     finitePositive(estimate.length) &&
+    estimate.width !== undefined &&
     finitePositive(estimate.width) &&
+    estimate.height !== undefined &&
     finitePositive(estimate.height)
   );
 }
@@ -230,7 +232,7 @@ export function roomEstimateToPreset(estimate: RoomEstimateSummary): RoomMorphPr
   const { length, width, height } = estimate;
   const absorption = estimate.absorptionMean;
   let materialPreset: MaterialPresetName = 'wood';
-  if (Number.isFinite(absorption)) {
+  if (absorption !== undefined && Number.isFinite(absorption)) {
     if (absorption < 0.18) materialPreset = 'concrete';
     else if (absorption >= 0.5) materialPreset = 'carpet';
     else if (absorption >= 0.35) materialPreset = 'curtain';
@@ -259,15 +261,16 @@ export function estimateRoomRange(
   const mono = analysisMono(channels, range);
   const estimate = fn(mono, sampleRate, { mode: 'auto', nOctaveBands: 6 });
   const rt60Mid = averageFinite(estimate.rt60Bands, 0);
+  const absorptionMean = averageFinite(estimate.bandAbsorption, 0);
   return {
-    volume: estimate.volume,
-    length: estimate.lengthM,
-    width: estimate.widthM,
-    height: estimate.heightM,
-    drrDb: estimate.drrDb,
+    ...(estimate.volume === undefined ? {} : { volume: estimate.volume }),
+    ...(estimate.lengthM === undefined ? {} : { length: estimate.lengthM }),
+    ...(estimate.widthM === undefined ? {} : { width: estimate.widthM }),
+    ...(estimate.heightM === undefined ? {} : { height: estimate.heightM }),
+    ...(estimate.drrDb === undefined ? {} : { drrDb: estimate.drrDb }),
     confidence: estimate.confidence,
-    rt60Mid,
-    absorptionMean: averageFinite(estimate.bandAbsorption, 0),
+    ...(rt60Mid === undefined ? {} : { rt60Mid }),
+    ...(absorptionMean === undefined ? {} : { absorptionMean }),
   };
 }
 

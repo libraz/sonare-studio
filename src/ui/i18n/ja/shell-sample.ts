@@ -188,6 +188,7 @@ export const shellSample = {
     roomEstimateSize: 'サイズ',
     roomEstimateVolume: '体積',
     roomEstimateRt60: 'RT60',
+    rt60NotMeasured: '未測定',
     roomEstimateDrr: 'DRR',
     acousticEdt: 'EDT',
     acousticClarity: '明瞭度',

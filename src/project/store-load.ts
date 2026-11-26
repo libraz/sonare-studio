@@ -25,7 +25,7 @@ import {
 } from './runtime';
 import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
 import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf-shared';
-import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from './tempo-map';
+import { DEFAULT_TEMPO_BPM, normalizeTempoMap, preserveLegacyTempoFloor } from './tempo-map';
 import type {
   ClipKind,
   EditorClip,
@@ -354,9 +354,10 @@ export function hydrateProjectFromDocument(
   created.setTempoSegments(
     tempo.map((s) => ({
       startPpq: s.startPpq,
-      bpm: s.bpm,
-      // An unusable ramp target means no ramp (0), as in normalizeTempoMap.
-      endBpm: s.endBpm !== undefined && Number.isFinite(s.endBpm) && s.endBpm > 0 ? s.endBpm : 0,
+      bpm: preserveLegacyTempoFloor(s.bpm),
+      ...(s.endBpm !== undefined && Number.isFinite(s.endBpm) && s.endBpm > 0
+        ? { endBpm: preserveLegacyTempoFloor(s.endBpm) }
+        : {}),
     })),
   );
   if (doc.timeSignatures.length > 0) {

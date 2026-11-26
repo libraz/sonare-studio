@@ -16,7 +16,8 @@ import {
 } from './instrument';
 import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx';
 import { cloneStrip, createDefaultStrip, isMixerGainDb, type MixerStrip } from './mixer';
-import { getWasmModule } from './runtime';
+import { currentProject, DEFAULT_SAMPLE_RATE, getWasmModule } from './runtime';
+import { normalizeStripInsertParams } from './strip-insert-params';
 import type { EditorTrack } from './types';
 
 /**
@@ -85,9 +86,15 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
     throw new RangeError('Track preset strip must be an object');
   }
 
-  // The strip and instruments are JSON-only structures.  Clone first so no
-  // caller can retain mutable references into a saved preset.
-  const strip = cloneStrip(raw.strip as MixerStrip);
+  // Check the raw values before cloning so an invalid number keeps its error classification.
+  const storedStrip = raw.strip as MixerStrip;
+  const normalizedStrip =
+    Array.isArray(storedStrip.inserts) && storedStrip.inserts.length > 0
+      ? normalizeStripInsertParams({ ...storedStrip }, getWasmModule(), 'strip', {
+          sampleRate: currentProject()?.sampleRate ?? DEFAULT_SAMPLE_RATE,
+        })
+      : storedStrip;
+  const strip = cloneStrip(normalizedStrip);
   if (
     !isMixerGainDb(strip.gainDb) ||
     !Number.isFinite(strip.pan) ||
@@ -99,27 +106,11 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
   if (!Array.isArray(strip.inserts) || !Array.isArray(strip.sends)) {
     throw new RangeError('Track preset strip must contain inserts and sends arrays');
   }
-  for (const insert of strip.inserts) {
-    if (
-      !insert ||
-      typeof insert.processor !== 'string' ||
-      insert.processor.length === 0 ||
-      !insert.params ||
-      typeof insert.params !== 'object' ||
-      Array.isArray(insert.params) ||
-      typeof insert.enabled !== 'boolean'
-    ) {
-      throw new RangeError('Track preset contains an invalid insert');
+  strip.inserts.forEach((insert, index) => {
+    if (typeof insert.enabled !== 'boolean') {
+      throw new TypeError(`strip.inserts[${index}].enabled must be a boolean`);
     }
-    for (const [key, param] of Object.entries(insert.params)) {
-      if (
-        key.length === 0 ||
-        (typeof param !== 'boolean' && (typeof param !== 'number' || !Number.isFinite(param)))
-      ) {
-        throw new RangeError('Track preset contains invalid insert parameters');
-      }
-    }
-  }
+  });
   for (const send of strip.sends) {
     if (
       !send ||

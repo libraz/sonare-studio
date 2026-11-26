@@ -479,7 +479,7 @@ export async function loadProjectDocument(input: ProjectDocument): Promise<Upgra
   validateDocumentMixerRouting(doc.mixer, doc.tracks);
   normalizeDocumentSnapshotGroupSidechainKeys(doc.mixerSnapshots, doc.tracks);
   fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, validationTracks);
-  await store.loadDocument(doc);
+  const loadedDocument = await store.loadDocument(doc);
   resolveMixerSidechainSourceIds(store.mixer, store.tracks);
   // `store.loadDocument` resolves legacy track sidechain indices while it
   // rebuilds the native project. Group-bus references live only in the app
@@ -489,6 +489,8 @@ export async function loadProjectDocument(input: ProjectDocument): Promise<Upgra
     return { ...track, mixer: stripWithSidechainSourceIds(track.mixer, store.tracks, true) };
   });
   clearHistory();
-  importMixerSnapshotSlots(fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, store.tracks));
+  importMixerSnapshotSlots(
+    fromDocumentMixerSnapshotSlots(loadedDocument.mixerSnapshots, store.tracks),
+  );
   return dropped;
 }

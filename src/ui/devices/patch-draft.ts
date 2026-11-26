@@ -8,7 +8,12 @@
  * the base mod matrix.
  */
 
-import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@libraz/libsonare';
+import type {
+  SynthModRouting,
+  SynthParamCondition,
+  SynthParamInfo,
+  SynthPatchParamInfo,
+} from '@libraz/libsonare';
 import { clamp, isFiniteNumber } from '@/lib/math';
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
@@ -500,7 +505,7 @@ function conditionSubject(
   condition: SynthParamCondition,
   patch: StoredSynthPatch,
   engineInfo: ReadonlyArray<SynthParamInfo>,
-  patchInfo: ReadonlyArray<SynthParamInfo>,
+  patchInfo: ReadonlyArray<SynthPatchParamInfo>,
 ): unknown {
   if (condition.scope === 'engine') {
     const set = patch.engineParams?.[condition.key];
@@ -544,7 +549,7 @@ export function engineParamBlockers(
   info: SynthParamInfo,
   patch: StoredSynthPatch,
   engineInfo: ReadonlyArray<SynthParamInfo>,
-  patchInfo: ReadonlyArray<SynthParamInfo>,
+  patchInfo: ReadonlyArray<SynthPatchParamInfo>,
 ): SynthParamCondition[] | null {
   if (info.activeWhen === undefined) return null;
   let closest: SynthParamCondition[] | null = null;
@@ -560,7 +565,7 @@ export function engineParamBlockers(
 }
 
 /** Patch-level field descriptors from the loaded wasm; empty before init. */
-export function wasmPatchParamInfo(): SynthParamInfo[] {
+export function wasmPatchParamInfo(): SynthPatchParamInfo[] {
   try {
     return getWasmModule().synthPatchParamInfo();
   } catch {

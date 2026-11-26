@@ -2,16 +2,12 @@ import type { StreamingRetuneConfig } from '@libraz/libsonare/worklet';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { coreWasmBinary } from './core-package';
 
+const realCoreWasmBinary = coreWasmBinary();
+
 const {
   init,
   isInitialized,
-  receiveSync,
-  receiveCommand,
-  receiveCaptureRequest,
-  receiveTransportRequest,
-  receiveInsertGainReductionRequest,
-  receiveReadRequest,
-  noteSyncSequence,
+  engineReceiveMessage,
   voiceReceiveMessage,
   retuneSetConfig,
   retuneReset,
@@ -21,13 +17,7 @@ const {
 } = vi.hoisted(() => ({
   init: vi.fn<typeof import('@libraz/libsonare/worklet').init>(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
-  receiveSync: vi.fn(),
-  receiveCommand: vi.fn(),
-  receiveCaptureRequest: vi.fn(),
-  receiveTransportRequest: vi.fn(),
-  receiveInsertGainReductionRequest: vi.fn(),
-  receiveReadRequest: vi.fn(),
-  noteSyncSequence: vi.fn(),
+  engineReceiveMessage: vi.fn(),
   voiceReceiveMessage: vi.fn(),
   retuneSetConfig: vi.fn(),
   retuneReset: vi.fn(),
@@ -40,13 +30,7 @@ vi.mock('@libraz/libsonare/worklet', () => ({
   init,
   isInitialized,
   SonareRealtimeEngineWorkletProcessor: class {
-    receiveSync = receiveSync;
-    receiveCommand = receiveCommand;
-    receiveCaptureRequest = receiveCaptureRequest;
-    receiveTransportRequest = receiveTransportRequest;
-    receiveInsertGainReductionRequest = receiveInsertGainReductionRequest;
-    receiveReadRequest = receiveReadRequest;
-    noteSyncSequence = noteSyncSequence;
+    receiveMessage = engineReceiveMessage;
     process = bridgeProcess;
   },
   SonareRealtimeVoiceChangerWorkletProcessor: class {
@@ -104,13 +88,7 @@ beforeEach(() => {
   init.mockClear();
   isInitialized.mockClear();
   isInitialized.mockReturnValue(false);
-  receiveSync.mockClear();
-  receiveCommand.mockClear();
-  receiveCaptureRequest.mockClear();
-  receiveTransportRequest.mockClear();
-  receiveInsertGainReductionRequest.mockClear();
-  receiveReadRequest.mockClear();
-  noteSyncSequence.mockClear();
+  engineReceiveMessage.mockClear();
   voiceReceiveMessage.mockClear();
   retuneSetConfig.mockClear();
   retuneReset.mockClear();
@@ -263,84 +241,23 @@ describe('worklet-entry dispatch', () => {
     expect(init).not.toHaveBeenCalled();
   });
 
-  it('forwards every sync-prefixed message to receiveSync', async () => {
+  it('forwards commands, sync messages and RPCs through the public worklet dispatcher', async () => {
     const instance = await createReadyProcessor();
-    const types = [
-      'syncClips',
-      'syncClipsDelta',
-      'syncMixer',
-      'syncTempo',
-      'syncMidiClips',
-      'syncCapture',
-      'syncBuiltinInstrument',
+    const messages = [
+      { type: 10, targetId: 0, renderFrame: -1, argInt: 1 },
+      { type: 'syncCapture', source: 'input', bufferFrames: 512 },
+      { type: 'syncInputMonitor', monitor: { enabled: true, gain: 0.5 } },
+      { type: 'captureRequest', requestId: 7, op: 'status' },
+      { type: 'transportRequest', requestId: 8 },
+      { type: 'insertGainReductionRequest', requestId: 9, targetId: 0 },
+      { type: 'engineReadRequest', requestId: 10, op: 'articulation' },
+      { type: 'futureRequest', syncSequence: 9 },
+      null,
     ];
-    for (const type of types) {
-      instance.port.onmessage?.({ data: { type } });
+    for (const data of messages) {
+      instance.port.onmessage?.({ data });
     }
-    expect(receiveSync).toHaveBeenCalledTimes(types.length);
-    expect(receiveSync.mock.calls.map(([message]) => (message as { type: string }).type)).toEqual(
-      types,
-    );
-    expect(receiveCommand).not.toHaveBeenCalled();
-  });
-
-  it('routes capture/transport request RPCs to their dedicated handlers', async () => {
-    const instance = await createReadyProcessor();
-    const capture = { type: 'captureRequest', requestId: 7, op: 'status' };
-    const transport = { type: 'transportRequest', requestId: 8 };
-    instance.port.onmessage?.({ data: capture });
-    instance.port.onmessage?.({ data: transport });
-    expect(receiveCaptureRequest).toHaveBeenCalledWith(capture);
-    expect(receiveTransportRequest).toHaveBeenCalledWith(transport);
-    expect(receiveSync).not.toHaveBeenCalled();
-  });
-
-  // The facade posts these in order with the SAB ring: until the bridge notes
-  // their sequence, every later ring command (fader, mute, transport) is held.
-  it('routes insert gain-reduction and engine read RPCs to their handlers', async () => {
-    const instance = await createReadyProcessor();
-    const gainReduction = {
-      type: 'insertGainReductionRequest',
-      requestId: 3,
-      targetId: 0,
-      syncSequence: 716,
-    };
-    const read = {
-      type: 'engineReadRequest',
-      requestId: 4,
-      op: 'articulation',
-      destinationId: 1,
-      channel: 0,
-      syncSequence: 717,
-    };
-    instance.port.onmessage?.({ data: gainReduction });
-    instance.port.onmessage?.({ data: read });
-    expect(receiveInsertGainReductionRequest).toHaveBeenCalledWith(gainReduction);
-    expect(receiveReadRequest).toHaveBeenCalledWith(read);
-    expect(receiveSync).not.toHaveBeenCalled();
-  });
-
-  it('notes the sequence of an unrouted ordered message so the ring is released', async () => {
-    const instance = await createReadyProcessor();
-    instance.port.onmessage?.({ data: { type: 'futureRequest', syncSequence: 9 } });
-    expect(noteSyncSequence).toHaveBeenCalledWith(9);
-  });
-
-  it('routes numeric message types to receiveCommand', async () => {
-    const instance = await createReadyProcessor();
-    const command = { type: 10, targetId: 0, sampleTime: -1, argInt: 1 };
-    instance.port.onmessage?.({ data: command });
-    expect(receiveCommand).toHaveBeenCalledWith(command);
-    expect(receiveSync).not.toHaveBeenCalled();
-  });
-
-  it('ignores unknown string types, null, and non-object payloads without throwing', async () => {
-    const instance = await createReadyProcessor();
-    for (const data of [{ type: 'ready' }, { type: 'bogus' }, null, 42, 'sync', {}]) {
-      expect(() => instance.port.onmessage?.({ data })).not.toThrow();
-    }
-    expect(receiveSync).not.toHaveBeenCalled();
-    expect(receiveCommand).not.toHaveBeenCalled();
+    expect(engineReceiveMessage.mock.calls).toEqual(messages.map((message) => [message]));
   });
 
   it('buffers messages that arrive before init completes and replays them in order', async () => {
@@ -348,13 +265,15 @@ describe('worklet-entry dispatch', () => {
     expect(ctor).toBeDefined();
     const instance = new (ctor as RegisteredCtor)({ processorOptions: {} });
     instance.port.onmessage?.({ data: { type: 'syncMixer' } });
-    instance.port.onmessage?.({ data: { type: 11, targetId: 1, sampleTime: -1 } });
-    expect(receiveSync).not.toHaveBeenCalled();
+    instance.port.onmessage?.({ data: { type: 11, targetId: 1, renderFrame: -1 } });
+    expect(engineReceiveMessage).not.toHaveBeenCalled();
     for (let i = 0; i < 4; i++) {
       await Promise.resolve();
     }
-    expect(receiveSync).toHaveBeenCalledWith({ type: 'syncMixer' });
-    expect(receiveCommand).toHaveBeenCalledWith({ type: 11, targetId: 1, sampleTime: -1 });
+    expect(engineReceiveMessage.mock.calls).toEqual([
+      [{ type: 'syncMixer' }],
+      [{ type: 11, targetId: 1, renderFrame: -1 }],
+    ]);
   });
 
   it('subscribes through addEventListener when the port exposes EventTarget APIs', async () => {
@@ -385,7 +304,7 @@ describe('worklet-entry dispatch', () => {
     listener?.({ data: { type: 'syncMixer' } });
     expect(instance.port.addEventListener).toHaveBeenCalledWith('message', expect.any(Function));
     expect(instance.port.start).toHaveBeenCalled();
-    expect(receiveSync).toHaveBeenCalledWith({ type: 'syncMixer' });
+    expect(engineReceiveMessage).toHaveBeenCalledWith({ type: 'syncMixer' });
     (globalThis as Record<string, unknown>).AudioWorkletProcessor = previousBase;
   });
 
@@ -399,12 +318,46 @@ describe('worklet-entry dispatch', () => {
   });
 });
 
+describe('real engine worklet message admission', () => {
+  it('reports malformed messages as coded sync errors without throwing', async () => {
+    const actual = await vi.importActual<typeof import('@libraz/libsonare/worklet')>(
+      '@libraz/libsonare/worklet',
+    );
+    await actual.init({ wasmBinary: realCoreWasmBinary });
+    const postMessage = vi.fn();
+    const processor = new actual.SonareRealtimeEngineWorkletProcessor({
+      sampleRate: 48000,
+      maxBlockSize: 128,
+      numChannels: 2,
+      transport: { postMessage },
+    });
+
+    try {
+      for (const message of [42, 'sync', {}, null]) {
+        expect(() => processor.receiveMessage(message)).not.toThrow();
+      }
+
+      const replies = postMessage.mock.calls.map(([message]) => message);
+      expect(replies).toHaveLength(4);
+      for (const reply of replies) {
+        expect(reply).toMatchObject({
+          type: 'syncError',
+          message: 'Unrecognized worklet message: undefined',
+          failure: { name: 'TypeError' },
+        });
+      }
+    } finally {
+      processor.destroy();
+    }
+  });
+});
+
 describe('streaming retune config against the real core', () => {
   it('applies the config the worklet forwards', async () => {
     const actual = await vi.importActual<typeof import('@libraz/libsonare/worklet')>(
       '@libraz/libsonare/worklet',
     );
-    await actual.init({ wasmBinary: coreWasmBinary() });
+    await actual.init({ wasmBinary: realCoreWasmBinary });
     const retune = new actual.StreamingRetune();
     try {
       retune.prepare(48000, 128);

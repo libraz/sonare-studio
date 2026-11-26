@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getProject, useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
+import { FakeProject } from './fake-wasm';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -27,6 +28,17 @@ describe('overlapping document clips', () => {
 
     expect(getProject().overlapPolicy).toBe('allow');
     expect(store.clips.filter((clip) => clip.trackId === store.tracks[0].id)).toHaveLength(2);
+  });
+
+  it('omits an unusable tempo ramp target when hydrating the project', async () => {
+    const setTempoSegments = vi.spyOn(FakeProject.prototype, 'setTempoSegments');
+    const doc = createTemplate('band');
+    doc.tempoSegments = [{ startPpq: 0, bpm: 120, endBpm: 0 }];
+
+    await store.loadDocument(doc);
+
+    expect(setTempoSegments.mock.calls.at(-1)?.[0]).toStrictEqual([{ startPpq: 0, bpm: 120 }]);
+    setTempoSegments.mockRestore();
   });
 
   it('detects overlap after invalid lengths are normalized', async () => {

@@ -1,3 +1,4 @@
+import type { BeatObservations } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetTags } from '@/persistence/assets';
@@ -18,7 +19,7 @@ export type AudioAnalysisWorkerResponse =
   | { type: 'progress'; fraction: number }
   | { type: 'done'; tags: AudioAssetTags }
   | { type: 'beats'; beats: number[]; downbeats: number[] }
-  | { type: 'meter'; beatTimes: number[]; beatStrengths: number[] }
+  | { type: 'meter'; observations: BeatObservations }
   | { type: 'error'; error: string };
 
 function validRequest(value: unknown): value is AudioAnalysisWorkerRequest {
@@ -53,11 +54,7 @@ serveWorkerRequests<AudioAnalysisWorkerRequest, AudioAnalysisWorkerResponse>({
     }
     if (kind === 'meter') {
       const analysis = wasm.analyze(samples, sampleRate);
-      post({
-        type: 'meter',
-        beatTimes: analysis.beats.map((beat) => beat.timeSec),
-        beatStrengths: Array.from(analysis.beatObservations.onsetStrength),
-      });
+      post({ type: 'meter', observations: analysis.beatObservations });
       return;
     }
     const tags = analyzeAudioTags(

@@ -8,6 +8,7 @@ function setup() {
   const configureCapture = vi.fn();
   const handle = fakeEngineHandle({
     engine: {
+      setInputMonitor: vi.fn(),
       node: { numberOfOutputs: 1 },
       configureCapture,
       armCapture: vi.fn(),

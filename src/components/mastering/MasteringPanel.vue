@@ -10,6 +10,7 @@ import { createDefaultMasteringChain, type MasteringChainState } from '@/project
 import { getWasmModule } from '@/project/runtime';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { formatLevel } from '@/ui/mastering/loudness';
 import { hasPresetControlOverride } from '@/ui/mastering/preset-controls';
 import type { PreviewRenderFn } from '@/ui/mastering/preview';
 import { DEFAULT_PREVIEW_BARS } from '@/ui/mastering/preview-range';
@@ -66,6 +67,13 @@ const props = withDefaults(
 
 const store = useProjectStore();
 const { t } = useI18n();
+
+/** Formats a signed optional measurement without turning absence into zero. */
+function formatSignedMeasurement(value: number | undefined): string {
+  if (value === undefined || Number.isNaN(value)) return '—';
+  const formatted = formatLevel(value);
+  return value >= 0 ? `+${formatted}` : formatted;
+}
 
 const chain = computed<MasteringChainState>(
   () => store.mixer.masteringChain ?? createDefaultMasteringChain(),
@@ -467,13 +475,13 @@ const {
           </div>
           <div v-if="referenceAnalysis" class="mastering-reference-results view-enter" role="status">
             <span v-if="referenceAnalysis.loudness">
-              {{ referenceAnalysis.loudness.sourceLufs.toFixed(1) }} →
-              {{ referenceAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS
-              ({{ referenceAnalysis.loudness.gainToMatchDb >= 0 ? '+' : '' }}{{ referenceAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
+              {{ formatLevel(referenceAnalysis.loudness.sourceLufs) }} →
+              {{ formatLevel(referenceAnalysis.loudness.referenceLufs) }} LUFS
+              ({{ formatSignedMeasurement(referenceAnalysis.loudness.gainToMatchDb) }} dB)
             </span>
             <span v-for="(band, index) in referenceAnalysis.tonalBalance" :key="index">
               {{ Math.round(band.lowHz) }}–{{ Math.round(band.highHz) }} Hz:
-              {{ band.deviationDb >= 0 ? '+' : '' }}{{ band.deviationDb.toFixed(1) }} dB
+              {{ formatSignedMeasurement(band.deviationDb) }} dB
             </span>
           </div>
         </section>

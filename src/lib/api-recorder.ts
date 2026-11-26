@@ -11,6 +11,8 @@
  * for an instance method.
  */
 
+import type { CaptureOptions } from '@libraz/libsonare';
+
 /** Whether this build records libsonare calls. */
 export const API_RECORDING_ENABLED = import.meta.env.VITE_SONARE_E2E === '1';
 
@@ -20,6 +22,7 @@ type AnyFunction = (...args: never[]) => unknown;
 const seen = new Set<string>();
 const targets = new WeakMap<object, object>();
 let classNames = new Set<string>();
+let lastCapture: CaptureOptions | undefined;
 
 function report(key: string): void {
   if (seen.has(key)) return;
@@ -46,6 +49,7 @@ function recordFunction<F extends AnyFunction>(
   return new Proxy(fn, {
     apply(target, thisArg, args) {
       report(key);
+      if (key === 'SonareEngine#configureCapture') lastCapture = args[0];
       return wrapResult(Reflect.apply(target, self ?? unwrap(thisArg), args.map(unwrap)));
     },
     construct(target, args) {
@@ -118,9 +122,15 @@ export function recordObject<T extends object>(instance: T, className: string): 
 /** Forgets what this page has reported, so the next scenario's calls report again. */
 export function resetApiCalls(): void {
   seen.clear();
+  lastCapture = undefined;
 }
 
 /** The calls this page has reported since the last reset. */
 export function apiCalls(): string[] {
   return [...seen].sort();
+}
+
+/** The capture request most recently sent through the worklet facade. */
+export function lastCaptureOptions(): CaptureOptions | undefined {
+  return lastCapture;
 }

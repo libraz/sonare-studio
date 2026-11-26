@@ -1,4 +1,7 @@
+import { ErrorCode, SonareError } from '@libraz/libsonare';
+import type { WorkletMeterSnapshot } from '@libraz/libsonare/worklet';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EngineHandle } from '@/engine/engine';
 import { REALTIME_VOICE_CHANGER_PROCESSOR } from '@/engine/realtime-voice-changer';
 import type { RecorderOptions } from '@/engine/recorder';
 import {
@@ -71,46 +74,38 @@ vi.mock('@/lib/wasm', () => ({
   })),
 }));
 
-/** Builds a full meter snapshot; only targetId and the peak fields matter here. */
-function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
-  return {
+/** Builds a per-plane meter snapshot; unused telemetry fields carry fixed values. */
+function meterSnapshot(targetId: number, ...peakDb: (number | undefined)[]): WorkletMeterSnapshot {
+  const peaks = peakDb.length > 0 ? peakDb : [undefined, undefined];
+  const snapshot = {
     type: 'meter' as const,
     targetId,
     frame: 0,
-    peakDbL,
-    peakDbR,
-    rmsDbL: -60,
-    rmsDbR: -60,
+    numChannels: peaks.length,
+    peakDb: peaks,
+    rmsDb: peaks.map(() => -60),
+    truePeakDbtp: peaks,
+    inputPeakDb: peaks.map(() => undefined),
     correlation: 0,
-    truePeakDbtpL: peakDbL,
-    truePeakDbtpR: peakDbR,
     momentaryLufs: -60,
     shortTermLufs: -60,
     integratedLufs: -60,
     gainReductionDb: 0,
   };
+  return snapshot;
 }
 
-type MeterSnapshot = ReturnType<typeof meterSnapshot>;
-
-/** The engine-side capture status shape returned by the handle stub. */
-interface FakeCaptureStatus {
-  capturedFrames: number;
-  overflowCount: number;
-  armed: boolean;
-  punchEnabled: boolean;
-  source: 'input' | 'output';
-  recordOffsetSamples: number;
-}
+type FakeCaptureStatus = Awaited<ReturnType<EngineHandle['engine']['captureStatus']>>;
 
 /** Builds an EngineHandle stub with spied capture-path methods. */
 function makeHandle(sampleRate = 100, baseLatency = 0) {
   const configureCapture = vi.fn();
+  const setInputMonitor = vi.fn();
   const armCapture = vi.fn();
   const resetCapture = vi.fn(async () => {});
   let status: FakeCaptureStatus = {
     capturedFrames: 0,
-    overflowCount: 0,
+    droppedFrames: 0,
     armed: false,
     punchEnabled: true,
     source: 'input',
@@ -119,11 +114,11 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
   let audio: Float32Array[] = [];
   const captureStatus = vi.fn(async () => status);
   const capturedAudio = vi.fn(async () => audio);
-  let meterCallback: ((meter: MeterSnapshot) => void) | null = null;
+  let meterCallback: ((meter: WorkletMeterSnapshot) => void) | null = null;
   const meterUnsubscribe = vi.fn(() => {
     meterCallback = null;
   });
-  const onMeter = vi.fn((callback: (meter: MeterSnapshot) => void) => {
+  const onMeter = vi.fn((callback: (meter: WorkletMeterSnapshot) => void) => {
     meterCallback = callback;
     return meterUnsubscribe;
   });
@@ -133,6 +128,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
     engine: {
       node,
       configureCapture,
+      setInputMonitor,
       armCapture,
       resetCapture,
       captureStatus,
@@ -144,6 +140,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
   return {
     handle,
     configureCapture,
+    setInputMonitor,
     armCapture,
     resetCapture,
     captureStatus,
@@ -158,7 +155,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
     setAudio: (channels: Float32Array[]): void => {
       audio = channels;
     },
-    emitMeter: (meter: MeterSnapshot): void => meterCallback?.(meter),
+    emitMeter: (meter: WorkletMeterSnapshot): void => meterCallback?.(meter),
   };
 }
 
@@ -278,7 +275,7 @@ describe('createRecorder microphone acquisition', () => {
   });
 
   it('requests tracking-quality constraints, binds the stream and configures the capture', async () => {
-    const { handle, node, configureCapture } = makeHandle(100);
+    const { handle, node, configureCapture, setInputMonitor } = makeHandle(100);
     const { deps, getUserMedia, bindInput, stream } = makeDeps();
     const recorder = createRecorder(handle, deps);
     expect(recorder.hasMicrophone()).toBe(false);
@@ -304,8 +301,8 @@ describe('createRecorder microphone acquisition', () => {
       numChannels: 2,
       source: 'input',
       recordOffsetSamples: 0,
-      inputMonitor: { enabled: false, gain: 1 },
     });
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false, gain: 1 });
 
     // Idempotent: a second request does not reacquire the device.
     await recorder.requestMicrophone();
@@ -505,13 +502,16 @@ describe('createRecorder state machine', () => {
   });
 
   it('records the master output without requesting a microphone', async () => {
-    const { handle, configureCapture, armCapture, setStatus, setAudio } = makeHandle(100);
+    const { handle, configureCapture, setInputMonitor, armCapture, setStatus, setAudio } =
+      makeHandle(100);
     const { deps, getUserMedia } = makeDeps();
     const recorder = createRecorder(handle, { ...deps, captureSource: 'output' });
 
     await recorder.requestMicrophone();
     expect(getUserMedia).not.toHaveBeenCalled();
     expect(recorder.hasMicrophone()).toBe(true);
+    recorder.setMonitor(true, 0.25);
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false, gain: 0.25 });
 
     recorder.arm(7);
     await recorder.start({ startPpq: 2, endPpq: 4, tempoBpm: 60 });
@@ -521,9 +521,12 @@ describe('createRecorder state machine', () => {
       numChannels: 2,
       source: 'output',
       recordOffsetSamples: 0,
-      inputMonitor: { enabled: false, gain: 1 },
       punch: { startPpq: 2, endPpq: 4 },
     });
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false, gain: 0.25 });
+    expect(setInputMonitor.mock.invocationCallOrder[1]).toBeLessThan(
+      configureCapture.mock.invocationCallOrder[0],
+    );
     expect(armCapture).toHaveBeenLastCalledWith({ armed: true });
 
     setStatus({ capturedFrames: 3, source: 'output' });
@@ -725,7 +728,7 @@ describe('createRecorder capture', () => {
       };
       captureStatus.mockImplementation(async () => ({
         capturedFrames: capturedFrames(),
-        overflowCount: 0,
+        droppedFrames: 0,
         armed: disarmedAt === null,
         punchEnabled: true,
         source: 'input' as const,
@@ -762,7 +765,7 @@ describe('createRecorder capture', () => {
     // The ring disarm reaches the audio thread after two port round trips.
     captureStatus.mockImplementationOnce(async () => ({
       capturedFrames: 8,
-      overflowCount: 0,
+      droppedFrames: 0,
       armed: true,
       punchEnabled: true,
       source: 'input' as const,
@@ -770,7 +773,7 @@ describe('createRecorder capture', () => {
     }));
     captureStatus.mockImplementationOnce(async () => ({
       capturedFrames: 9,
-      overflowCount: 0,
+      droppedFrames: 0,
       armed: true,
       punchEnabled: true,
       source: 'input' as const,
@@ -989,7 +992,7 @@ describe('createRecorder capture', () => {
     expect(channel.length).toBe(50);
   });
 
-  it('warns once when the engine reports a capture overflow', async () => {
+  it('reports capture loss in frames', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { handle, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();
@@ -998,10 +1001,10 @@ describe('createRecorder capture', () => {
     recorder.arm(1);
     await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
     setAudio(rampChannels(1, 100));
-    setStatus({ capturedFrames: 30, overflowCount: 7 });
-    expect(await recorder.stop()).toMatchObject({ overflowCount: 7 });
+    setStatus({ capturedFrames: 30, droppedFrames: 23 });
+    expect(await recorder.stop()).toMatchObject({ droppedFrames: 23 });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('capture overflow: 7 samples'));
+    expect(warn).toHaveBeenCalledWith('Recording capture dropped frames: 23');
   });
 
   it('resets the capture and restores the idle config after a take', async () => {
@@ -1023,62 +1026,84 @@ describe('createRecorder capture', () => {
 });
 
 describe('createRecorder monitoring', () => {
-  it('remembers the pre-mic monitor state and sends it with the first config', async () => {
-    const { handle, configureCapture } = makeHandle(100);
+  it('remembers the pre-mic monitor state and sends it after the first capture config', async () => {
+    const { handle, configureCapture, setInputMonitor } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     recorder.setMonitor(true, 0.5); // before the mic exists: remembered
     expect(recorder.monitorEnabled()).toBe(true);
     expect(configureCapture).not.toHaveBeenCalled();
+    expect(setInputMonitor).not.toHaveBeenCalled();
 
     await recorder.requestMicrophone();
-    expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ inputMonitor: { enabled: true, gain: 0.5 } }),
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 0.5 });
+    expect(configureCapture.mock.invocationCallOrder[0]).toBeLessThan(
+      setInputMonitor.mock.invocationCallOrder[0],
     );
   });
 
-  it('re-sends the capture config when the monitor is toggled', async () => {
-    const { handle, configureCapture } = makeHandle(100, 0.1);
+  it('updates the monitor without resending capture and forwards a core refusal', async () => {
+    const { handle, configureCapture, setInputMonitor } = makeHandle(100, 0.1);
     const { deps } = makeDeps({ trackLatencySeconds: 0.05 });
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
+    const captureConfigCalls = configureCapture.mock.calls.length;
 
     recorder.setMonitor(true, 2);
-    expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        capacityFrames: 100,
-        recordOffsetSamples: 15,
-        inputMonitor: { enabled: true, gain: 2 },
-      }),
-    );
+    expect(configureCapture).toHaveBeenCalledTimes(captureConfigCalls);
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 2 });
 
     recorder.setMonitor(false);
     expect(recorder.monitorEnabled()).toBe(false);
-    expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        recordOffsetSamples: 15,
-        inputMonitor: { enabled: false, gain: 2 },
-      }),
-    );
+    expect(configureCapture).toHaveBeenCalledTimes(captureConfigCalls);
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false, gain: 2 });
 
     expect(() => recorder.setMonitor(true, -1)).toThrow(RangeError);
+    setInputMonitor.mockImplementationOnce(() => {
+      throw new RangeError('gain must be within the library domain');
+    });
+    expect(() => recorder.setMonitor(true, Number.MAX_VALUE)).toThrow(
+      'gain must be within the library domain',
+    );
+    expect(recorder.monitorEnabled()).toBe(false);
+    recorder.setMonitor(true);
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 2 });
   });
 
-  it('keeps the recording-size buffer when toggled during a take', async () => {
-    const { handle, configureCapture } = makeHandle(100);
+  it('does not alter the capture while toggled during a take', async () => {
+    const { handle, configureCapture, setInputMonitor, armCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
     await recorder.start({ startPpq: 0, tempoBpm: 120, maxDurationSeconds: 30 });
+    const captureConfigCalls = configureCapture.mock.calls.length;
+    const armCalls = armCapture.mock.calls.length;
 
     recorder.setMonitor(true);
-    expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        capacityFrames: 3000,
-        inputMonitor: { enabled: true, gain: 1 },
-      }),
-    );
+    expect(configureCapture).toHaveBeenCalledTimes(captureConfigCalls);
+    expect(armCapture).toHaveBeenCalledTimes(armCalls);
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 1 });
+  });
+
+  it('disables the engine monitor on input loss and disposal', async () => {
+    const { handle, setInputMonitor } = makeHandle();
+    const { deps, endTrack } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    recorder.setMonitor(true, 0.75);
+    await recorder.requestMicrophone();
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 0.75 });
+
+    endTrack();
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false });
+
+    await recorder.requestMicrophone();
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: true, gain: 0.75 });
+    recorder.dispose();
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false });
+    const callsAfterDispose = setInputMonitor.mock.calls.length;
+    recorder.setMonitor(true, 1);
+    expect(setInputMonitor).toHaveBeenCalledTimes(callsAfterDispose);
   });
 });
 
@@ -1104,13 +1129,23 @@ describe('createRecorder input levels', () => {
     emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -20, -40));
     expect(levels[1]).toBeCloseTo(0.1, 10);
 
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -40, -60, -6));
+    expect(levels[2]).toBeCloseTo(10 ** (-6 / 20), 10);
+
     // Digital silence arrives as -Infinity dBFS and maps to 0.
     emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, Number.NEGATIVE_INFINITY));
-    expect(levels[2]).toBe(0);
+    expect(levels[3]).toBe(0);
+
+    // An unmeasured plane is treated as silence while the measured plane remains usable.
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, undefined, -20));
+    expect(levels[4]).toBeCloseTo(0.1, 10);
+
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, undefined, undefined));
+    expect(levels[5]).toBe(0);
 
     unsubscribe();
     emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, 0));
-    expect(levels).toHaveLength(3);
+    expect(levels).toHaveLength(6);
   });
 
   it('coalesces level callbacks within the throttle interval', () => {
@@ -1174,6 +1209,103 @@ describe('createRecorder teardown', () => {
     expect(recorder.isRecording()).toBe(false);
     expect(armCapture).toHaveBeenLastCalledWith({ armed: false });
     expect(resetCapture).toHaveBeenCalledTimes(2); // start + dispose
+  });
+
+  it('releases the monitor and microphone if the command ring refuses teardown disarm', async () => {
+    const { handle, armCapture, resetCapture, setInputMonitor } = makeHandle();
+    const { deps, bindingClose } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    recorder.setMonitor(true);
+    await recorder.requestMicrophone();
+    recorder.arm(4);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    armCapture.mockImplementationOnce(() => {
+      throw new SonareError(ErrorCode.OutOfMemory, 'command ring is full');
+    });
+
+    recorder.dispose();
+    expect(setInputMonitor).toHaveBeenLastCalledWith({ enabled: false });
+    expect(bindingClose).toHaveBeenCalledOnce();
+    expect(recorder.hasMicrophone()).toBe(false);
+    expect(resetCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates a bad teardown monitor shape after releasing the binding', async () => {
+    const { handle, setInputMonitor, resetCapture } = makeHandle();
+    const { deps, bindingClose } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(4);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    setInputMonitor.mockImplementationOnce(() => {
+      throw new TypeError('enabled must be a boolean');
+    });
+
+    expect(() => recorder.dispose()).toThrow(TypeError);
+    expect(bindingClose).toHaveBeenCalledOnce();
+    expect(recorder.hasMicrophone()).toBe(false);
+    expect(resetCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates a bad teardown disarm shape after releasing the binding', async () => {
+    const { handle, armCapture, resetCapture } = makeHandle();
+    const { deps, bindingClose } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(4);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    armCapture.mockImplementationOnce(() => {
+      throw new TypeError('armed must be a boolean');
+    });
+
+    expect(() => recorder.dispose()).toThrow(TypeError);
+    expect(bindingClose).toHaveBeenCalledOnce();
+    expect(recorder.hasMicrophone()).toBe(false);
+    expect(resetCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an unexpected asynchronous reset failure during teardown', async () => {
+    const { handle, resetCapture } = makeHandle();
+    const recorder = createRecorder(handle, { captureSource: 'output' });
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    const failure = new TypeError('reset response had the wrong shape');
+    const reportError = vi.fn();
+    vi.stubGlobal('reportError', reportError);
+    resetCapture.mockRejectedValueOnce(failure);
+
+    recorder.dispose();
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(failure));
+  });
+
+  it('ignores the released-handle refusal from an asynchronous reset during teardown', async () => {
+    const { handle, resetCapture } = makeHandle();
+    const recorder = createRecorder(handle, { captureSource: 'output' });
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    const reportError = vi.fn();
+    vi.stubGlobal('reportError', reportError);
+    resetCapture.mockRejectedValueOnce(
+      new SonareError(ErrorCode.InvalidState, 'capture handle was released'),
+    );
+
+    recorder.dispose();
+    await Promise.resolve();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it('returns to idle after a failed startup reset and can start again', async () => {
+    const { handle, resetCapture } = makeHandle();
+    const recorder = createRecorder(handle, { captureSource: 'output' });
+    recorder.arm(1);
+    const failure = new TypeError('reset response had the wrong shape');
+    resetCapture.mockRejectedValueOnce(failure);
+
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBe(failure);
+    expect(recorder.isRecording()).toBe(false);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    expect(recorder.isRecording()).toBe(true);
+    recorder.dispose();
   });
 
   it('rejects a microphone that finishes binding after dispose', async () => {

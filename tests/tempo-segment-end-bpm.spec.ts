@@ -51,8 +51,8 @@ describe('tempo segment endBpm', () => {
     try {
       await useProjectStore().loadDocument(doc);
       expect(spy.mock.lastCall?.[0]).toEqual([
-        { startPpq: 0, bpm: 100, endBpm: 0 },
-        { startPpq: 4, bpm: 120, endBpm: 0 },
+        { startPpq: 0, bpm: 100 },
+        { startPpq: 4, bpm: 120 },
       ]);
     } finally {
       spy.mockRestore();

@@ -41,7 +41,7 @@ import {
   MAX_SMF_SYSEX_PACKETS,
   parseSmfHeader,
 } from './smf-shared';
-import { DEFAULT_TEMPO_BPM } from './tempo-map';
+import { DEFAULT_TEMPO_BPM, preserveLegacyTempoFloor } from './tempo-map';
 import type { SmfSysExPacket } from './types';
 
 const SMF_EDGE_PAD_PPQ = 1 / 480;
@@ -297,9 +297,12 @@ export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegme
   )
     .map((segment) => ({
       startPpq: finiteNonNegative(segment.startPpq),
-      bpm: Number.isFinite(segment.bpm) && segment.bpm > 0 ? segment.bpm : DEFAULT_TEMPO_BPM,
+      bpm:
+        Number.isFinite(segment.bpm) && segment.bpm > 0
+          ? preserveLegacyTempoFloor(segment.bpm)
+          : DEFAULT_TEMPO_BPM,
       ...(segment.endBpm !== undefined && Number.isFinite(segment.endBpm) && segment.endBpm > 0
-        ? { endBpm: segment.endBpm }
+        ? { endBpm: preserveLegacyTempoFloor(segment.endBpm) }
         : {}),
     }))
     .sort((a, b) => a.startPpq - b.startPpq);

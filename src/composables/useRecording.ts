@@ -334,11 +334,7 @@ export function useRecording(
     if (recorder && recorderHandle === handle && deviceSignature === recorderDeviceSignature) {
       return recorder;
     }
-    unsubscribeLevel?.();
-    unsubscribeMicLost?.();
-    recorder?.dispose();
-    micReady.value = false;
-    inputLevel.value = 0;
+    resetRecorderBinding();
     const distinctDevices = new Set(deviceIds.map((id) => id.trim()));
     const suppressInputEffects = captureSource.value === 'input' && distinctDevices.size >= 2;
     if (
@@ -468,23 +464,32 @@ export function useRecording(
   };
 
   const setMonitor = (enabled: boolean, gain?: number): void => {
-    monitorEnabled.value = enabled;
     ensureRecorder()?.setMonitor(enabled, gain);
+    monitorEnabled.value = enabled;
   };
 
   let pendingCaptureSource: RecordingCaptureSource | null = null;
 
   const resetRecorderBinding = (): void => {
-    if (!recorder) return;
-    unsubscribeLevel?.();
-    unsubscribeLevel = null;
-    unsubscribeMicLost?.();
-    unsubscribeMicLost = null;
-    recorder.dispose();
+    const previous = recorder;
     recorder = null;
     recorderHandle = null;
+    recorderDeviceSignature = '';
+    const stopLevel = unsubscribeLevel;
+    unsubscribeLevel = null;
+    const stopMicLost = unsubscribeMicLost;
+    unsubscribeMicLost = null;
     micReady.value = false;
     inputLevel.value = 0;
+    try {
+      stopLevel?.();
+    } finally {
+      try {
+        stopMicLost?.();
+      } finally {
+        previous?.dispose();
+      }
+    }
   };
 
   const setVoiceChangerPreset = (preset: RecordingVoiceChangerPreset): void => {
@@ -830,7 +835,7 @@ export function useRecording(
       return complete(null);
     }
     if (targetTrackIds.length === 0) return complete(null);
-    const overflowed = (result.overflowCount ?? 0) > 0;
+    const overflowed = (result.droppedFrames ?? 0) > 0;
     // Convert captured wall-clock seconds back to grid PPQ through the full
     // tempo map (constant-tempo projects collapse to the old scalar math), so a
     // take on a tempo ramp lands the right length and cycle splits hit the loop
@@ -1011,17 +1016,34 @@ export function useRecording(
     microphoneOperations.dispose(new DOMException('Recording disposed.', 'AbortError'));
     activeOperation = null;
     finishCountIn();
-    stopWatching();
-    unsubscribeLevel?.();
-    unsubscribeLevel = null;
-    unsubscribeMicLost?.();
-    unsubscribeMicLost = null;
-    recorder?.dispose();
+    const previous = recorder;
     recorder = null;
     recorderHandle = null;
-    clearTakeState();
-    state.value = 'idle';
-    micReady.value = false;
+    recorderDeviceSignature = '';
+    const stopLevel = unsubscribeLevel;
+    unsubscribeLevel = null;
+    const stopMicLost = unsubscribeMicLost;
+    unsubscribeMicLost = null;
+    try {
+      stopWatching();
+    } finally {
+      try {
+        stopLevel?.();
+      } finally {
+        try {
+          stopMicLost?.();
+        } finally {
+          try {
+            previous?.dispose();
+          } finally {
+            clearTakeState();
+            state.value = 'idle';
+            micReady.value = false;
+            inputLevel.value = 0;
+          }
+        }
+      }
+    }
   };
 
   if (getCurrentScope()) {

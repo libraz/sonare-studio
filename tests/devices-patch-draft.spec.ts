@@ -17,7 +17,9 @@ import {
   SYNTH_MOD_SOURCES,
   SYNTH_OSC_WAVEFORMS,
   SYNTH_RETRIGGERS,
+  type SynthParamInfo,
   type SynthPatch,
+  type SynthPatchParamInfo,
 } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
@@ -26,6 +28,7 @@ import {
   clampPatchField,
   createModMatrixRow,
   createPatchDraft,
+  engineParamBlockers,
   MAX_MOD_ROUTINGS,
   modMatrixRows,
   modRowsToRoutings,
@@ -276,6 +279,26 @@ describe('sanitizePatchDraft', () => {
 
   it('keeps the base mod matrix when the draft omits routings', () => {
     expect(sanitizePatchDraft({ gain: 0.5 }).modRoutings).toBeUndefined();
+  });
+});
+
+describe('engineParamBlockers patch-scoped conditions', () => {
+  it('uses the declared default of an enum-valued patch field', () => {
+    const condition = { key: 'body', scope: 'patch', relation: 'eq', value: 'default' } as const;
+    const field: SynthParamInfo = {
+      name: 'corpusScale',
+      type: 'number',
+      default: 0.5,
+      unit: 'none',
+      activeWhen: [[condition]],
+    };
+    const patchInfo: SynthPatchParamInfo[] = [
+      { name: 'body', type: 'enum', values: ['default', 'violin'], default: 'default' },
+    ];
+
+    expect(engineParamBlockers(field, {}, [], patchInfo)).toBeNull();
+    expect(engineParamBlockers(field, {}, [], [])).toEqual([condition]);
+    expect(engineParamBlockers(field, { body: 'violin' }, [], patchInfo)).toEqual([condition]);
   });
 });
 

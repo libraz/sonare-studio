@@ -81,6 +81,7 @@ describe('loudness readout helpers', () => {
     expect(loudnessBarFraction(6)).toBe(1);
     expect(loudnessBarFraction(undefined)).toBe(0);
     expect(loudnessBarFraction(Number.NEGATIVE_INFINITY)).toBe(0);
+    expect(loudnessBarFraction(Number.POSITIVE_INFINITY)).toBe(1);
   });
 
   it('maps LRA and dynamic-range values from a positive comparison scale', () => {
@@ -89,14 +90,19 @@ describe('loudness readout helpers', () => {
     expect(rangeBarFraction(9.1)).toBeCloseTo(0.455, 5);
     expect(rangeBarFraction(20)).toBe(1);
     expect(rangeBarFraction(30)).toBe(1);
+    expect(rangeBarFraction(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(rangeBarFraction(undefined)).toBe(0);
+    expect(rangeBarFraction(undefined)).not.toBe(rangeBarFraction(Number.POSITIVE_INFINITY));
   });
 
   it('formats levels with infinity and missing-value fallbacks', () => {
     expect(formatLevel(-6.25)).toBe('-6.3');
     expect(formatLevel(-14, 0)).toBe('-14');
     expect(formatLevel(Number.NEGATIVE_INFINITY)).toBe('-∞');
+    expect(formatLevel(Number.POSITIVE_INFINITY)).toBe('∞');
     expect(formatLevel(undefined)).toBe('—');
     expect(formatLevel(Number.NaN)).toBe('—');
+    expect(formatLevel(undefined)).not.toBe(formatLevel(Number.NEGATIVE_INFINITY));
   });
 
   it('flags true peaks above the warning threshold', () => {
@@ -105,6 +111,8 @@ describe('loudness readout helpers', () => {
     expect(isClippingRisk(0.5)).toBe(true);
     expect(isClippingRisk(-0.3)).toBe(false);
     expect(isClippingRisk(-3)).toBe(false);
+    expect(isClippingRisk(Number.POSITIVE_INFINITY)).toBe(true);
+    expect(isClippingRisk(Number.NEGATIVE_INFINITY)).toBe(false);
     expect(isClippingRisk(undefined)).toBe(false);
   });
 });

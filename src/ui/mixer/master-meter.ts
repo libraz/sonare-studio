@@ -100,13 +100,18 @@ export function gainReductionFraction(amountDb: number): number {
  * partial master snapshots remain displayable while their other values arrive.
  *
  * @param levels Latest meter levels.
- * @returns True when momentary LUFS or either true-peak channel exists.
+ * @returns True when any LUFS or true-peak reading exists.
  */
 export function hasLoudnessData(
-  levels: Pick<StereoMeterLevels, 'momentaryLufs' | 'truePeakDbtpL' | 'truePeakDbtpR'>,
+  levels: Pick<
+    StereoMeterLevels,
+    'momentaryLufs' | 'shortTermLufs' | 'integratedLufs' | 'truePeakDbtpL' | 'truePeakDbtpR'
+  >,
 ): boolean {
   return (
     levels.momentaryLufs !== undefined ||
+    levels.shortTermLufs !== undefined ||
+    levels.integratedLufs !== undefined ||
     levels.truePeakDbtpL !== undefined ||
     levels.truePeakDbtpR !== undefined
   );

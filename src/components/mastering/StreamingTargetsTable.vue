@@ -20,7 +20,12 @@ const { t } = useI18n();
 
 /** Normalization gain with an explicit sign (e.g. '+1.2', '-3.4'). */
 function signedGain(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}`;
+  return `${value >= 0 ? '+' : ''}${formatLevel(value)}`;
+}
+
+/** An unavailable normalization amount is distinct from a measured zero. */
+function formatGain(value: number | undefined): string {
+  return value === undefined || Number.isNaN(value) ? '—' : signedGain(value);
 }
 </script>
 
@@ -42,9 +47,9 @@ function signedGain(value: number): string {
       <tr v-for="target in targets" :key="target.name">
         <td class="targets-name">{{ target.name }}</td>
         <td>{{ formatLevel(target.integratedLufs) }}</td>
-        <td>{{ signedGain(target.normalizationGainDb) }}</td>
+        <td>{{ formatGain(target.normalizationGainDb) }}</td>
         <td :class="{ risk: target.ceilingRisk }" v-tooltip="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
-          {{ target.truePeakDbtp.toFixed(1) }}<svg
+          {{ formatLevel(target.truePeakDbtp) }}<svg
             v-if="target.ceilingRisk"
             class="targets-warn-icon"
             viewBox="0 0 16 16"

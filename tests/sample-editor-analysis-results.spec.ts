@@ -1,6 +1,8 @@
+import type { MasteringRepairAnalysis } from '@libraz/libsonare';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import SampleEditorAnalysisResults from '@/components/sample-editor/SampleEditorAnalysisResults.vue';
+import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import type {
   AcousticAnalysisSummary,
   RoomEstimateSummary,
@@ -18,7 +20,7 @@ const ROOM: RoomEstimateSummary = {
 };
 
 const ACOUSTIC: AcousticAnalysisSummary = {
-  kind: 'blind',
+  kind: 'impulse',
   rt60: 1.67,
   edt: 1.2,
   c50: -3.25,
@@ -27,17 +29,22 @@ const ACOUSTIC: AcousticAnalysisSummary = {
   confidence: 0.98,
   rt60Mean: 1.6,
   edtMean: 1.1,
-  isBlind: true,
+  isBlind: false,
 };
 
-function mountResults(room: RoomEstimateSummary | null, acoustic: AcousticAnalysisSummary | null) {
+function mountResults(
+  room: RoomEstimateSummary | null,
+  acoustic: AcousticAnalysisSummary | null,
+  matchEqAnalysis: MatchEqAnalysis | null = null,
+  repairAnalysis: MasteringRepairAnalysis | null = null,
+) {
   return mount(SampleEditorAnalysisResults, {
     props: {
-      repairAnalysis: null,
+      repairAnalysis,
       repairStageChecked: {},
       repairStagesBlocked: null,
       applyRepairBlocked: null,
-      matchEqAnalysis: null,
+      matchEqAnalysis,
       matchEqCurvePoints: '',
       roomEstimate: room,
       acousticAnalysis: acoustic,
@@ -65,25 +72,58 @@ describe('SampleEditorAnalysisResults measure cells', () => {
     ]);
   });
 
-  it('shows an unmeasured value as a bare dash, without a unit', () => {
-    const room = { ...ROOM, volume: Number.NaN, rt60Mid: Number.NaN, drrDb: Number.NaN };
+  it('labels unmeasured RT60 and preserves infinite measurements', () => {
+    const room: RoomEstimateSummary = { confidence: 0, drrDb: Number.POSITIVE_INFINITY };
     const acoustic = {
-      ...ACOUSTIC,
-      rt60: Number.NaN,
-      edt: Number.NaN,
-      c50: Number.NaN,
-      c80: Number.POSITIVE_INFINITY,
-      d50: Number.NaN,
+      kind: 'blind' as const,
+      confidence: 0,
+      isBlind: true,
     };
     expect(values(mountResults(room, acoustic))).toEqual([
-      '10.9 × 10.9 × 10.9 m',
       '—',
       '—',
-      '—',
-      '—',
+      'Not measured',
+      '∞ dB',
+      'Not measured',
       '—',
       'C50 — / C80 —',
       '—',
     ]);
+  });
+
+  it('keeps silent bands and loudness separate from absent measurements and gain', () => {
+    const matchEq: MatchEqAnalysis = {
+      curve: { frequencies: [], gainDb: [] },
+      tonalBalance: [
+        {
+          lowHz: 100,
+          highHz: 200,
+          sourceDb: Number.NEGATIVE_INFINITY,
+          referenceDb: -12,
+          deviationDb: Number.NEGATIVE_INFINITY,
+        },
+        { lowHz: 200, highHz: 300, sourceDb: -12, referenceDb: Number.NEGATIVE_INFINITY },
+      ],
+      loudness: { sourceLufs: Number.NEGATIVE_INFINITY, referenceLufs: -18 },
+    };
+    const wrapper = mountResults(null, null, matchEq);
+
+    expect(wrapper.findAll('.match-eq-band-db').map((item) => item.text())).toEqual(['-∞ dB', '—']);
+    const loudness = wrapper.find('.match-eq-loudness').text();
+    expect(loudness).toContain('-∞ → -18.0 LUFS');
+    expect(loudness).not.toContain('undefined');
+    expect(loudness).not.toContain('dB)');
+  });
+
+  it('shows measured repair silence as negative infinity', () => {
+    const repair: MasteringRepairAnalysis = {
+      declipThresholdSafe: true,
+      integratedLufs: Number.NEGATIVE_INFINITY,
+      recommended: [],
+      explanation: [],
+    };
+    const wrapper = mountResults(null, null, null, repair);
+
+    expect(wrapper.find('.repair-analysis .match-eq-loudness').text()).toBe('-∞ LUFS');
   });
 });

@@ -20,7 +20,7 @@ import {
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
-import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
+import { DEFAULT_TEMPO_BPM, preserveLegacyTempoFloor } from '@/project/tempo-map';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
 export interface MidiNote {
@@ -364,7 +364,7 @@ export async function prerenderMidiClip(
   const project = new wasm.Project();
   try {
     project.setSampleRate(options.sampleRate);
-    project.setTempoSegments([{ startPpq: 0, bpm: tempoBpm }]);
+    project.setTempoSegments([{ startPpq: 0, bpm: preserveLegacyTempoFloor(tempoBpm) }]);
     const { clipId } = project.addMidiClip(0, lengthPpq);
     const noteEvents = events.map((e) =>
       e.kind === 'on'

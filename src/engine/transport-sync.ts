@@ -14,7 +14,11 @@
  *   the engine's seekMarker / setLoopFromMarkers.
  */
 
-import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
+import {
+  DEFAULT_TEMPO_BPM,
+  preserveLegacyTempoFloor,
+  preserveLegacyTempoSegmentFloor,
+} from '@/project/tempo-map';
 import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import type { EditorMarker, TempoSegment, TimeSignatureSegment } from '@/project/types';
 import type { EngineHandle } from './engine';
@@ -51,7 +55,7 @@ export function createTransportSync(
   handle: EngineHandle,
   options: TransportSyncOptions = {},
 ): TransportSync {
-  const fallbackBpm = options.fallbackBpm ?? DEFAULT_TEMPO_BPM;
+  const fallbackBpm = preserveLegacyTempoFloor(options.fallbackBpm ?? DEFAULT_TEMPO_BPM);
   let lastTempoKey: string | undefined;
   let lastTimeSignatureKey: string | undefined;
   let lastMarkersKey: string | undefined;
@@ -65,11 +69,7 @@ export function createTransportSync(
       tempoSegments.length > 0
         ? [...tempoSegments]
             .sort((a, b) => a.startPpq - b.startPpq)
-            .map((segment) =>
-              segment.endBpm === undefined
-                ? { startPpq: segment.startPpq, bpm: segment.bpm }
-                : { startPpq: segment.startPpq, bpm: segment.bpm, endBpm: segment.endBpm },
-            )
+            .map(preserveLegacyTempoSegmentFloor)
         : [{ startPpq: 0, bpm: fallbackBpm }];
     const tempoKey = JSON.stringify(effectiveTempo);
     if (tempoKey !== lastTempoKey) {
@@ -95,7 +95,11 @@ export function createTransportSync(
 
     const effectiveMarkers = [...markers]
       .sort((a, b) => a.ppq - b.ppq)
-      .map((marker) => ({ id: marker.id, ppq: marker.ppq, name: marker.name }));
+      .map((marker) => ({
+        id: marker.id,
+        ppq: marker.ppq,
+        ...(marker.name === '' ? {} : { name: marker.name }),
+      }));
     const markersKey = JSON.stringify(effectiveMarkers);
     if (markersKey !== lastMarkersKey) {
       handle.engine.setMarkers(effectiveMarkers);

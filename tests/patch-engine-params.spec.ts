@@ -1,3 +1,4 @@
+import type { SynthParamInfo } from '@libraz/libsonare';
 import * as wasm from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -42,7 +43,7 @@ describe('new wrapper fields', () => {
     const info = wasm.synthPatchParamInfo();
     for (const id of ['driftRateHz', ...NEW_TIMES]) {
       const spec = patchFieldSpec(id);
-      const entry = info.find((e) => e.name === id);
+      const entry = info.find((e): e is SynthParamInfo => e.name === id && e.type !== 'enum');
       expect(spec, id).not.toBeNull();
       expect(entry, id).toBeDefined();
       expect([spec?.min, spec?.max]).toEqual([entry?.min, entry?.max]);

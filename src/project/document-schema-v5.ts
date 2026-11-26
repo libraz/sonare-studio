@@ -198,15 +198,31 @@ const SIDECHAIN_HPF_DEFAULT_HZ: Readonly<Record<string, number>> = {
   'dynamics.sidechainRouter': 90,
 };
 
-/** Per-band look-ahead of the EQ family; 2.0 keeps only `detectorDelayMs`. */
+/** Per-band detector delay processors that renamed `lookaheadMs` in 2.0. */
 const BAND_LOOKAHEAD = /^(band|midBand|sideBand)\d+\.(dyn\d+\.)?lookaheadMs$/;
+const DETECTOR_DELAY_PROCESSORS = new Set([
+  'eq.dynamic',
+  'eq.equalizer',
+  'eq.linearPhase',
+  'eq.midSide',
+  'eq.minimumPhase',
+  'eq.parametric',
+  'multiband.dynamicEq',
+]);
+
+/** Canonical per-band detector key, leaving other lookahead parameters intact. */
+export function upgradeDetectorDelayParamName(processor: string, param: string): string {
+  if (DETECTOR_DELAY_PROCESSORS.has(processor) && BAND_LOOKAHEAD.test(param)) {
+    return param.replace(/lookaheadMs$/, 'detectorDelayMs');
+  }
+  return param;
+}
 
 /** 2.0 name of a 1.x parameter of `processor`, or the name unchanged. */
 export function upgradeParamName(processor: string, param: string): string {
   const table = PARAM_RENAMES[processor];
   if (table !== undefined && Object.hasOwn(table, param)) return table[param];
-  if (BAND_LOOKAHEAD.test(param)) return param.replace(/lookaheadMs$/, 'detectorDelayMs');
-  return param;
+  return upgradeDetectorDelayParamName(processor, param);
 }
 
 /** Catalog name of a closed-set insert parameter's stored ordinal, or undefined when it has none. */
@@ -219,11 +235,12 @@ type ChoiceNamer = (processor: string, param: string, ordinal: number) => string
 function catalogChoiceNamer(
   core: Pick<UpgradeCore, 'masteringInsertNames' | 'masteringInsertParamInfo'>,
 ): ChoiceNamer {
+  const supported = new Set<string>(core.masteringInsertNames());
   const byProcessor = new Map<string, ReadonlyMap<string, ReadonlyMap<number, string>>>();
   const choicesOf = (processor: string): ReadonlyMap<string, ReadonlyMap<number, string>> => {
     let params = byProcessor.get(processor);
     if (params === undefined) {
-      const entries = core.masteringInsertNames().includes(processor as MasteringInsertName)
+      const entries = supported.has(processor)
         ? core.masteringInsertParamInfo({ insert: processor as MasteringInsertName })
         : [];
       params = new Map(
@@ -429,6 +446,8 @@ export function upgradeMasteringOverrides(
     } else if (Object.hasOwn(MULTIBAND_CUTOFFS, key) && typeof value === 'number') {
       cutoffs[MULTIBAND_CUTOFFS[key]] = value;
       cutoffKeys.push(key);
+    } else if (key === 'repair.declip.lpcBlend') {
+      dropped.push({ key, value, reason: 'The declipper no longer blends interpolation into LPC' });
     } else if (key === 'repair.declip.clipThreshold' && typeof value === 'number') {
       fragments.push({
         keys: [key],

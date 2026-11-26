@@ -156,7 +156,9 @@ describe('quick controls', () => {
         'makeupGainDb',
         'autoMakeup',
         'detector',
-        'sidechainHpfEnabled',
+        'pdrReleaseScale',
+        'pdrTimeMs',
+        'sidechainHighPassHz',
       ]);
       expect(controls[0]).toMatchObject({
         name: 'Threshold Db',
@@ -188,9 +190,9 @@ describe('quick controls', () => {
           { value: 'logRms', label: 'Log RMS' },
         ],
       });
-      expect(controls.find((c) => c.id === 'sidechainHpfEnabled')).toMatchObject({
-        kind: 'boolean',
-        value: false,
+      expect(controls.find((c) => c.id === 'sidechainHighPassHz')).toMatchObject({
+        kind: 'number',
+        unit: 'Hz',
       });
     });
 
@@ -256,17 +258,17 @@ describe('quick controls', () => {
     });
 
     it('falls back to explicitly set params for a processor without catalog params', () => {
-      addInsert(trackId, 'utility.gain', { mix: 0.4, depthMs: 12 });
+      addInsert(trackId, 'saturation.softClipper', { mix: 0.4, ceiling: 0.8 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
-        { resolveInsertParams: () => [] },
+        { resolveInsertParams: () => [], resolveInsertParamInfo: () => [] },
       );
-      expect(controls.map((c) => c.id).sort()).toEqual(['depthMs', 'mix']);
+      expect(controls.map((c) => c.id).sort()).toEqual(['ceiling', 'mix']);
       expect(controls.find((c) => c.id === 'mix')).toMatchObject({ min: 0, max: 1, value: 0.4 });
     });
 
     it('uses the descriptor display range and unit for a modulation rate', () => {
-      addInsert(trackId, 'modulation.chorus', { rateHz: 0.8 });
+      addInsert(trackId, 'effects.modulation.chorus', { rateHz: 0.8 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         {
@@ -317,12 +319,12 @@ describe('quick controls', () => {
 
     it('exposes every catalog and explicitly saved parameter', () => {
       const names = Array.from({ length: 12 }, (_, i) => `param${i}`);
-      addInsert(trackId, 'utility.gain', { savedParam: 0.75 });
+      addInsert(trackId, 'utility.gain', { levelDb: 0.75 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => names },
       );
-      expect(controls.map((control) => control.id)).toEqual([...names, 'savedParam']);
+      expect(controls.map((control) => control.id)).toEqual([...names, 'levelDb']);
     });
 
     it('addresses master inserts too', () => {
@@ -377,12 +379,12 @@ describe('quick controls', () => {
 
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', true);
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 'logRms');
-      setQuickControl({ type: 'insert', trackId, index: 0 }, 'sidechainHpfEnabled', true);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'sidechainHighPassHz', 120);
 
       expect(store.tracks[0].mixer?.inserts[0].params).toMatchObject({
         autoMakeup: true,
         detector: 'logRms',
-        sidechainHpfEnabled: true,
+        sidechainHighPassHz: 120,
       });
       expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', 1)).toThrow(
         RangeError,
@@ -392,12 +394,12 @@ describe('quick controls', () => {
       );
     });
 
-    it('does not clamp an un-catalogued processor parameter to a display heuristic', () => {
-      addInsert(trackId, 'utility.gain', { rateHz: 0.8 });
+    it('does not clamp a processor parameter to a display heuristic', () => {
+      addInsert(trackId, 'utility.gain', { levelDb: 0.8 });
 
-      setQuickControl({ type: 'insert', trackId, index: 0 }, 'rateHz', 2);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'levelDb', -80);
 
-      expect(store.tracks[0].mixer?.inserts[0].params.rateHz).toBe(2);
+      expect(store.tracks[0].mixer?.inserts[0].params.levelDb).toBe(-80);
     });
 
     it('coalesces a knob drag into one undo step', () => {

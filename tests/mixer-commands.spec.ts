@@ -1145,7 +1145,7 @@ describe('mixer commands', () => {
 
       replaceInsert(trackId, 0, {
         processor: 'saturation.tape',
-        params: { drive: 0.4 },
+        params: { driveDb: 0.4 },
         enabled: true,
       });
 
@@ -1222,16 +1222,16 @@ describe('mixer commands', () => {
     });
 
     it('recalls processor automation atomically, prunes new-chain targets, and restores them on undo', () => {
-      addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+      addInsert(trackId, 'saturation.tape', { driveDb: 0.4 });
       addInsert('master', 'eq.tilt', { tiltDb: 1 });
-      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1 });
       const capturedTrackId = store.tracks[0].mixer?.inserts[0].id as string;
       const capturedMasterId = store.mixer.master.inserts[0].id as string;
       const capturedMasteringId = store.mixer.masteringChain?.processors[0].id as string;
       const capturedParams = [
-        insertAutomationParam(capturedTrackId, 'drive'),
+        insertAutomationParam(capturedTrackId, 'driveDb'),
         insertAutomationParam(capturedMasterId, 'tiltDb'),
-        masteringAutomationParam(capturedMasteringId, 'ceilingDb'),
+        masteringAutomationParam(capturedMasteringId, 'ceilingDbtp'),
       ];
       store.automationLanes = capturedParams.map((param, index) => ({
         target: index === 0 ? trackId : 'master',
@@ -1245,14 +1245,14 @@ describe('mixer commands', () => {
       removeInsert('master', 0);
       removeMasteringProcessor(0);
       addInsert(trackId, 'dynamics.compressor', { thresholdDb: -12 });
-      addInsert('master', 'saturation.tape', { drive: 0.7 });
+      addInsert('master', 'saturation.tape', { driveDb: 0.7 });
       addMasteringProcessor('eq.tilt', { tiltDb: -2 });
       const currentTrackId = store.tracks[0].mixer?.inserts[0].id as string;
       const currentMasterId = store.mixer.master.inserts[0].id as string;
       const currentMasteringId = store.mixer.masteringChain?.processors[0].id as string;
       const currentParams = [
         insertAutomationParam(currentTrackId, 'thresholdDb'),
-        insertAutomationParam(currentMasterId, 'drive'),
+        insertAutomationParam(currentMasterId, 'driveDb'),
         masteringAutomationParam(currentMasteringId, 'tiltDb'),
       ];
       store.automationLanes = currentParams.map((param, index) => ({
@@ -1404,9 +1404,9 @@ describe('mixer commands', () => {
     });
 
     it('prunes processor lanes for replaced scene strips and restores them on undo', () => {
-      addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+      addInsert(trackId, 'saturation.tape', { driveDb: 0.4 });
       addInsert('master', 'eq.tilt', { tiltDb: 1 });
-      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1 });
       const oldBusId = addMixerBus({ name: 'Old return' });
       addInsert(mixerBusStripTarget(oldBusId), 'dynamics.compressor', { thresholdDb: -18 });
       const trackProcessorId = store.tracks[0].mixer?.inserts[0].id as string;
@@ -1414,9 +1414,9 @@ describe('mixer commands', () => {
       const masteringProcessorId = store.mixer.masteringChain?.processors[0].id as string;
       const busProcessorId = store.mixer.buses[0].strip?.inserts[0].id as string;
       const processorMidiTargets = [
-        midiLearnInsertTargetId(trackId, trackProcessorId, 'drive'),
+        midiLearnInsertTargetId(trackId, trackProcessorId, 'driveDb'),
         midiLearnInsertTargetId('master', masterProcessorId, 'tiltDb'),
-        midiLearnMasteringTargetId(masteringProcessorId, 'ceilingDb'),
+        midiLearnMasteringTargetId(masteringProcessorId, 'ceilingDbtp'),
       ];
       for (const [index, target] of processorMidiTargets.entries()) {
         store.midiCcBindings.set(target, { channel: index, controller: 40 + index });
@@ -1424,7 +1424,7 @@ describe('mixer commands', () => {
       store.automationLanes = [
         {
           target: trackId,
-          param: insertAutomationParam(trackProcessorId, 'drive'),
+          param: insertAutomationParam(trackProcessorId, 'driveDb'),
           points: [{ ppq: 0, value: 0.7 }],
           enabled: true,
         },
@@ -1442,7 +1442,7 @@ describe('mixer commands', () => {
         },
         {
           target: 'master',
-          param: masteringAutomationParam(masteringProcessorId, 'ceilingDb'),
+          param: masteringAutomationParam(masteringProcessorId, 'ceilingDbtp'),
           points: [{ ppq: 0, value: -2 }],
           enabled: true,
         },

@@ -8,7 +8,12 @@ import type { MeterBridge, MeterSource } from '@/engine/meters';
 import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
-import { apiCalls, resetApiCalls } from '@/lib/api-recorder';
+import {
+  API_RECORDING_ENABLED,
+  apiCalls,
+  lastCaptureOptions,
+  resetApiCalls,
+} from '@/lib/api-recorder';
 import { peakDb } from '@/lib/db';
 import { FNV1A_OFFSET_BASIS, FNV1A_PRIME, fnv1a32Bytes } from '@/lib/fnv1a';
 import { clamp } from '@/lib/math';
@@ -25,6 +30,7 @@ import {
   addMixerBus,
   addNote,
   addTrack,
+  clearActiveClipSelection,
   deleteClip,
   mixerBusStripTarget,
   removeAutomationLane,
@@ -235,6 +241,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     activeTrackId: () => store.activeTrackId,
     activeClipId: () => store.clipId,
     selectClip: (clipId: number) => setActiveClip(clipId),
+    clearClipSelection: () => clearActiveClipSelection(),
     applyPending: () => applyPending.value,
     whenEngineSyncIdle: () => ctx.whenEngineSyncIdle(),
     whenInsertGainReductionPolled: () =>
@@ -266,7 +273,9 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       (store.mixer.masteringChain?.processors ?? []).map((slot) => slot.processor),
     lastDownload: () => ctx.lastDownload(),
     lastMidiImportEvents,
+    apiRecordingEnabled: API_RECORDING_ENABLED,
     apiCalls,
+    lastCaptureOptions,
     resetApiCalls,
     clearLastMidiImportEvents,
     exportProbe: async (
@@ -324,7 +333,22 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     },
     masterLufs: () => bridge.value?.latest.momentaryLufs ?? null,
     positionPpq: () => positionPpq.value,
+    playheadClock: () => ({
+      ppq: positionPpq.value,
+      audioSeconds: handle.value?.ctx.currentTime,
+    }),
+    captureProgress: async () => {
+      const active = handle.value;
+      if (!active) return null;
+      const { capturedFrames } = await active.engine.captureStatus();
+      return { capturedFrames, sampleRate: active.ctx.sampleRate };
+    },
     setTempoSegments: (segments: { startPpq: number; bpm: number }[]) => setTempoSegments(segments),
+    loopRange: () => ({
+      startPpq: transport.loopStartPpq.value,
+      endPpq: transport.loopEndPpq.value,
+      enabled: transport.loopEnabled.value,
+    }),
     setLoopRange: (startPpq: number, endPpq: number, enabled: boolean) =>
       transport.setLoop(startPpq, endPpq, enabled),
     setAutomationLanePoints: (

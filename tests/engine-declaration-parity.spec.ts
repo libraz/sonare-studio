@@ -226,7 +226,7 @@ function parityFixture(): {
   });
   const busStrip = makeStrip({
     inserts: [
-      { processor: 'stereo.monoMaker', enabled: false, params: { cutoffHz: 120 } },
+      { processor: 'stereo.monoMaker', enabled: false, params: { frequencyHz: 120 } },
       { processor: 'dynamics.limiter', enabled: true, params: { thresholdDb: -3 } },
     ],
   });
@@ -234,7 +234,7 @@ function parityFixture(): {
     polarityInvertLeft: true,
     inserts: [
       { processor: 'eq.tilt', enabled: false, params: { tiltDb: -1 } },
-      { processor: 'eq.bandPass', enabled: true, params: { frequencyHz: 900 } },
+      { processor: 'eq.bandPass', enabled: true, params: { bandPassFrequencyHz: 900 } },
     ],
   });
   const master = makeStrip({
@@ -294,7 +294,7 @@ function parityFixture(): {
     },
     {
       target: 2,
-      param: insertAutomationParam(1, 'frequencyHz'),
+      param: insertAutomationParam(1, 'bandPassFrequencyHz'),
       enabled: true,
       points: [{ ppq: 3, value: 1200 }],
     },

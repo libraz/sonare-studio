@@ -1,15 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const hoisted = vi.hoisted(() => ({
-  create: vi.fn(),
-}));
-
-vi.mock('@libraz/libsonare/worklet', () => ({
-  init: vi.fn(async () => undefined),
-  SonareEngine: { create: hoisted.create },
-}));
 vi.mock('@libraz/libsonare/wasm?url', () => ({ default: '/sonare.wasm' }));
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: vi.fn(async () => ({})),
+}));
 
+import { SonareEngine } from '@libraz/libsonare/worklet';
 import { createEngine } from '@/engine/engine';
 
 describe('createEngine worklet readiness', () => {
@@ -19,6 +15,7 @@ describe('createEngine worklet readiness', () => {
   afterEach(() => {
     process.off('unhandledRejection', onUnhandled);
     unhandled.length = 0;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -51,15 +48,10 @@ describe('createEngine worklet readiness', () => {
         removeEventListener = vi.fn();
       },
     );
-    hoisted.create.mockImplementation(
-      async (
-        ctx: unknown,
-        opts: { nodeFactory: (c: unknown, name: string, o: object) => unknown },
-      ) => {
-        opts.nodeFactory(ctx, 'sonare', {});
-        throw new Error('create failed');
-      },
-    );
+    vi.spyOn(SonareEngine, 'create').mockImplementation(async (_ctx, options) => {
+      options.nodeFactory?.(_ctx, 'sonare', {});
+      throw new Error('create failed');
+    });
 
     await expect(createEngine()).rejects.toThrow('create failed');
     for (const listener of [...listeners]) {

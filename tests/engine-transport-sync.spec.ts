@@ -28,6 +28,15 @@ function makeMarker(id: number, ppq: number, name = `Marker ${id}`): EditorMarke
 }
 
 describe('createTransportSync', () => {
+  it('sends the playback floor for legacy sub-floor tempo values', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createTransportSync(handle);
+    sync.sync([{ startPpq: 0, bpm: 5e-7, endBpm: 5e-7 }], [], []);
+    expect(engine.setTempoSegments).toHaveBeenCalledWith([
+      { startPpq: 0, bpm: 1e-6, endBpm: 1e-6 },
+    ]);
+  });
+
   it('sends engine defaults when the project has no segments', () => {
     const { handle, engine } = makeHandle();
     const sync = createTransportSync(handle);
@@ -81,10 +90,20 @@ describe('createTransportSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createTransportSync(handle);
 
-    sync.sync([], [], [makeMarker(7, 16, 'Outro'), makeMarker(3, 0, 'Intro'), makeMarker(5, 8)]);
+    sync.sync(
+      [],
+      [],
+      [
+        makeMarker(7, 16, 'Outro'),
+        makeMarker(3, 0, 'Intro'),
+        makeMarker(5, 8),
+        makeMarker(9, 10, ''),
+      ],
+    );
     expect(engine.setMarkers).toHaveBeenCalledWith([
       { id: 3, ppq: 0, name: 'Intro' },
       { id: 5, ppq: 8, name: 'Marker 5' },
+      { id: 9, ppq: 10 },
       { id: 7, ppq: 16, name: 'Outro' },
     ]);
   });

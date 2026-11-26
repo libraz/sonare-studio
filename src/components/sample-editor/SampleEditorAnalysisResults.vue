@@ -58,8 +58,8 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
   <div v-if="repairAnalysis" class="match-eq-analysis repair-analysis" role="status">
     <div class="match-eq-head">
       <span class="match-eq-title">{{ se.repairAnalysisTitle }}</span>
-      <span v-if="Number.isFinite(repairAnalysis.integratedLufs)" class="match-eq-loudness">
-        {{ repairAnalysis.integratedLufs.toFixed(1) }} LUFS
+      <span class="match-eq-loudness">
+        {{ formatMeasure(repairAnalysis.integratedLufs, 1, ' LUFS') }}
       </span>
     </div>
     <dl class="repair-channels">
@@ -109,10 +109,12 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
       <span class="match-eq-title">{{ se.matchEqAnalysisTitle }}</span>
       <span v-if="matchEqAnalysis.loudness" class="match-eq-loudness">
         {{ se.matchEqLoudness }}:
-        {{ matchEqAnalysis.loudness.sourceLufs.toFixed(1) }} →
-        {{ matchEqAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS
-        ({{ matchEqAnalysis.loudness.gainToMatchDb >= 0 ? '+' : ''
-        }}{{ matchEqAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
+        {{ formatMeasure(matchEqAnalysis.loudness.sourceLufs, 1, '') }} →
+        {{ formatMeasure(matchEqAnalysis.loudness.referenceLufs, 1, '') }} LUFS
+        <template v-if="matchEqAnalysis.loudness.gainToMatchDb !== undefined">
+          ({{ matchEqAnalysis.loudness.gainToMatchDb >= 0 ? '+' : ''
+          }}{{ matchEqAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
+        </template>
       </span>
     </div>
     <svg
@@ -136,11 +138,16 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
       <li
         v-for="(band, index) in matchEqAnalysis.tonalBalance"
         :key="index"
-        :class="{ over: band.deviationDb > 0, under: band.deviationDb < 0 }"
+        :class="{
+          over: band.deviationDb !== undefined && band.deviationDb > 0,
+          under: band.deviationDb !== undefined && band.deviationDb < 0,
+        }"
       >
         <span class="match-eq-band-hz">{{ Math.round(band.lowHz) }}–{{ Math.round(band.highHz) }} Hz</span>
         <span class="match-eq-band-db">
-          {{ band.deviationDb >= 0 ? '+' : '' }}{{ band.deviationDb.toFixed(1) }} dB
+          {{ band.deviationDb !== undefined && band.deviationDb > 0 ? '+' : '' }}{{
+            formatMeasure(band.deviationDb, 1, ' dB')
+          }}
         </span>
       </li>
     </ul>
@@ -163,7 +170,7 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
       <dt>{{ se.roomEstimateVolume }}</dt>
       <dd>{{ formatMeasure(roomEstimate.volume, 0, ' m³') }}</dd>
       <dt>{{ se.roomEstimateRt60 }}</dt>
-      <dd>{{ formatMeasure(roomEstimate.rt60Mid, 2, ' s') }}</dd>
+      <dd>{{ formatMeasure(roomEstimate.rt60Mid, 2, ' s', se.rt60NotMeasured) }}</dd>
       <dt>{{ se.roomEstimateDrr }}</dt>
       <dd>{{ formatMeasure(roomEstimate.drrDb, 1, ' dB') }}</dd>
     </dl>
@@ -184,7 +191,7 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
     </div>
     <dl class="room-estimate-grid">
       <dt>{{ se.roomEstimateRt60 }}</dt>
-      <dd>{{ formatMeasure(acousticAnalysis.rt60, 2, ' s') }}</dd>
+      <dd>{{ formatMeasure(acousticAnalysis.rt60, 2, ' s', se.rt60NotMeasured) }}</dd>
       <dt>{{ se.acousticEdt }}</dt>
       <dd>{{ formatMeasure(acousticAnalysis.edt, 2, ' s') }}</dd>
       <dt>{{ se.acousticClarity }}</dt>
@@ -193,7 +200,15 @@ function repairStageTitle(stage: MasteringRepairStageName): string {
         {{ formatMeasure(acousticAnalysis.c80, 1, ' dB') }}
       </dd>
       <dt>{{ se.acousticDefinition }}</dt>
-      <dd>{{ formatMeasure(Math.round(acousticAnalysis.d50 * 100), 0, '%') }}</dd>
+      <dd>
+        {{
+          formatMeasure(
+            acousticAnalysis.d50 === undefined ? undefined : Math.round(acousticAnalysis.d50 * 100),
+            0,
+            '%',
+          )
+        }}
+      </dd>
     </dl>
   </div>
 </template>

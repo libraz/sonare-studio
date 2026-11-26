@@ -335,7 +335,7 @@ function formatAttenuation(value: number): string {
       <dl class="mono-grid">
         <div>
           <dt>{{ t.shell.mastering.monoCompatibility.correlation }}</dt>
-          <dd>{{ monoCompatibility.correlation.toFixed(2) }}</dd>
+          <dd>{{ formatLevel(monoCompatibility.correlation, 2) }}</dd>
         </div>
         <div>
           <dt>{{ t.shell.mastering.monoCompatibility.width }}</dt>

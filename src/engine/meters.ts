@@ -9,10 +9,9 @@ import { createTargetListeners } from './target-listeners';
  *
  * Mirrors the engine's `WorkletMeterSnapshot` payload minus the
  * discriminator and target id, with all peak/RMS dB values normalized to
- * finite numbers (clamped to {@link SILENCE_DB}). The optional fields
- * come from full records (the master target): they are passed through
- * unclamped and omitted when the engine reports a non-finite value, which is
- * also the case for the lightweight lane/bus records.
+ * finite numbers (clamped to {@link SILENCE_DB}). Optional measurements
+ * are passed through unclamped. Negative infinity represents measured silence
+ * for true peak and LUFS.
  */
 export interface StereoMeterLevels {
   /** Absolute engine frame the snapshot was taken at. */
@@ -25,8 +24,8 @@ export interface StereoMeterLevels {
   rmsDbL: number;
   /** Right channel RMS level in dBFS. */
   rmsDbR: number;
-  /** Stereo correlation in [-1, 1]. */
-  correlation: number;
+  /** Stereo correlation in [-1, 1], when measured. */
+  correlation?: number;
   /** Left channel true peak in dBTP (full records only). */
   truePeakDbtpL?: number;
   /** Right channel true peak in dBTP (full records only). */
@@ -114,29 +113,35 @@ const SILENT_LEVELS: StereoMeterLevels = Object.freeze({
   peakDbR: SILENCE_DB,
   rmsDbL: SILENCE_DB,
   rmsDbR: SILENCE_DB,
-  correlation: 0,
 });
 
 /** Clamps a possibly non-finite dB value to the silence floor. */
-function clampDb(db: number): number {
-  return Number.isFinite(db) && db > SILENCE_DB ? db : SILENCE_DB;
+function clampDb(db: number | undefined): number {
+  return db !== undefined && Number.isFinite(db) && db > SILENCE_DB ? db : SILENCE_DB;
 }
 
-/** Normalizes an engine snapshot, omitting non-finite full-record fields. */
+/** True for a finite level or a reading of silence. */
+function isLevel(db: number | undefined): db is number {
+  return Number.isFinite(db) || db === Number.NEGATIVE_INFINITY;
+}
+
+/** Normalizes an engine snapshot, preserving its optional measurements. */
 function toLevels(snapshot: WorkletMeterSnapshot): StereoMeterLevels {
   const levels: StereoMeterLevels = {
     frame: snapshot.frame,
-    peakDbL: clampDb(snapshot.peakDbL),
-    peakDbR: clampDb(snapshot.peakDbR),
-    rmsDbL: clampDb(snapshot.rmsDbL),
-    rmsDbR: clampDb(snapshot.rmsDbR),
-    correlation: snapshot.correlation,
+    peakDbL: clampDb(snapshot.peakDb[0]),
+    peakDbR: clampDb(snapshot.peakDb[1]),
+    rmsDbL: clampDb(snapshot.rmsDb[0]),
+    rmsDbR: clampDb(snapshot.rmsDb[1]),
   };
-  if (Number.isFinite(snapshot.truePeakDbtpL)) levels.truePeakDbtpL = snapshot.truePeakDbtpL;
-  if (Number.isFinite(snapshot.truePeakDbtpR)) levels.truePeakDbtpR = snapshot.truePeakDbtpR;
-  if (Number.isFinite(snapshot.momentaryLufs)) levels.momentaryLufs = snapshot.momentaryLufs;
-  if (Number.isFinite(snapshot.shortTermLufs)) levels.shortTermLufs = snapshot.shortTermLufs;
-  if (Number.isFinite(snapshot.integratedLufs)) levels.integratedLufs = snapshot.integratedLufs;
+  if (Number.isFinite(snapshot.correlation)) levels.correlation = snapshot.correlation;
+  const truePeakDbtpL = snapshot.truePeakDbtp[0];
+  const truePeakDbtpR = snapshot.truePeakDbtp[1];
+  if (isLevel(truePeakDbtpL)) levels.truePeakDbtpL = truePeakDbtpL;
+  if (isLevel(truePeakDbtpR)) levels.truePeakDbtpR = truePeakDbtpR;
+  if (isLevel(snapshot.momentaryLufs)) levels.momentaryLufs = snapshot.momentaryLufs;
+  if (isLevel(snapshot.shortTermLufs)) levels.shortTermLufs = snapshot.shortTermLufs;
+  if (isLevel(snapshot.integratedLufs)) levels.integratedLufs = snapshot.integratedLufs;
   if (Number.isFinite(snapshot.gainReductionDb)) levels.gainReductionDb = snapshot.gainReductionDb;
   return levels;
 }

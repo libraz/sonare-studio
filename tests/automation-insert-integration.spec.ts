@@ -75,19 +75,19 @@ describe('insert automation command validation', () => {
   });
 
   it('accepts mastering automation only on an existing master-chain processor', () => {
-    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1 });
     expect(() =>
-      setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDb'), [
+      setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDbtp'), [
         { ppq: 0, value: -2 },
       ]),
     ).not.toThrow();
     expect(() =>
-      setAutomationLanePoints(trackId, masteringAutomationParam(0, 'ceilingDb'), [
+      setAutomationLanePoints(trackId, masteringAutomationParam(0, 'ceilingDbtp'), [
         { ppq: 0, value: -2 },
       ]),
     ).toThrow(/must target the master/);
     expect(() =>
-      setAutomationLanePoints('master', masteringAutomationParam(9, 'ceilingDb'), [
+      setAutomationLanePoints('master', masteringAutomationParam(9, 'ceilingDbtp'), [
         { ppq: 0, value: -2 },
       ]),
     ).toThrow(/Unknown mastering processor/);
@@ -130,7 +130,7 @@ describe('insert automation serialization', () => {
     addInsert(trackId, 'utility.gain');
     addInsert('master', 'utility.gain');
     addInsert(busAutomationTarget(busId), 'utility.gain');
-    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1 });
     setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'sawLead' } });
     setAutomationLanePoints(trackId, insertAutomationParam(0, 'levelDb'), [{ ppq: 0, value: 2 }]);
     setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
@@ -140,7 +140,7 @@ describe('insert automation serialization', () => {
     setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'levelDb'), [
       { ppq: 8, value: 5 },
     ]);
-    setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDb'), [
+    setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDbtp'), [
       { ppq: 12, value: -2 },
     ]);
 
@@ -163,7 +163,7 @@ describe('insert automation serialization', () => {
         `${reTrackId}:${insertAutomationParam(trackProcessorId as string, 'levelDb')}`,
         `${reTrackId}:${instrumentAutomationParam('cutoffHz')}`,
         `master:${insertAutomationParam(masterProcessorId as string, 'levelDb')}`,
-        `master:${masteringAutomationParam(masteringProcessorId as string, 'ceilingDb')}`,
+        `master:${masteringAutomationParam(masteringProcessorId as string, 'ceilingDbtp')}`,
         `${busAutomationTarget(reBusId)}:${insertAutomationParam(busProcessorId as string, 'levelDb')}`,
       ].sort(),
     );

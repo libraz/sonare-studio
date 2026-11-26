@@ -5,10 +5,10 @@
  * data module: the wasm call and the audio render live in the panel.
  *
  * For each platform the preview returns the measured integrated LUFS and true
- * peak, the normalization gain the platform would apply (target − measured;
- * positive = turned up, negative = turned down) and whether that gain would
- * push the true peak past the platform ceiling. The panel passes explicit
- * platform configs so users are not limited to the wasm build's default list.
+ * peak, an optional normalization gain (absent when loudness is unmeasurable)
+ * and whether that gain would push the true peak past the platform ceiling.
+ * The panel passes explicit platform configs so users are not limited to the
+ * wasm build's default list.
  */
 
 import type {
@@ -75,31 +75,38 @@ export type StreamingTarget = MasteringStreamingPreviewPlatform;
 /**
  * Computes streaming loudness verdicts from the panel's processed mixdown
  * report. This keeps the table aligned with the same stereo deliverable LUFS
- * and true-peak values shown in the preview pane. Returns null when the report
- * lacks the required metering fields, in which case callers may fall back to
- * libsonare's mono preview seam.
+ * and true-peak values shown in the preview pane. A silent LUFS value remains
+ * measured as -Infinity, but has no normalization gain. Returns null only when
+ * a required measurement is absent, in which case callers may fall back to
+ * libsonare's preview seam.
  */
 export function streamingTargetsFromReport(
   report: MixdownReport,
   platforms: ReadonlyArray<StreamingPlatform>,
 ): StreamingTarget[] | null {
   const integratedLufs = report.lufs;
-  const truePeakDbtp = report.truePeakDbtp ?? report.peakDb;
+  const truePeakDbtp = report.truePeakDbtp;
   if (
-    typeof integratedLufs !== 'number' ||
-    !Number.isFinite(integratedLufs) ||
-    !Number.isFinite(truePeakDbtp)
+    integratedLufs === undefined ||
+    truePeakDbtp === undefined ||
+    Number.isNaN(integratedLufs) ||
+    Number.isNaN(truePeakDbtp)
   ) {
     return null;
   }
   return platforms.map((platform) => {
-    const normalizationGainDb = platform.targetLufs - integratedLufs;
+    const normalizationGainDb =
+      integratedLufs === Number.NEGATIVE_INFINITY
+        ? undefined
+        : platform.targetLufs - integratedLufs;
     return {
       name: platform.name,
       integratedLufs,
       truePeakDbtp,
-      normalizationGainDb,
-      ceilingRisk: truePeakDbtp + normalizationGainDb > platform.ceilingDbtp,
+      ...(normalizationGainDb === undefined ? {} : { normalizationGainDb }),
+      ceilingRisk:
+        normalizationGainDb !== undefined &&
+        truePeakDbtp + normalizationGainDb > platform.ceilingDbtp,
     };
   });
 }

@@ -266,6 +266,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@libraz/libsonare@npm:^2.0.0":
+  version: 2.0.0
+  resolution: "@libraz/libsonare@npm:2.0.0"
+  checksum: 10c0/4163cf296cbbb8596c33874af3d076abdffdecf271651f7b8bc9aadfd2ae093f9ff335a5e1158952d688cf542d00363907c119ba70e4c659ff420cc2502e0afc
+  languageName: node
+  linkType: hard
+
 "@napi-rs/wasm-runtime@npm:1.2.6":
   version: 1.2.6
   resolution: "@napi-rs/wasm-runtime@npm:1.2.6"
@@ -1790,6 +1797,7 @@ __metadata:
     "@expo-google-fonts/noto-sans-jp": "npm:^0.4.4"
     "@fontsource-variable/bricolage-grotesque": "npm:^5.3.0"
     "@libraz/libcantus": "npm:1.4.3"
+    "@libraz/libsonare": "npm:^2.0.0"
     "@types/node": "npm:^26"
     "@vitejs/plugin-vue": "npm:^6"
     "@vitest/coverage-v8": "npm:^5.1.1"

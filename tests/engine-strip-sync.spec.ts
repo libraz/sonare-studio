@@ -21,13 +21,16 @@ import {
 import type { EditorTrack } from '@/project/types';
 import { fakeEngineHandle, unsupportedProcessor } from './fakes/engine';
 
-type RuntimeModule = NonNullable<ReturnType<typeof import('@/project/runtime').currentWasmModule>>;
 const runtimeState = vi.hoisted(() => ({ ready: true }));
 
-vi.mock('@/project/runtime', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/project/runtime')>()),
-  currentWasmModule: () => (runtimeState.ready ? ({} as RuntimeModule) : null),
-}));
+vi.mock('@/project/runtime', async (importOriginal) => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const wasm = createFakeWasmModule();
+  return {
+    ...(await importOriginal<typeof import('@/project/runtime')>()),
+    currentWasmModule: () => (runtimeState.ready ? wasm : null),
+  };
+});
 
 // The soft clipper's ceiling is read only when the insert is built.
 vi.mock('@/project/processor-controls', async (importOriginal) => ({
@@ -58,7 +61,7 @@ vi.mock('@/project/processor-controls', async (importOriginal) => ({
         'inputDb',
       ],
       'saturation.softClipper': ['driveDb'],
-      'saturation.tape': ['drive'],
+      'saturation.tape': ['driveDb'],
     };
     const names = rootParams[processor];
     if (names === undefined) {
@@ -211,14 +214,14 @@ describe('stripScene', () => {
     const strip = makeStrip({
       inserts: [
         { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+        { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
       ],
     });
     expect(stripScene(7, strip)).toEqual({
       id: 'track-7',
       inserts: [
         { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { driveDb: 0.4 } },
       ],
     });
   });
@@ -273,8 +276,8 @@ describe('stripScene', () => {
     const strip = makeStrip({
       inserts: [{ processor: 'saturation.tape', params: {}, enabled: true }],
     });
-    expect(() => stripScene(1, strip, new Set(['dynamics.compressor']))).toThrow(
-      'Unsupported insert processor: saturation.tape',
+    expect(() => stripScene(1, strip, new Set(['dynamics.compressor']))).toThrowError(
+      new RangeError('Unsupported insert processor: saturation.tape at inserts[0]'),
     );
   });
 
@@ -295,7 +298,7 @@ describe('createStripSync', () => {
       makeStrip({
         inserts: [
           { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-          { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+          { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
         ],
       }),
     );
@@ -360,7 +363,7 @@ describe('createStripSync', () => {
     const sync = createStripSync(handle);
     const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
     ];
     sync.sync([makeTrack(1, makeStrip({ inserts }))], makeMixer());
     clearCalls(engine);
@@ -378,7 +381,7 @@ describe('createStripSync', () => {
       const { handle, engine } = makeHandle();
       const sync = createStripSync(handle);
       const first = makeStrip({
-        inserts: [{ processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false }],
+        inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false }],
       });
       const second = makeStrip({
         ...first,
@@ -406,7 +409,7 @@ describe('createStripSync', () => {
       makeStrip({
         inserts: [
           { processor: 'dynamics.compressor', params: { thresholdDb }, enabled: true },
-          { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+          { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
         ],
         eq: { enabled: true, bands: [band] },
       });
@@ -581,29 +584,6 @@ describe('createStripSync', () => {
     expect(engine.setStripInsertParam).not.toHaveBeenCalled();
   });
 
-  it('rebuilds for an unknown numeric key on a catalogued processor', () => {
-    const { handle, engine } = makeHandle();
-    const sync = createStripSync(handle);
-    const stripFor = (mystery: number): MixerStrip =>
-      makeStrip({
-        inserts: [
-          {
-            processor: 'saturation.tape',
-            params: { drive: 0.4, mystery },
-            enabled: true,
-          },
-        ],
-      });
-
-    sync.sync([makeTrack(1, stripFor(0.1))], makeMixer());
-    clearCalls(engine);
-    const next = stripFor(0.2);
-    sync.sync([makeTrack(1, next)], makeMixer());
-
-    expect(engine.setStrip).toHaveBeenCalledWith(1, stripScene(1, next));
-    expect(engine.setStripInsertParam).not.toHaveBeenCalled();
-  });
-
   it('keeps the legacy numeric fallback before the WASM catalog is ready', () => {
     runtimeState.ready = false;
     const { handle, engine } = makeHandle();
@@ -633,9 +613,9 @@ describe('createStripSync', () => {
   it('re-sends strip JSON when a non-numeric insert param changes', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const stripFor = (mode: boolean): MixerStrip =>
+    const stripFor = (autoMakeup: boolean): MixerStrip =>
       makeStrip({
-        inserts: [{ processor: 'dynamics.compressor', params: { mode }, enabled: true }],
+        inserts: [{ processor: 'dynamics.compressor', params: { autoMakeup }, enabled: true }],
       });
 
     sync.sync([makeTrack(1, stripFor(false))], makeMixer());
@@ -718,7 +698,7 @@ describe('createStripSync', () => {
     const sync = createStripSync(handle);
     const band: EqBandInput = { frequencyHz: 8000, gainDb: -1, enabled: true };
     const master = makeStrip({
-      inserts: [{ processor: 'saturation.tape', params: { drive: 0.2 }, enabled: false }],
+      inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.2 }, enabled: false }],
       eq: { enabled: true, bands: [band] },
     });
 
@@ -769,7 +749,7 @@ describe('createStripSync', () => {
     const master = makeStrip({
       gainDb: -6,
       pan: 0.4,
-      inserts: [{ processor: 'saturation.tape', params: { drive: 0.4 }, enabled: true }],
+      inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: true }],
     });
 
     sync.sync([], makeMixer({ master }));
@@ -783,7 +763,7 @@ describe('createStripSync', () => {
     const sync = createStripSync(handle);
     const band: EqBandInput = { frequencyHz: 8000, gainDb: -1, enabled: true };
     const master = makeStrip({
-      inserts: [{ processor: 'saturation.tape', params: { drive: 0.2 }, enabled: false }],
+      inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.2 }, enabled: false }],
       eq: { enabled: true, bands: [band] },
     });
     let masterScene: { inserts: Array<{ params: unknown }> } | undefined;
@@ -815,7 +795,7 @@ describe('createStripSync', () => {
     sync.sync([makeTrack(1)], makeMixer({ master }), 1);
     expect(masterEq.get(0)).toEqual(band);
     expect(masterBypassed.get(0)).toBe(true);
-    expect(masterScene?.inserts[0].params).toEqual({ drive: 0.2 });
+    expect(masterScene?.inserts[0].params).toEqual({ driveDb: 0.2 });
 
     // Simulate a new lane declaration in the facade. It replaces the master
     // strip from its retained scene, so the dedicated side-channel state is
@@ -832,15 +812,15 @@ describe('createStripSync', () => {
     expect(engine.setStripInsertBypassed).toHaveBeenCalledWith('master', 0, { bypassed: true });
     expect(masterEq.get(0)).toEqual(band);
     expect(masterBypassed.get(0)).toBe(true);
-    expect(masterScene?.inserts[0].params).toEqual({ drive: 0.2 });
+    expect(masterScene?.inserts[0].params).toEqual({ driveDb: 0.2 });
   });
 
   it('patches master insert numeric params without replacing the master strip', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const masterFor = (drive: number): MixerStrip =>
+    const masterFor = (driveDb: number): MixerStrip =>
       makeStrip({
-        inserts: [{ processor: 'saturation.tape', params: { drive }, enabled: true }],
+        inserts: [{ processor: 'saturation.tape', params: { driveDb }, enabled: true }],
       });
 
     sync.sync([], makeMixer({ master: masterFor(0.2) }));
@@ -850,7 +830,7 @@ describe('createStripSync', () => {
     expect(masterScenes(engine)).toHaveLength(0);
     expect(engine.setStripInsertParam).toHaveBeenCalledTimes(1);
     expect(engine.setStripInsertParam).toHaveBeenCalledWith('master', 0, {
-      name: 'drive',
+      name: 'driveDb',
       value: 0.6,
     });
   });
@@ -1226,7 +1206,7 @@ describe('createStripSync', () => {
     const sync = createStripSync(handle);
     const processed = makeBus('processed');
     processed.strip = makeStrip({
-      inserts: [{ processor: 'saturation.tape', params: { drive: 0.8 }, enabled: true }],
+      inserts: [{ processor: 'saturation.tape', params: { driveDb: 0.8 }, enabled: true }],
     });
     const clean = makeBus('clean');
 
@@ -1241,7 +1221,7 @@ describe('createStripSync', () => {
   it('clears bypass state when a new logical bus reuses a bus number', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const insert = { processor: 'saturation.tape', params: { drive: 0.8 } } as const;
+    const insert = { processor: 'saturation.tape', params: { driveDb: 0.8 } } as const;
     const bypassed = {
       ...makeBus('bypassed'),
       strip: makeStrip({ inserts: [{ ...insert, enabled: false }] }),
@@ -1285,7 +1265,7 @@ describe('busScene', () => {
     const strip = makeStrip({
       inserts: [
         { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+        { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
       ],
     });
     expect(busScene(3, strip)).toEqual({
@@ -1293,7 +1273,7 @@ describe('busScene', () => {
       role: 'submix',
       inserts: [
         { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { driveDb: 0.4 } },
       ],
     });
   });
@@ -1403,8 +1383,8 @@ describe('busScene', () => {
     const strip = makeStrip({
       inserts: [{ processor: unsupportedProcessor('made.up'), params: {}, enabled: true }],
     });
-    expect(() => busScene(1, strip, new Set(['dynamics.compressor']))).toThrow(
-      'Unsupported insert processor: made.up',
+    expect(() => busScene(1, strip, new Set(['dynamics.compressor']))).toThrowError(
+      new RangeError('Unsupported insert processor: made.up at inserts[0]'),
     );
     expect(() => busScene(1, strip, null)).not.toThrow();
   });
@@ -1502,7 +1482,7 @@ describe('createStripSync group routing', () => {
     const sync = createStripSync(handle);
     const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
     ];
     const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
 
@@ -1685,7 +1665,7 @@ describe('createStripSync group routing', () => {
     const sync = createStripSync(handle);
     const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
     ];
     const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
 
@@ -1749,7 +1729,7 @@ describe('createStripSync group routing', () => {
     const sync = createStripSync(handle);
     const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
     ];
 
     sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
@@ -1782,7 +1762,7 @@ describe('createStripSync group routing', () => {
     const sync = createStripSync(handle);
     const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
     ];
     const group = makeGroupTrack(10, makeStrip({ inserts }));
 

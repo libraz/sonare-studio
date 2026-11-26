@@ -16,8 +16,12 @@ function applyLoudness(report: MixdownReport, measurement: LufsResult): void {
   ) {
     report.lufs = measurement.integratedLufs;
   }
-  if (Number.isFinite(measurement.momentaryLufs)) report.momentaryLufs = measurement.momentaryLufs;
-  if (Number.isFinite(measurement.shortTermLufs)) report.shortTermLufs = measurement.shortTermLufs;
+  if (measurement.momentaryLufs !== undefined && !Number.isNaN(measurement.momentaryLufs)) {
+    report.momentaryLufs = measurement.momentaryLufs;
+  }
+  if (measurement.shortTermLufs !== undefined && !Number.isNaN(measurement.shortTermLufs)) {
+    report.shortTermLufs = measurement.shortTermLufs;
+  }
   if (Number.isFinite(measurement.loudnessRangeLu)) {
     report.loudnessRangeLu = measurement.loudnessRangeLu;
   }
@@ -136,7 +140,11 @@ export function buildReport(
         stereoMonoDownmix(mixL, mixR, totalFrames),
         sampleRate,
       );
-      if (Number.isFinite(dynamicRange)) report.dynamicRangeDb = dynamicRange;
+      // +Infinity is a measured range when the low percentile lands on
+      // silence. Undefined is the absent measurement; NaN is malformed.
+      if (dynamicRange !== undefined && !Number.isNaN(dynamicRange)) {
+        report.dynamicRangeDb = dynamicRange;
+      }
     } catch {
       // Dynamic range stays absent when the metering call fails.
     }

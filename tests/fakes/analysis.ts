@@ -238,13 +238,11 @@ export const analyzePairFn =
 
 /** A pitch-tracker result; the contour is empty unless overridden. */
 export function pitchResult(overrides: Partial<PitchResult> = {}): PitchResult {
-  const medianF0 = overrides.medianF0 ?? 0;
   return {
     f0: new Float32Array(),
     voicedProb: new Float32Array(),
     voicedFlag: [],
-    medianF0,
-    meanF0: medianF0,
+    ...(overrides.medianF0 === undefined ? {} : { meanF0: overrides.medianF0 }),
     ...overrides,
   };
 }
@@ -276,8 +274,8 @@ const crackleDetection = (): CrackleDetection => ({
   perSecond: 0,
 });
 const noiseDetection = (): NoiseDetection => ({
-  floorDbfs: -90,
   bandFloorDbfs: new Float32Array(),
+  bandFloorBand: new Int32Array(),
 });
 const humDetection = (): HumDetection => ({
   fundamentalHz: 0,
@@ -304,7 +302,7 @@ export const denoiseReport = (): DenoiseReport => ({
 const declipReport = (): DeclipReport => ({
   detected: clipDetection(),
   lpcReconstructedRuns: 0,
-  interpolatedRuns: 0,
+  unreconstructedRuns: 0,
   repairedSamples: 0,
   linkedRuns: 0,
 });
@@ -543,7 +541,10 @@ export function pairAnalysisResults(
   overrides: Partial<PairAnalysisResultMap> = {},
 ): PairAnalysisResultMap {
   return {
-    'match.referenceLoudness': {},
+    'match.referenceLoudness': {
+      sourceLufs: Number.NEGATIVE_INFINITY,
+      referenceLufs: Number.NEGATIVE_INFINITY,
+    },
     'match.tonalBalance': { bands: [] },
     'match.tonalBalanceLogBands': { bands: [] },
     'match.matchEqCurve': { frequencies: [], gainDb: [] },
@@ -578,6 +579,7 @@ export function meterEstimate(overrides: Partial<MeterEstimate> = {}): MeterEsti
     candidateScores: [],
     candidates: [],
     searched: true,
+    unobservedBeats: [],
     ...overrides,
   };
 }

@@ -273,8 +273,18 @@ describe('estimateRoomRange', () => {
       RangeError,
     );
     const summary = estimateRoomRange(mod, ch([1]), 48000);
-    expect(summary.rt60Mid).toBeNaN();
-    expect(summary.absorptionMean).toBeNaN();
+    expect(summary.rt60Mid).toBeUndefined();
+    expect(summary.absorptionMean).toBeUndefined();
+  });
+
+  it('leaves unmeasured geometry and acoustic measures absent', () => {
+    const summary = estimateRoomRange(
+      { estimateRoom: () => ({ confidence: 0 }) },
+      ch([0, 0]),
+      48000,
+    );
+    expect(summary).toEqual({ confidence: 0 });
+    expect(roomEstimateHasGeometry(summary)).toBe(false);
   });
 
   it('converts room estimates into presets for roomMorph and RIR synthesis', () => {
@@ -306,14 +316,7 @@ describe('estimateRoomRange', () => {
 
   it('treats an estimate without a measurable decay as having no room shape', () => {
     const unmeasured = {
-      volume: Number.NaN,
-      length: Number.NaN,
-      width: Number.NaN,
-      height: Number.NaN,
-      drrDb: -8,
       confidence: 0,
-      rt60Mid: Number.NaN,
-      absorptionMean: Number.NaN,
     };
     expect(roomEstimateHasGeometry(unmeasured)).toBe(false);
     expect(roomEstimateHasGeometry({ ...unmeasured, length: 6, width: 4, height: 2 })).toBe(true);
@@ -372,15 +375,35 @@ describe('acoustic analysis helpers', () => {
       expect([...samples]).toEqual([1]);
       expect(sampleRate).toBe(44100);
       expect(options).toEqual({ nOctaveBands: 6 });
-      return { ...result, isBlind: true };
+      return {
+        rt60: 0.8,
+        rt60Bands: new Float32Array([0.8]),
+        confidence: 0.8,
+        isBlind: true,
+      };
     });
 
-    expect(
-      detectAcousticRange({ detectAcoustic: detectAcousticFn(detectAcoustic) }, ch([1]), 44100),
-    ).toMatchObject({
+    const summary = detectAcousticRange(
+      { detectAcoustic: detectAcousticFn(detectAcoustic) },
+      ch([1]),
+      44100,
+    );
+    expect(summary).toMatchObject({
       kind: 'blind',
+      rt60: 0.8,
+      confidence: 0.8,
       isBlind: true,
     });
+    expect(summary.rt60Mean).toBeCloseTo(0.8, 6);
+  });
+
+  it('leaves unmeasured scalar and band estimates absent', () => {
+    const summary = analyzeImpulseResponseRange(
+      { analyzeImpulseResponse: () => ({ confidence: 0, isBlind: false }) },
+      ch([0, 0]),
+      48000,
+    );
+    expect(summary).toEqual({ kind: 'impulse', confidence: 0, isBlind: false });
   });
 
   it('validates availability, sample rate and range', () => {

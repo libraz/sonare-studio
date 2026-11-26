@@ -88,6 +88,35 @@ describe('track channel presets', () => {
     });
   });
 
+  it('applies a current preset with full strip width and an enum parameter', () => {
+    const preset = trackChannelPresetFromTrack(store.tracks[0], 'Wide');
+    preset.strip.width = 2;
+    preset.strip.inserts = [
+      { processor: 'dynamics.compressor', params: { detector: 'rms' }, enabled: true },
+    ];
+
+    applyTrackChannelPreset(targetId, preset);
+
+    expect(store.tracks.find((track) => track.id === targetId)?.mixer).toMatchObject({
+      width: 2,
+      inserts: [{ processor: 'dynamics.compressor', params: { detector: 'rms' } }],
+    });
+  });
+
+  it('refuses an unread parameter in a current preset before editing the destination', () => {
+    const preset = trackChannelPresetFromTrack(store.tracks[0], 'Invalid');
+    preset.strip.inserts = [
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+      { processor: 'dynamics.compressor', params: { unknownParam: 0 }, enabled: true },
+    ];
+
+    expect(() => applyTrackChannelPreset(targetId, preset)).toThrow(TypeError);
+    expect(() => applyTrackChannelPreset(targetId, preset)).toThrow(
+      /strip\.inserts\[1\]: masteringInsertTiming: unknown key params\.unknownParam/,
+    );
+    expect(store.tracks.find((track) => track.id === targetId)?.mixer).toBeUndefined();
+  });
+
   it('drops routing and sidechain references that do not exist in the destination project', () => {
     const source = store.tracks.find((track) => track.id === sourceId)!;
     const preset = trackChannelPresetFromTrack(source, 'Portable');

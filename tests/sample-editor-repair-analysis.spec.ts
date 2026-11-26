@@ -41,7 +41,11 @@ function defects(overrides: DefectOverrides = {}): MasteringAudioProfileDefects 
       flatSampleCount: 0,
       flatLevel: 0,
     },
-    noise: { floorDbfs: -72.4, bandFloorDbfs: new Float32Array(0) },
+    noise: {
+      floorDbfs: -72.4,
+      bandFloorDbfs: new Float32Array(0),
+      bandFloorBand: new Int32Array(0),
+    },
     hum: {
       fundamentalHz: overrides.humFundamentalHz ?? 0,
       fundamentalProminence: 0,
@@ -92,6 +96,19 @@ describe('repairDefectItems', () => {
       { kind: 'hum', value: '60 Hz' },
       { kind: 'noise', value: '-72 dBFS' },
     ]);
+  });
+
+  it('renders a measured silent noise floor as negative infinity', () => {
+    const silent = defects();
+    silent.noise.floorDbfs = Number.NEGATIVE_INFINITY;
+    expect(repairDefectItems(silent)).toEqual([{ kind: 'noise', value: '-∞ dBFS' }]);
+  });
+
+  it('omits the noise row when the analyzer did not measure a floor', () => {
+    const unmeasured = defects();
+    delete unmeasured.noise.floorDbfs;
+    expect(Object.hasOwn(unmeasured.noise, 'floorDbfs')).toBe(false);
+    expect(repairDefectItems(unmeasured)).toEqual([]);
   });
 });
 

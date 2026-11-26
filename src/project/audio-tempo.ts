@@ -15,15 +15,14 @@
  * and asset loader from the running app.
  */
 
-import type { EstimateMeterRequest, MeterEstimate } from '@libraz/libsonare';
+import type { BeatObservations, EstimateMeterRequest, MeterEstimate } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
 import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
 import {
-  analyzeBeatAccentsInWorker,
-  type DetectedBeatAccents,
+  analyzeBeatObservationsInWorker,
   type DetectedBeats,
   detectBeatsInWorker,
 } from './audio-analysis-client';
@@ -395,12 +394,12 @@ export const ODD_METER_CANDIDATES: readonly number[] = [2, 3, 4, 5, 6, 7];
 /** Injectable dependencies for {@link estimateAudioClipMeter}. */
 export interface AudioMeterEstimateDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** Full analysis off the main thread, read for its beats and their accents. */
+  /** Full beat-level observations from analysis off the main thread. */
   analyze: (
     mono: Float32Array,
     sampleRate: number,
     signal?: AbortSignal,
-  ) => Promise<DetectedBeatAccents>;
+  ) => Promise<BeatObservations>;
   estimateMeter: (
     request: EstimateMeterRequest,
   ) => Pick<MeterEstimate, 'timeSignature' | 'grouping' | 'searched'>;
@@ -427,10 +426,15 @@ export async function estimateAudioClipMeter(
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
-  const { beatTimes, beatStrengths } = await deps.analyze(audible.mono, audible.sampleRate, signal);
-  if (beatStrengths.length !== beatTimes.length) return [];
+  const observations = await deps.analyze(audible.mono, audible.sampleRate, signal);
+  // The 2.0 estimator refuses an empty accent stream. No beats is a normal
+  // no-detection result for silence or short clips, so leave it to the editor's
+  // existing “none detected” path instead of exposing a core refusal message.
+  if (observations.accent.length === 0) return [];
   const estimate = deps.estimateMeter({
-    beats: beatTimes.map((timeSec, index) => ({ timeSec, strength: beatStrengths[index] })),
+    // Preserve empty/unmeasured streams and the attack/subdivision evidence;
+    // this lets the core exclude and report unobserved beats correctly.
+    observations,
     ...(candidates ? { candidateNumerators: [...candidates] } : {}),
   });
   if (!estimate.searched) return [];
@@ -464,7 +468,7 @@ export async function estimateActiveAudioClipMeter(
     {
       loadAudioAsset: loadAsset,
       analyze: (mono, sampleRate, abort) =>
-        analyzeBeatAccentsInWorker(mono, sampleRate, { signal: abort }),
+        analyzeBeatObservationsInWorker(mono, sampleRate, { signal: abort }),
       estimateMeter: (request) => wasm.estimateMeter(request),
     },
     candidates,

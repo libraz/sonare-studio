@@ -1,4 +1,4 @@
-import type { EstimateMeterRequest } from '@libraz/libsonare';
+import type { BeatObservations, EstimateMeterRequest } from '@libraz/libsonare';
 import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
@@ -226,8 +226,15 @@ describe('detectAudioClipTimeSignatures', () => {
 });
 
 describe('estimateAudioClipMeter', () => {
-  const beatTimes = Array.from({ length: 14 }, (_, index) => index * 0.5);
-  const analysis = { beatTimes, beatStrengths: beatTimes.map(() => 1) };
+  const beatIndices = Array.from({ length: 14 }, (_, index) => index);
+  const observations: BeatObservations = {
+    accent: beatIndices.map((index) => (index === 5 ? 0 : index % 4 === 0 ? 1 : 0.3)),
+    hasAttack: beatIndices.map((index) => index !== 5),
+    lowFrequencyEnergy: beatIndices.map((index) => (index === 5 ? 0 : 1)),
+    subdivisionAccent: beatIndices.slice(1).map(() => 0.1),
+    chordChange: [],
+  };
+  const analysis = { ...observations };
 
   it('reads one meter with its grouping over the clip, from the requested candidates', async () => {
     const estimateMeter = vi.fn((_request: EstimateMeterRequest) =>
@@ -248,22 +255,52 @@ describe('estimateAudioClipMeter', () => {
       ODD_METER_CANDIDATES,
     );
     expect(segments).toEqual([{ startPpq: 0, numerator: 7, denominator: 4, grouping: [3, 2, 2] }]);
-    expect(estimateMeter).toHaveBeenCalledWith(
-      expect.objectContaining({ candidateNumerators: [2, 3, 4, 5, 6, 7] }),
-    );
+    expect(estimateMeter).toHaveBeenCalledWith({
+      observations,
+      candidateNumerators: [2, 3, 4, 5, 6, 7],
+    });
   });
 
-  it('reports nothing when the series was too short to search or the accents do not line up', async () => {
+  it('keeps a searched meter when the estimator reports masked silent beats', async () => {
+    const estimateMeter = vi.fn((_request: EstimateMeterRequest) =>
+      meterEstimate({
+        timeSignature: timeSignature({ numerator: 4, denominator: 4 }),
+        grouping: [2, 2],
+        searched: true,
+        unobservedBeats: [5],
+      }),
+    );
+    const segments = await estimateAudioClipMeter(clipWindow(), 120, {
+      loadAudioAsset: async () => asset(48000 * 8),
+      analyze: async () => observations,
+      estimateMeter,
+    });
+    expect(segments).toEqual([{ startPpq: 0, numerator: 4, denominator: 4, grouping: [2, 2] }]);
+    expect(estimateMeter).toHaveBeenCalledWith({ observations });
+  });
+
+  it('reports nothing when the series was too short to search or no beat was observed', async () => {
     const unsearched = () =>
       meterEstimate({ timeSignature: timeSignature(), grouping: [4], searched: false });
     const deps = { loadAudioAsset: async () => asset(48000 * 8), estimateMeter: unsearched };
     expect(
       await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: async () => analysis }),
     ).toEqual([]);
-    const misaligned = { beatTimes, beatStrengths: [1] };
+    const estimate = vi.fn(unsearched);
     expect(
-      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: async () => misaligned }),
+      await estimateAudioClipMeter(clipWindow(), 120, {
+        ...deps,
+        estimateMeter: estimate,
+        analyze: async () => ({
+          accent: [],
+          hasAttack: [],
+          lowFrequencyEnergy: [],
+          subdivisionAccent: [],
+          chordChange: [],
+        }),
+      }),
     ).toEqual([]);
+    expect(estimate).not.toHaveBeenCalled();
   });
 });
 
@@ -299,7 +336,13 @@ describe('clip analysis signal', () => {
         loadAudioAsset,
         analyze: async (_mono, _rate, signal) => {
           seen.push(signal);
-          return { beatTimes: [], beatStrengths: [] };
+          return {
+            accent: [],
+            hasAttack: [],
+            lowFrequencyEnergy: [],
+            subdivisionAccent: [],
+            chordChange: [],
+          };
         },
         estimateMeter: () => meterEstimate({ grouping: [], searched: false }),
       },
@@ -318,10 +361,16 @@ describe('estimateAudioClipMeter with the real core', () => {
 
   it('reads a four-beat bar from accents on every fourth beat', async () => {
     const beatTimes = Array.from({ length: 32 }, (_, index) => index * 0.5);
-    const beatStrengths = beatTimes.map((_, index) => (index % 4 === 0 ? 1 : 0.3));
+    const observations: BeatObservations = {
+      accent: beatTimes.map((_, index) => (index % 4 === 0 ? 1 : 0.3)),
+      hasAttack: beatTimes.map(() => true),
+      lowFrequencyEnergy: [],
+      subdivisionAccent: beatTimes.slice(1).map(() => 0.1),
+      chordChange: [],
+    };
     const segments = await estimateAudioClipMeter(clipWindow({ lengthPpq: 32 }), 120, {
       loadAudioAsset: async () => asset(48000 * 16),
-      analyze: async () => ({ beatTimes, beatStrengths }),
+      analyze: async () => observations,
       estimateMeter: core.estimateMeter,
     });
     expect(segments).toHaveLength(1);

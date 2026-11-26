@@ -1,3 +1,4 @@
+import type { BeatObservations } from '@libraz/libsonare';
 import { runDisposableWorker } from '@/lib/disposable-worker';
 import type { AudioAssetTags } from '@/persistence/assets';
 import type {
@@ -25,10 +26,31 @@ export interface DetectedBeats {
   downbeats: number[];
 }
 
-/** Beat times and the onset strength of each, for scoring a meter. */
-export interface DetectedBeatAccents {
-  beatTimes: number[];
-  beatStrengths: number[];
+function isBeatObservations(value: unknown): value is BeatObservations {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const observations = value as Partial<BeatObservations>;
+  return (
+    Array.isArray(observations.accent) &&
+    observations.accent.every((entry) => typeof entry === 'number') &&
+    Array.isArray(observations.hasAttack) &&
+    observations.hasAttack.every((entry) => typeof entry === 'boolean') &&
+    Array.isArray(observations.lowFrequencyEnergy) &&
+    observations.lowFrequencyEnergy.every((entry) => typeof entry === 'number') &&
+    Array.isArray(observations.subdivisionAccent) &&
+    observations.subdivisionAccent.every((entry) => typeof entry === 'number') &&
+    Array.isArray(observations.chordChange) &&
+    observations.chordChange.every((entry) => typeof entry === 'number')
+  );
+}
+
+function emptyBeatObservations(): BeatObservations {
+  return {
+    accent: [],
+    hasAttack: [],
+    lowFrequencyEnergy: [],
+    subdivisionAccent: [],
+    chordChange: [],
+  };
 }
 
 function createWorker(): Worker {
@@ -138,28 +160,21 @@ export function detectBeatsInWorker(
 }
 
 /**
- * Tracks a buffer's beats and their onset-strength accents in a disposable
- * worker, for meter estimation.
+ * Tracks a buffer's beat-level observations in a disposable worker, for meter
+ * estimation. Empty streams remain empty to distinguish unmeasured evidence
+ * from a measured value of zero.
  *
  * @param mono Mono samples; transferred and detached like {@link analyzeAudioTagsInWorker}.
  * @param sampleRate Sample rate in Hz.
  */
-export function analyzeBeatAccentsInWorker(
+export function analyzeBeatObservationsInWorker(
   mono: Float32Array,
   sampleRate: number,
   options: Omit<AudioAnalysisWorkerOptions, 'onProgress'> = {},
-): Promise<DetectedBeatAccents> {
-  return runAnalysis(
-    'meter',
-    mono,
-    sampleRate,
-    { beatTimes: [], beatStrengths: [] },
-    options,
-    (response) =>
-      response.type === 'meter' &&
-      Array.isArray(response.beatTimes) &&
-      Array.isArray(response.beatStrengths)
-        ? { beatTimes: response.beatTimes, beatStrengths: response.beatStrengths }
-        : undefined,
+): Promise<BeatObservations> {
+  return runAnalysis('meter', mono, sampleRate, emptyBeatObservations(), options, (response) =>
+    response.type === 'meter' && isBeatObservations(response.observations)
+      ? response.observations
+      : undefined,
   );
 }

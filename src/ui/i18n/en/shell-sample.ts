@@ -194,6 +194,7 @@ export const shellSample = {
     roomEstimateSize: 'Size',
     roomEstimateVolume: 'Volume',
     roomEstimateRt60: 'RT60',
+    rt60NotMeasured: 'Not measured',
     roomEstimateDrr: 'DRR',
     acousticEdt: 'EDT',
     acousticClarity: 'Clarity',

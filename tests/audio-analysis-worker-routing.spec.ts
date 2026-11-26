@@ -1,5 +1,6 @@
+import type { BeatObservations } from '@libraz/libsonare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { analyzeBeatAccentsInWorker } from '@/project/audio-analysis-client';
+import { analyzeBeatObservationsInWorker } from '@/project/audio-analysis-client';
 import type { AudioAnalysisWorkerResponse } from '@/workers/audio-analysis.worker';
 
 const ensureWasmMock = vi.hoisted(() => vi.fn());
@@ -27,12 +28,19 @@ function fakeWorker(reply: AudioAnalysisWorkerResponse | 'never') {
 }
 
 describe('beat accent analysis in the worker client', () => {
-  it('resolves the beat times and strengths and disposes the worker', async () => {
-    const worker = fakeWorker({ type: 'meter', beatTimes: [0, 0.5], beatStrengths: [1, 0.4] });
-    const result = await analyzeBeatAccentsInWorker(new Float32Array([0.1, 0.2]), 48000, {
+  it('resolves complete beat observations and disposes the worker', async () => {
+    const observations: BeatObservations = {
+      accent: [1, 0.4],
+      hasAttack: [true, false],
+      lowFrequencyEnergy: [0.8, 0],
+      subdivisionAccent: [0.2],
+      chordChange: [],
+    };
+    const worker = fakeWorker({ type: 'meter', observations });
+    const result = await analyzeBeatObservationsInWorker(new Float32Array([0.1, 0.2]), 48000, {
       workerFactory: () => worker as unknown as Worker,
     });
-    expect(result).toEqual({ beatTimes: [0, 0.5], beatStrengths: [1, 0.4] });
+    expect(result).toEqual(observations);
     expect(worker.posted[0]).toMatchObject({ kind: 'meter', sampleRate: 48000 });
     expect(worker.terminate).toHaveBeenCalledTimes(1);
   });
@@ -40,7 +48,7 @@ describe('beat accent analysis in the worker client', () => {
   it('aborts a pending request and terminates the worker', async () => {
     const worker = fakeWorker('never');
     const controller = new AbortController();
-    const pending = analyzeBeatAccentsInWorker(new Float32Array([0.1]), 48000, {
+    const pending = analyzeBeatObservationsInWorker(new Float32Array([0.1]), 48000, {
       signal: controller.signal,
       workerFactory: () => worker as unknown as Worker,
     });
@@ -56,10 +64,17 @@ describe('analysis worker meter request', () => {
     ensureWasmMock.mockReset();
   });
 
-  it('runs the full analysis in the worker and returns the beat accents', async () => {
+  it('runs the full analysis in the worker and returns every beat observation', async () => {
+    const observations: BeatObservations = {
+      accent: [0.9, 0.3],
+      hasAttack: [true, false],
+      lowFrequencyEnergy: [0.6, 0],
+      subdivisionAccent: [0.25],
+      chordChange: [0, 0],
+    };
     const analyze = vi.fn(() => ({
       beats: [{ timeSec: 0 }, { timeSec: 0.5 }],
-      beatObservations: { onsetStrength: [0.9, 0.3] },
+      beatObservations: observations,
     }));
     ensureWasmMock.mockResolvedValue({ analyze });
     const posted: unknown[] = [];
@@ -78,8 +93,7 @@ describe('analysis worker meter request', () => {
     expect(analyze).toHaveBeenCalledWith(expect.any(Float32Array), 44100);
     expect(posted[0]).toEqual({
       type: 'meter',
-      beatTimes: [0, 0.5],
-      beatStrengths: [0.9, 0.3],
+      observations,
     });
     vi.unstubAllGlobals();
   });

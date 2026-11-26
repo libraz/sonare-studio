@@ -94,8 +94,8 @@ export interface MeteringDeps {
    * `integratedLufs` is only a fallback for builds without this seam.
    */
   multichannelLufs?(channels: Float32Array[], sampleRate: number): LufsResult;
-  /** Dynamic range of a mono downmix in dB. */
-  dynamicRangeDb?(samples: Float32Array, sampleRate: number): number;
+  /** Dynamic range of a mono downmix in dB; absent when it cannot be measured. */
+  dynamicRangeDb?(samples: Float32Array, sampleRate: number): number | undefined;
   /**
    * Clipped-sample census of one channel. The engine owns the definition of
    * "clipped" (threshold and minimum run length), so the export warning and
@@ -161,17 +161,17 @@ export interface ClippingSummary {
 export interface MixdownReport {
   /** Sample peak in dBFS (-Infinity for silence). Always present. */
   peakDb: number;
-  /** Inter-sample (true) peak in dBTP; absent without a metering seam. */
+  /** Inter-sample (true) peak in dBTP; -Infinity for silence, absent without a metering seam. */
   truePeakDbtp?: number;
-  /** Integrated loudness of the mono downmix in LUFS; absent without a metering seam. */
+  /** Integrated loudness in LUFS; -Infinity for silence, absent without a metering seam. */
   lufs?: number;
-  /** Momentary loudness in LUFS; absent when the metering seam does not provide it. */
+  /** Momentary loudness in LUFS; -Infinity for silence, absent when too short or unmeasured. */
   momentaryLufs?: number;
-  /** Short-term loudness in LUFS; absent when the metering seam does not provide it. */
+  /** Short-term loudness in LUFS; -Infinity for silence, absent when too short or unmeasured. */
   shortTermLufs?: number;
-  /** Loudness range in LU; absent when the metering seam does not provide it. */
+  /** Loudness range in LU; absent when silence or no gated 3 s block prevents measurement. */
   loudnessRangeLu?: number;
-  /** Dynamic range in dB; absent without a dynamic-range metering seam. */
+  /** Dynamic range in dB; +Infinity for a silent low-percentile window, absent when unmeasured. */
   dynamicRangeDb?: number;
   /**
    * Clipping census of the deliverable, summed over both channels. Absent when

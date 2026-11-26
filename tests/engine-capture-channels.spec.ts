@@ -42,25 +42,38 @@ describe('engine input-capture channel width', () => {
     try {
       // Request a 4-channel capture buffer (what a 4-device host merge would ask
       // for) through the same syncCapture path the recorder uses.
-      processor.receiveSync({
+      processor.receiveMessage({
         type: 'syncCapture',
         channels: 4,
         bufferFrames: FRAMES * 4,
         source: 'input',
         recordOffsetSamples: 0,
-        inputMonitor: { enabled: false, gain: 1 },
       });
-      processor.receiveCommand({ type: ARM_RECORD, argInt: 1 });
+      processor.receiveMessage({ type: ARM_RECORD, targetId: 0, renderFrame: -1, argInt: 1 });
 
       // Feed four distinct constant input channels.
       const inputs = [[0.1, 0.2, 0.3, 0.4].map((level) => new Float32Array(FRAMES).fill(level))];
       const outputs = [[new Float32Array(FRAMES), new Float32Array(FRAMES)]];
       processor.process(inputs, outputs);
 
-      processor.receiveCaptureRequest({ type: 'captureRequest', requestId: 1, op: 'read' });
+      processor.receiveMessage({ type: 'captureRequest', requestId: 2, op: 'status' });
+      expect(replies).toContainEqual({
+        type: 'captureResponse',
+        requestId: 2,
+        ok: true,
+        status: {
+          capturedFrames: FRAMES,
+          droppedFrames: 0,
+          armed: true,
+          punchEnabled: false,
+          source: 'input',
+          recordOffsetSamples: 0,
+        },
+      });
+      processor.receiveMessage({ type: 'captureRequest', requestId: 1, op: 'read' });
       const response = replies.find(
         (reply): reply is { ok: true; channels: Float32Array[] } =>
-          (reply as { type?: string }).type === 'captureResponse',
+          (reply as { requestId?: number }).requestId === 1,
       );
       const captured = response?.channels ?? [];
       // The capture buffer is allocated for all four requested channels...

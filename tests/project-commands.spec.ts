@@ -2463,6 +2463,12 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
     it('setTempoSegments validates its input', () => {
       expect(() => setTempoSegments([])).toThrow(RangeError);
       expect(() => setTempoSegments([{ startPpq: 0, bpm: 0 }])).toThrow(RangeError);
+      expect(() => setTempoSegments([{ startPpq: 0, bpm: 5e-7 }])).toThrow(/Tempo bpm/);
+      expect(() => setTempoSegments([{ startPpq: 0, bpm: 120, endBpm: 5e-7 }])).toThrow(
+        /Tempo endBpm/,
+      );
+      setTempoSegments([{ startPpq: 0, bpm: 1e-6, endBpm: 0 }]);
+      expect(useProjectStore().tempoSegments).toEqual([{ startPpq: 0, bpm: 1e-6 }]);
       expect(() =>
         setTempoSegments([
           { startPpq: 8, bpm: 100 },

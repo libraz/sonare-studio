@@ -82,4 +82,17 @@ describe('api-recorder', () => {
     expect(box.read()).toBe(7);
     expect(apiCalls()).toEqual(['Engine#read']);
   });
+
+  it('records the latest worklet capture payload even when the call name is already recorded', async () => {
+    const { recordObject, lastCaptureOptions, resetApiCalls } = await loadRecorder(true);
+    const configureCapture = vi.fn();
+    const engine = recordObject({ configureCapture }, 'SonareEngine');
+    engine.configureCapture({ capacityFrames: 512 });
+    const take = { capacityFrames: 48_000, punch: { startPpq: 0, endPpq: 2 } };
+    engine.configureCapture(take);
+    expect(configureCapture).toHaveBeenLastCalledWith(take);
+    expect(lastCaptureOptions()).toEqual(take);
+    resetApiCalls();
+    expect(lastCaptureOptions()).toBeUndefined();
+  });
 });

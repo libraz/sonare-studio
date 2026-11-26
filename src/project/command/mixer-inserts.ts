@@ -11,19 +11,16 @@ import {
   type InsertSlot,
   type MixerSidechainSource,
 } from '../mixer';
+import { getWasmModule } from '../runtime';
 import { useProjectStore } from '../store';
+import { normalizeStripInsertParams } from '../strip-insert-params';
 import {
   pruneInsertProcessorReferences,
   pruneReplacedInsertReferences,
   reorderInsertProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
-import {
-  assertKnownProcessor,
-  editDropsOtherParams,
-  paramsAfterEdit,
-  validateInsertParams,
-} from './insert-params';
+import { assertKnownProcessor, editDropsOtherParams, paramsAfterEdit } from './insert-params';
 import {
   currentStrip,
   isMixerBusStripTarget,
@@ -215,6 +212,22 @@ function sidechainSourceFields(
   return {};
 }
 
+function checkedInsertParams(
+  target: MixerStripTarget,
+  index: number,
+  processor: string,
+  params: Record<string, InsertParamValue>,
+  sampleRate: number,
+): Record<string, InsertParamValue> {
+  const strip = normalizeStripInsertParams(
+    { inserts: [{ processor, params }] },
+    getWasmModule(),
+    `strip ${target}`,
+    { sampleRate, indexOffset: index },
+  );
+  return strip.inserts[0].params;
+}
+
 /**
  * Appends an insert slot to a strip as one undoable edit. The processor is a
  * wasm catalog name (masteringProcessorNames / masteringInsertNames); track
@@ -237,12 +250,18 @@ export function addInsert(
     throw new RangeError('Insert processor name must not be empty');
   }
   assertKnownProcessor(processor);
-  validateInsertParams(params);
+  const checkedParams = checkedInsertParams(
+    target,
+    strip.inserts.length,
+    processor,
+    params,
+    store.sampleRate,
+  );
   return executeApp(() => {
     const next = cloneStrip(strip);
     next.inserts = [
       ...next.inserts,
-      { id: createProcessorId(), processor, params: { ...params }, enabled: true },
+      { id: createProcessorId(), processor, params: { ...checkedParams }, enabled: true },
     ];
     writeStrip(store, target, next);
     store.refresh();
@@ -338,7 +357,13 @@ export function replaceInsert(
   if (source.processor.length === 0)
     throw new RangeError('Insert processor name must not be empty');
   assertKnownProcessor(source.processor);
-  validateInsertParams(source.params);
+  const checkedParams = checkedInsertParams(
+    target,
+    index,
+    source.processor,
+    source.params,
+    store.sampleRate,
+  );
   const normalizedSource = sidechainSourceFromSlot(source);
   validateInsertSidechainSource(store, target, normalizedSource, destination);
   executeApp(() => {
@@ -348,7 +373,7 @@ export function replaceInsert(
       id: processorChanged ? createReplacementProcessorId(next) : destination.id,
       processor: source.processor,
       enabled: source.enabled,
-      params: { ...source.params },
+      params: { ...checkedParams },
       ...sidechainSourceFields(normalizedSource),
     };
     next.inserts[index] = slot;
@@ -439,12 +464,16 @@ export function setInsertParam(
   ) {
     return;
   }
+  const params = checkedInsertParams(
+    target,
+    index,
+    slot.processor,
+    paramsAfterEdit(slot.processor, slot.params, param, value),
+    store.sampleRate,
+  );
   patchMixerMirror(key, options, () => {
     const next = cloneStrip(strip);
-    next.inserts[index] = {
-      ...next.inserts[index],
-      params: paramsAfterEdit(slot.processor, next.inserts[index].params, param, value),
-    };
+    next.inserts[index] = { ...next.inserts[index], params };
     writeStrip(store, target, next);
   });
 }

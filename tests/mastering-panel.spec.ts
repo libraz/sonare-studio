@@ -161,8 +161,12 @@ describe('MasteringPanel.vue', () => {
       }>;
     };
     const originalCatalog = wasm.masteringProcessorCatalog;
+    const module = getWasmModule();
+    const originalInsertNames = module.masteringInsertNames;
+    module.masteringInsertNames = () =>
+      originalInsertNames().filter((name) => name !== 'repair.dereverbClassical');
     wasm.masteringProcessorCatalog = () => [
-      ...originalCatalog(),
+      ...originalCatalog().filter((entry) => entry.id !== 'repair.dereverbClassical'),
       {
         id: 'repair.dereverbClassical',
         kind: 'offline',
@@ -206,6 +210,7 @@ describe('MasteringPanel.vue', () => {
       wrapper.unmount();
     } finally {
       wasm.masteringProcessorCatalog = originalCatalog;
+      module.masteringInsertNames = originalInsertNames;
     }
   });
 
@@ -428,9 +433,11 @@ describe('MasteringPanel.vue', () => {
     expect(wrapper.findAll('.catalog-category').map((c) => c.text())).toEqual([
       'Dynamics',
       'EQ',
-      'Modulation',
       'Saturation',
       'Stereo',
+      'Maximizer',
+      'Utility',
+      'Repair',
       'Effects',
     ]);
 
@@ -441,8 +448,12 @@ describe('MasteringPanel.vue', () => {
     const slot = wrapper.find('.chain-slot');
     expect(slot.find('.chain-name').text()).toBe('Compressor');
     expect(slot.find('.chain-badge').text()).toBe('Dynamics');
-    // The new slot opens expanded with one knob per catalog parameter.
-    expect(wrapper.findAll('.chain-params .knob').length).toBe(6);
+    // The packed catalog exposes 11 compressor parameters: nine numeric knobs,
+    // one boolean toggle, and one enum selector.
+    expect(wrapper.findAll('.chain-params .chain-param-control')).toHaveLength(11);
+    expect(wrapper.findAll('.chain-params .knob')).toHaveLength(9);
+    expect(wrapper.findAll('.chain-param-toggle')).toHaveLength(1);
+    expect(wrapper.findAll('.chain-param-select')).toHaveLength(1);
   });
 
   it('edits a parameter through gesture-coalescing knob changes', async () => {
@@ -805,6 +816,24 @@ describe('MasteringPanel.vue', () => {
     const tableText = wrapper.find('.targets-table').text();
     expect(tableText).toContain('Bandcamp');
     expect(tableText).toContain('-4.0');
+  });
+
+  it('shows measured silence and no gain for streaming targets', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5, Number.NEGATIVE_INFINITY));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25, Number.NEGATIVE_INFINITY));
+    await flush();
+
+    await wrapper.find('.targets-button').trigger('click');
+    await flush();
+
+    const cells = wrapper.find('.targets-table tbody tr').findAll('td');
+    expect(cells[1].text()).toBe('-∞');
+    expect(cells[2].text()).toBe('—');
   });
 
   it('keeps invalid streaming target rows visible and reports them before checking', async () => {

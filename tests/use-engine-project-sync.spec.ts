@@ -771,6 +771,46 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('surfaces the library insert refusal from strip sync', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+
+    const refusal = new TypeError(
+      'strip 1.inserts[0]: masteringInsertTiming: unknown key params.mystery (expected driveDb)',
+    );
+    const errorMessage = ref('');
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage,
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.setEngineSyncHandles({
+      mixerSync: fakeMixerSync(),
+      stripSync: {
+        sync: vi.fn(() => {
+          throw refusal;
+        }),
+      } as unknown as StripSync,
+      automationSync: null,
+      midiSync: null,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    projectSync.syncMixerState();
+    expect(errorMessage.value).toBe(refusal.message);
+    scope.stop();
+  });
+
   it('invalidates an in-flight audio clip apply when project sync is disposed', async () => {
     const store = useProjectStore();
     store.dispose();

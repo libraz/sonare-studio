@@ -204,7 +204,6 @@ export function fakeMeterSource(levels: Partial<StereoMeterLevels> = {}): MeterS
       peakDbR: -12,
       rmsDbL: -18,
       rmsDbR: -18,
-      correlation: 0,
       ...levels,
     },
     subscribe: () => () => {},

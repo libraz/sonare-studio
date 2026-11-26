@@ -15,6 +15,7 @@ import {
   DEFAULT_TEMPO_BPM,
   type NormalizedTempoMap,
   ppqToSamples,
+  preserveLegacyTempoSegmentFloor,
   samplesToPpq,
 } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
@@ -61,7 +62,7 @@ export interface ExportRenderPlan {
 /** Tempo segments of a document, defaulting to a constant tempo when it has none. */
 export function documentTempoSegments(doc: ProjectDocument): TempoSegment[] {
   return doc.tempoSegments.length > 0
-    ? doc.tempoSegments
+    ? doc.tempoSegments.map(preserveLegacyTempoSegmentFloor)
     : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
 }
 

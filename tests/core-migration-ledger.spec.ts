@@ -36,6 +36,7 @@ const STUDIO_OWNED: ReadonlyArray<{ name: string; files: string[]; reason: strin
       'src/engine/web-midi-output.ts',
       'src/export/browser-media.ts',
       'src/ui/media/preview.ts',
+      'src/ui/shell/dev-debug.ts',
       'tests/fake-audio-context.ts',
       'tests/mastering-panel.spec.ts',
       'tests/media-preview.spec.ts',
@@ -95,16 +96,6 @@ const STUDIO_OWNED: ReadonlyArray<{ name: string; files: string[]; reason: strin
       'tests/use-recording.spec.ts',
     ],
   },
-  {
-    name: 'setInputMonitor',
-    reason: 'E2E debug surface',
-    files: ['scripts/e2e/scenarios/input-monitor.mjs'],
-  },
-  ...['beatTimes', 'beatStrengths'].map((name) => ({
-    name,
-    reason: 'studio analysis-worker protocol',
-    files: ['src/project/audio-analysis-client.ts'],
-  })),
   {
     name: 'keyConfidence',
     reason: 'persisted audio tag key',

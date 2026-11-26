@@ -65,12 +65,12 @@ function formatValue(value: unknown): string {
       }}</span>
       <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.lra, {
-          value: suggestion.profile.loudnessRangeLu.toFixed(1),
+          value: formatLevel(suggestion.profile.loudnessRangeLu),
         })
       }}</span>
       <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.truePeak, {
-          value: suggestion.profile.truePeakDbtp.toFixed(1),
+          value: formatLevel(suggestion.profile.truePeakDbtp),
         })
       }}</span>
     </div>

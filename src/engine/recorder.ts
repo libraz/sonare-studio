@@ -14,12 +14,11 @@
  * compensation) and reads the punch window in that compensated time, so
  * the host applies no further shift and the take spans exactly the window.
  *
- * Input monitoring is engine-side: the capture config's inputMonitor switch
- * controls whether the microphone input is also mixed into the engine output.
- * Re-sending the config (for example to toggle the monitor) does not lose
- * armed state or buffered audio. captureStatus / capturedAudio / resetCapture
- * are async over a request/response message channel and behave identically in
- * SAB and postMessage fallback modes. Meter snapshots tagged with
+ * Input monitoring is engine-side and configured separately from capture.
+ * Updating the monitor never resends capture or changes armed state.
+ * captureStatus / capturedAudio / resetCapture are async over a
+ * request/response message channel and behave identically in SAB and
+ * postMessage fallback modes. Meter snapshots tagged with
  * {@link INPUT_METER_TARGET_ID} carry the input-capture level in dBFS.
  *
  * Silence guarantees: requesting a microphone produces no sound. The input
@@ -33,6 +32,7 @@ import type {
   RealtimeVoiceChangerConfigInput,
   StreamingRetuneConfig,
 } from '@libraz/libsonare';
+import { isSonareError } from '@libraz/libsonare';
 import { dbToLinear } from '@/lib/db';
 import { errorMessage } from '@/lib/errors';
 import { isFiniteNumber } from '@/lib/math';
@@ -102,8 +102,8 @@ export type RecordingCaptureSource = Extract<EngineCaptureStatus['source'], 'inp
 
 /**
  * Capture buffer length in seconds configured while idle: a small allocation
- * keeps the input source and the monitor state live on the engine before any
- * take starts. start() reconfigures the buffer to the full take length.
+ * keeps the input source live on the engine before any take starts. start()
+ * reconfigures the buffer to the full take length.
  */
 const MONITOR_BUFFER_SECONDS = 1;
 
@@ -135,8 +135,8 @@ export interface RecordingResult {
   sampleRate: number;
   /** Timeline position in PPQ where the recorded material begins. */
   startPpq: number;
-  /** Number of samples dropped because the engine capture buffer filled. */
-  overflowCount?: number;
+  /** Number of captured frames discarded because the engine buffer filled. */
+  droppedFrames?: number;
 }
 
 /** Options for {@link Recorder.start}. */
@@ -275,7 +275,7 @@ export interface Recorder {
    * remembered and applied once the microphone is bound.
    *
    * @param enabled Target monitor state.
-   * @param gain Linear monitor gain (finite, >= 0); kept when omitted.
+   * @param gain Linear monitor gain; negative values are refused here, other values follow the engine domain; kept when omitted.
    */
   setMonitor(enabled: boolean, gain?: number): void;
   /** Current monitor state. */
@@ -499,11 +499,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    * one per merged device). Drives per-stream latency and device-loss handling.
    */
   let bindingStreams: MediaStream[] = [];
-  /**
-   * Channel count sent to configureCapture. Stays at the engine width (2) for a
-   * single device only when the device actually reports two channels; a device
-   * merge uses one channel per opened device.
-   */
+  /** Channel count sent to configureCapture. A device merge uses one channel per input. */
   let captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
   let micPromise: Promise<void> | null = null;
   let microphoneAbort: AbortController | null = null;
@@ -513,7 +509,6 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   let take: ActiveTake | null = null;
   let operationGeneration = 0;
   let phase: 'idle' | 'starting' | 'recording' | 'stopping' | 'disposed' = 'idle';
-  let captureBufferFrames = idleBufferFrames;
   /** Punch window of the take in progress; every config re-send restates it. */
   let capturePunch: CapturePunch | undefined;
   const levelListeners = new Set<(peak: number) => void>();
@@ -534,7 +529,13 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   // capture peak in dBFS; master and lane records are ignored here.
   const unsubscribeMeter = handle.engine.onMeter((meter) => {
     if (meter.targetId !== INPUT_METER_TARGET_ID || levelListeners.size === 0) return;
-    const peak = Math.max(dbPeakToLinear(meter.peakDbL), dbPeakToLinear(meter.peakDbR));
+    const peakDb = meter.peakDb;
+    const channelCount = meter.numChannels;
+    let peak = 0;
+    for (let channel = 0; channel < channelCount && channel < peakDb.length; channel++) {
+      const channelPeakDb = peakDb[channel];
+      if (channelPeakDb !== undefined) peak = Math.max(peak, dbPeakToLinear(channelPeakDb));
+    }
     if (peak > levelPeak) levelPeak = peak;
     const now = Date.now();
     if (now - lastLevelEmit < levelIntervalMs) return;
@@ -544,23 +545,69 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     for (const listener of levelListeners) listener(emitted);
   });
 
+  /** Sends the monitor state independently of capture configuration. */
+  const updateEngineMonitor = (enabled = monitorOn, gain = monitorGainValue): void => {
+    handle.engine.setInputMonitor({
+      enabled: captureSource === 'input' && binding !== null && enabled,
+      gain,
+    });
+  };
+
+  /** Refusals expected when teardown races the engine or its command ring. */
+  const isExpectedTeardownRefusal = (error: unknown): boolean =>
+    isSonareError(error) && (error.codeName === 'InvalidState' || error.codeName === 'OutOfMemory');
+
+  /** Keeps cleanup safe only for the coded refusals teardown can legitimately race. */
+  const disableEngineMonitor = (): void => {
+    try {
+      handle.engine.setInputMonitor({ enabled: false });
+    } catch (error) {
+      if (!isExpectedTeardownRefusal(error)) throw error;
+    }
+  };
+
+  /** Resets the message-port capture state, ignoring only a released handle. */
+  const resetDiscardedCapture = async (): Promise<void> => {
+    try {
+      await handle.engine.resetCapture();
+    } catch (error) {
+      if (isSonareError(error) && error.codeName === 'InvalidState') return;
+      throw error;
+    }
+  };
+
+  const reportTeardownFailure = (error: unknown): void => {
+    if (typeof globalThis.reportError === 'function') {
+      globalThis.reportError(error);
+      return;
+    }
+    console.error('Recorder capture reset failed during teardown', error);
+  };
+
+  const discardTakeForTeardown = (): void => {
+    if (!take) return;
+    take = null;
+    capturePunch = undefined;
+    try {
+      handle.engine.armCapture({ armed: false });
+    } catch (error) {
+      if (!isExpectedTeardownRefusal(error)) throw error;
+    } finally {
+      void resetDiscardedCapture().catch(reportTeardownFailure);
+    }
+  };
+
   /**
-   * (Re)sends the engine capture config. Input capture uses the raw microphone
-   * source and current monitor state; output capture records the master output
-   * and keeps input monitoring disabled. Re-sending preserves armed state and
-   * buffered audio. The engine applies recordOffsetSamples as a capture delay.
+   * Configures the buffer while capture is disarmed. Input capture uses the
+   * raw microphone and output capture records the master. The engine applies
+   * recordOffsetSamples as a capture delay.
    */
   const sendCaptureConfig = (bufferFrames: number, recordOffsetSamples = 0): void => {
-    captureBufferFrames = bufferFrames;
     handle.engine.configureCapture({
       capacityFrames: bufferFrames,
       numChannels: captureChannelCount,
       source: captureSource,
       recordOffsetSamples,
-      inputMonitor: {
-        enabled: captureSource === 'input' && monitorOn,
-        gain: monitorGainValue,
-      },
       ...(capturePunch ? { punch: capturePunch } : {}),
     });
   };
@@ -589,21 +636,30 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     operationGeneration += 1;
     detachTrackListeners?.();
     detachTrackListeners = null;
-    if (take) {
-      take = null;
-      capturePunch = undefined;
-      handle.engine.armCapture({ armed: false });
-      void handle.engine.resetCapture().catch(() => {
-        // The device is gone; a failed reset is harmless.
-      });
+    let teardownError: unknown;
+    try {
+      disableEngineMonitor();
+    } catch (error) {
+      teardownError = error;
+    }
+    try {
+      discardTakeForTeardown();
+    } catch (error) {
+      teardownError ??= error;
     }
     if (phase !== 'disposed') phase = 'idle';
-    binding.destroy();
-    binding = null;
-    bindingStreams = [];
-    captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
-    micPromise = null;
-    resetLevel();
+    try {
+      binding.destroy();
+    } catch (error) {
+      teardownError ??= error;
+    } finally {
+      binding = null;
+      bindingStreams = [];
+      captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
+      micPromise = null;
+      resetLevel();
+    }
+    if (teardownError !== undefined) throw teardownError;
     return true;
   };
 
@@ -722,6 +778,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       captureChannelCount = used.length;
       detachTrackListeners = attachAllTrackEndedListeners(streams, handleMicrophoneLost);
       sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+      updateEngineMonitor();
     } catch (error) {
       if (stagedBinding) {
         detachTrackListeners?.();
@@ -747,6 +804,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         }
         for (const stream of streams) stopStreamTracks(stream);
       }
+      disableEngineMonitor();
       throw error;
     }
   };
@@ -835,6 +893,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // The idle config makes the input source and the monitor state live on
       // the engine before any take starts.
       sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+      updateEngineMonitor();
     } catch (error) {
       detachTrackListeners?.();
       detachTrackListeners = null;
@@ -844,6 +903,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         bindingStreams = [];
         captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
       }
+      disableEngineMonitor();
       throw error;
     }
   };
@@ -873,16 +933,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   };
 
   const setMonitor = (enabled: boolean, gain?: number): void => {
-    if (gain !== undefined) {
-      if (!Number.isFinite(gain) || gain < 0) {
-        throw new RangeError(`Monitor gain must be finite and >= 0, got ${gain}`);
-      }
-      monitorGainValue = gain;
+    if (disposed) return;
+    const nextGain = gain ?? monitorGainValue;
+    if (nextGain < 0) {
+      throw new RangeError(`Monitor gain must be nonnegative, got ${nextGain}`);
     }
+    if (binding || captureSource === 'output') updateEngineMonitor(enabled, nextGain);
     monitorOn = enabled;
-    // Re-send with the current buffer size (the recording size while a take
-    // is running) so toggling the monitor never shrinks an active capture.
-    if (binding) sendCaptureConfig(captureBufferFrames, currentInputOffsetSamples());
+    monitorGainValue = nextGain;
   };
 
   const setVoiceChangerPreset = (preset: RealtimeVoiceChangerConfigInput): boolean => {
@@ -984,10 +1042,10 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       : startPpq + (captureCompleteSeconds * tempoBpm) / 60;
     const trackId = armedTrack;
     const generation = ++operationGeneration;
-    let engineArmed = false;
     phase = 'starting';
     try {
       capturePunch = { startPpq, endPpq: punchOutPpq };
+      if (captureSource === 'output') updateEngineMonitor();
       sendCaptureConfig(Math.max(1, Math.ceil(captureDurationSeconds * sampleRate)), offsetSamples);
       await handle.engine.resetCapture();
       if (disposed || generation !== operationGeneration) {
@@ -997,14 +1055,15 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // earlier as needed. The half-open window keeps any count-in pre-roll out
       // of the buffer and lets auto-punch close sample-accurately at R.
       handle.engine.armCapture({ armed: true });
-      engineArmed = true;
       take = { trackId, startPpq, capturePunchOutPpq, sampleRate, offsetSamples };
       phase = 'recording';
     } catch (error) {
       capturePunch = undefined;
-      if (engineArmed) handle.engine.armCapture({ armed: false });
-      await handle.engine.resetCapture().catch(() => undefined);
-      if (!disposed && generation === operationGeneration) phase = 'idle';
+      try {
+        await resetDiscardedCapture();
+      } finally {
+        if (!disposed && generation === operationGeneration) phase = 'idle';
+      }
       throw error;
     }
   };
@@ -1062,10 +1121,11 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     take = null;
     capturePunch = undefined;
     phase = 'idle';
-    if (status.overflowCount > 0) {
-      console.warn(`Recording capture overflow: ${status.overflowCount} samples dropped`);
+    if (status.droppedFrames > 0) {
+      console.warn(`Recording capture dropped frames: ${status.droppedFrames}`);
     }
-    // Back to the idle config so the monitor state survives between takes.
+    // Back to the idle capture config between takes; input monitoring remains
+    // configured separately on the engine.
     if (captureSource === 'output' || binding) {
       sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
     }
@@ -1081,7 +1141,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       channels,
       sampleRate: active.sampleRate,
       startPpq: active.startPpq,
-      ...(status.overflowCount > 0 ? { overflowCount: status.overflowCount } : {}),
+      ...(status.droppedFrames > 0 ? { droppedFrames: status.droppedFrames } : {}),
     };
   };
 
@@ -1093,23 +1153,32 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     unsubscribeMeter();
     detachTrackListeners?.();
     detachTrackListeners = null;
-    if (take) {
-      take = null;
-      capturePunch = undefined;
-      handle.engine.armCapture({ armed: false });
-      void handle.engine.resetCapture().catch(() => {
-        // The engine may already be tearing down; a failed reset is harmless.
-      });
+    let teardownError: unknown;
+    try {
+      disableEngineMonitor();
+    } catch (error) {
+      teardownError = error;
     }
-    binding?.destroy();
-    binding = null;
-    bindingStreams = [];
-    microphoneAbort?.abort(new DOMException('Recorder disposed.', 'AbortError'));
-    microphoneAbort = null;
-    micPromise = null;
-    levelListeners.clear();
-    micLostListeners.clear();
-    inputProcessorErrorListeners.clear();
+    try {
+      discardTakeForTeardown();
+    } catch (error) {
+      teardownError ??= error;
+    }
+    try {
+      binding?.destroy();
+    } catch (error) {
+      teardownError ??= error;
+    } finally {
+      binding = null;
+      bindingStreams = [];
+      microphoneAbort?.abort(new DOMException('Recorder disposed.', 'AbortError'));
+      microphoneAbort = null;
+      micPromise = null;
+      levelListeners.clear();
+      micLostListeners.clear();
+      inputProcessorErrorListeners.clear();
+    }
+    if (teardownError !== undefined) throw teardownError;
   };
 
   return {

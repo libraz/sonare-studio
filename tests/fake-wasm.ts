@@ -909,7 +909,11 @@ export class FakeProject {
   }
 
   setMaxUndoDepth(depth: number): void {
-    this.maxUndoDepth = Math.max(1, Math.floor(depth));
+    if (typeof depth !== 'number') throw new TypeError('depth must be an integer');
+    if (!Number.isInteger(depth) || depth < 1 || depth > 500_000_000) {
+      throw new RangeError('depth must be an integer in [1, 500000000]');
+    }
+    this.maxUndoDepth = depth;
     while (this.history.length > this.maxUndoDepth) this.history.shift();
   }
 
@@ -1257,6 +1261,33 @@ FAKE_GM_INSTRUMENTS[73] = 'Flute';
 
 /** Insert parameter names per processor the fake catalog reports. */
 export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
+  'effects.acoustic.roomMorph': [
+    'absorption',
+    'airAbsorptionEnabled',
+    'airHumidityPercent',
+    'airTemperatureC',
+    'bandAbsorption',
+    'bandScattering',
+    'crossfadeMs',
+    'dryWet',
+    'heightM',
+    'ismOrder',
+    'lengthM',
+    'listenerX',
+    'listenerY',
+    'listenerZ',
+    'materialPreset',
+    'maxSec',
+    'mixingTimeMs',
+    'preferEyring',
+    'receiverSpacingM',
+    'seed',
+    'sourceTailSuppression',
+    'sourceX',
+    'sourceY',
+    'sourceZ',
+    'widthM',
+  ],
   'dynamics.compressor': [
     'thresholdDb',
     'ratio',
@@ -1266,24 +1297,292 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
     'makeupGainDb',
     'autoMakeup',
     'detector',
-    'sidechainHpfEnabled',
+    'pdrReleaseScale',
+    'pdrTimeMs',
+    'sidechainHighPassHz',
   ],
-  'dynamics.limiter': ['thresholdDb', 'lookaheadMs', 'releaseMs'],
+  'dynamics.duckingProcessor': [
+    'thresholdDb',
+    'ratio',
+    'attackMs',
+    'releaseMs',
+    'rangeDb',
+    'lookaheadMs',
+  ],
+  'dynamics.limiter': ['thresholdDb', 'lookaheadMs', 'releaseMs', 'postGainDb', 'ratio'],
   'dynamics.brickwallLimiter': ['ceilingDb', 'lookaheadMs', 'releaseMs'],
-  'dynamics.gate': ['thresholdDb', 'attackMs', 'releaseMs', 'rangeDb', 'holdMs'],
-  'dynamics.deesser': ['thresholdDb', 'frequencyHz', 'ratio'],
-  'dynamics.parallelComp': ['thresholdDb', 'mix'],
-  'dynamics.sidechainRouter': ['rangeDb'],
+  'dynamics.gate': [
+    'thresholdDb',
+    'attackMs',
+    'releaseMs',
+    'rangeDb',
+    'holdMs',
+    'closeThresholdDb',
+    'keyHighPassHz',
+  ],
+  'dynamics.deesser': [
+    'thresholdDb',
+    'frequencyHz',
+    'ratio',
+    'attackMs',
+    'bandPassQ',
+    'rangeDb',
+    'releaseMs',
+  ],
+  'dynamics.parallelComp': [
+    'thresholdDb',
+    'mix',
+    'attackMs',
+    'linkedDetection',
+    'makeupGainDb',
+    'outputCeilingDb',
+    'outputLimiter',
+    'ratio',
+    'releaseMs',
+  ],
+  'dynamics.sidechainRouter': [
+    'rangeDb',
+    'attackMs',
+    'keyListen',
+    'lookaheadMs',
+    'monoSumming',
+    'ratio',
+    'releaseMs',
+    'sidechainHighPassHz',
+    'thresholdDb',
+  ],
+  'effects.reverb.fdn': ['decay', 'damping', 'dryWet', 'decaySec', 'hfDamping'],
+  'effects.reverb.plate': [
+    'decay',
+    'damping',
+    'dryWet',
+    'modRateHz',
+    'modDepthSamples',
+    'dampingHz',
+    'gateThresholdDb',
+    'gateHoldMs',
+    'gateType',
+    'character',
+    'mixLaw',
+    'preDelayMs',
+    'decaySec',
+  ],
+  'eq.parametric': Array.from({ length: 24 }, (_, index) =>
+    [
+      'attackMs',
+      'autoThreshold',
+      'bypassed',
+      'coeffMode',
+      'detectorDelayMs',
+      'dynamic',
+      'enabled',
+      'frequencyHz',
+      'gainDb',
+      'phase',
+      'placement',
+      'proportionalQ',
+      'proportionalQStrength',
+      'q',
+      'rangeDb',
+      'ratio',
+      'releaseMs',
+      'sidechainFreqHz',
+      'sidechainQ',
+      'slopeDbOct',
+      'soloed',
+      'thresholdDb',
+      'type',
+    ].map((name) => `band${index}.${name}`),
+  ).flat(),
+  'eq.passiveTube': [
+    'lowFrequencyHz',
+    'lowBoost',
+    'lowAttenuation',
+    'highBoostFrequencyHz',
+    'highBoost',
+    'highBandwidth',
+    'highAttenuationFrequencyHz',
+    'highAttenuation',
+    'outputDrive',
+    'componentModel',
+  ],
   'eq.tilt': ['tiltDb', 'pivotHz'],
-  'effects.reverb.plate': ['mix', 'preDelayMs'],
-  'modulation.chorus': ['rateHz', 'depth', 'mix'],
-  'modulation.flanger': ['rateHz', 'depth', 'feedback', 'mix'],
-  'modulation.rotary': ['speed', 'drive', 'mix'],
-  'saturation.tape': ['driveDb', 'saturation', 'outputGainDb'],
-  'saturation.softClipper': ['driveDb', 'ceiling', 'mix'],
-  'saturation.waveshaper': ['driveDb', 'mix', 'outputGainDb'],
-  'stereo.imager': ['width', 'decorrelationAmount', 'outputGainDb'],
-  'stereo.monoMaker': ['amount'],
+  'maximizer.truePeakLimiter': [
+    'ceilingDbtp',
+    'releaseMs',
+    'applyGainAtInputRate',
+    'lookaheadMs',
+    'oversampleFactor',
+  ],
+  'effects.modulation.chorus': [
+    'rateHz',
+    'centerDelayMs',
+    'depthMs',
+    'dryWet',
+    'feedback',
+    'interpolation',
+    'mixLaw',
+    'phaseDeg',
+    'preFilterHz',
+    'preFilterMode',
+  ],
+  'effects.modulation.flanger': [
+    'feedback',
+    'rateHz',
+    'centerDelayMs',
+    'depthMs',
+    'dryWet',
+    'interpolation',
+    'mixLaw',
+    'phaseDeg',
+    'preFilterHz',
+    'preFilterMode',
+    'stepRateHz',
+  ],
+  'effects.modulation.rotary': [
+    'speed',
+    'accelTauSec',
+    'decelTauSec',
+    'depthMs',
+    'drumFastHz',
+    'drumLevelDb',
+    'drumRateHz',
+    'drumSlowHz',
+    'drumUndershootHz',
+    'dryWet',
+    'hornFastHz',
+    'hornLevelDb',
+    'hornSlowHz',
+    'interpolation',
+    'model',
+    'rateHz',
+    'stereoSpread',
+    'tremolo',
+    'undershootHz',
+  ],
+  'saturation.ampSim': [
+    'drive',
+    'bassDb',
+    'midDb',
+    'trebleDb',
+    'presenceDb',
+    'levelDb',
+    'power',
+    'sag',
+    'transformer',
+    'nfb',
+    'micAxis',
+    'micBAxis',
+    'micBlend',
+    'cone',
+    'crossover',
+    'biasShift',
+    'inputDb',
+    'cab',
+    'cabModel',
+    'ampModel',
+    'cabIrDrivers',
+    'cabIrF32Base64',
+    'cabIrGenerate',
+    'cabIrSampleRate',
+    'doppler',
+    'micBDistanceCm',
+    'micBInvert',
+    'micBModel',
+    'micDistanceCm',
+    'micModel',
+    'powerTube',
+    'preampStages',
+    'preset',
+    'presetIndex',
+    'topology',
+  ],
+  'saturation.tape': [
+    'bias',
+    'driveDb',
+    'gapLoss',
+    'headBumpDb',
+    'hysteresis',
+    'outputGainDb',
+    'oversampleFactor',
+    'saturation',
+    'speedIps',
+  ],
+  'saturation.softClipper': ['driveDb', 'ceiling', 'mix', 'aliasing'],
+  'saturation.waveshaper': ['driveDb', 'mix', 'outputGainDb', 'aliasing', 'bias', 'curve'],
+  'stereo.imager': ['width', 'decorrelationAmount', 'outputGainDb', 'preserveEnergy'],
+  'stereo.monoMaker': ['amount', 'frequencyHz'],
+  'utility.gain': ['levelDb'],
+};
+
+/**
+ * Shipped inserts the fake does not mirror; `masteringInsertParamNames` answers `[]` for
+ * them. The packed-catalog spec holds this list to the shipped insert names.
+ */
+export const FAKE_UNMIRRORED_INSERTS: readonly string[] = [
+  'dynamics.expander',
+  'dynamics.transientShaper',
+  'dynamics.upwardCompressor',
+  'dynamics.upwardExpander',
+  'dynamics.vocalRider',
+  'effects.delay.stereo',
+  'effects.filter.vowel',
+  'effects.gsEfx',
+  'effects.modulation.autoWah',
+  'effects.modulation.ensemble',
+  'effects.modulation.phaser',
+  'effects.modulation.pitchShifter',
+  'effects.modulation.ringModulator',
+  'effects.modulation.wah',
+  'effects.reverb.convolution',
+  'effects.reverb.room',
+  'effects.reverb.velvet',
+  'eq.bandPass',
+  'eq.cutFilter',
+  'eq.dynamic',
+  'eq.equalizer',
+  'eq.graphic',
+  'eq.linearPhase',
+  'eq.midSide',
+  'eq.minimumPhase',
+  'eq.shelving',
+  'eq.steppedProportionalQ',
+  'maximizer.adaptiveRelease',
+  'maximizer.maximizer',
+  'maximizer.softKneeMax',
+  'multiband.compressor',
+  'multiband.dynamicEq',
+  'multiband.expander',
+  'multiband.imager',
+  'multiband.limiter',
+  'multiband.saturation',
+  'repair.decrackle',
+  'repair.dehum',
+  'repair.denoiseClassical',
+  'repair.dereverbClassical',
+  'saturation.bitcrusher',
+  'saturation.distortion',
+  'saturation.exciter',
+  'saturation.hardClipper',
+  'saturation.multibandExciter',
+  'saturation.overdrive',
+  'saturation.transformer',
+  'saturation.tube',
+  'spectral.airBand',
+  'spectral.lowEndFocus',
+  'spectral.presenceEnhancer',
+  'spectral.spectralShaper',
+  'stereo.autoPan',
+  'stereo.binaural',
+  'stereo.haasEnhancer',
+  'stereo.phaseAlign',
+  'stereo.stereoBalance',
+  'voice.changer',
+];
+
+/** Offline-only configuration fields, kept separate from realtime insert admission. */
+export const FAKE_OFFLINE_PROCESSOR_PARAMS: Record<string, string[]> = {
+  'repair.declick': ['lpcOrder', 'maxClickSamples', 'neighborRatio', 'residualRatio', 'threshold'],
 };
 
 /** Mirrors the realtime parameter-info catalog used by processor controls. */
@@ -1293,7 +1592,7 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     name: string;
     id?: number;
     rtSafe: boolean;
-    type: 'number' | 'boolean' | 'enum';
+    type: 'number' | 'boolean' | 'enum' | 'array';
     unit?: string;
     min?: number;
     max?: number;
@@ -1304,6 +1603,10 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     choices?: Array<{ name: string; value: number }>;
   }>
 > = {
+  'effects.acoustic.roomMorph': [
+    { name: 'bandAbsorption', rtSafe: false, type: 'array' },
+    { name: 'bandScattering', rtSafe: false, type: 'array' },
+  ],
   'eq.tilt': [
     { name: 'tiltDb', id: 0, rtSafe: true, type: 'number', unit: 'dB', uiMin: -12, uiMax: 12 },
   ],
@@ -1373,7 +1676,7 @@ export const FAKE_INSERT_PARAM_INFO: Record<
         { name: 'logRms', value: 2 },
       ],
     },
-    { name: 'sidechainHpfEnabled', id: 8, rtSafe: true, type: 'boolean' },
+    { name: 'sidechainHighPassHz', rtSafe: false, type: 'number', unit: 'Hz' },
   ],
   'eq.parametric': [
     { name: 'band0.enabled', rtSafe: false, type: 'boolean', default: true },
@@ -2232,6 +2535,16 @@ export class FakeStreamingEqualizer {
 
 /** Builds a fake module compatible with the `@/lib/wasm` ensureWasm result. */
 export function createFakeWasmModule(): typeof import('@libraz/libsonare') {
+  const insertNames: string[] = [...MASTERING_INSERT_NAMES];
+  const processorNames = [
+    ...new Set<string>([...insertNames, ...Object.keys(FAKE_OFFLINE_PROCESSOR_PARAMS)]),
+  ];
+  function assertInsertName(name: string): void {
+    if (typeof name !== 'string') throw new TypeError('insert must be a string');
+    if (!insertNames.includes(name)) {
+      throw new RangeError(`insert must be one of ${[...insertNames].sort().join(', ')}`);
+    }
+  }
   return {
     Project: FakeProject,
     midiNoteOn,
@@ -2256,18 +2569,17 @@ export function createFakeWasmModule(): typeof import('@libraz/libsonare') {
     synthGsDrumKitName: (program: number) =>
       program === 0 ? 'Standard Kit' : program === 8 ? 'Room Kit' : null,
     synthGsDrumKitIsVoicedApart: (program: number) => program === 8,
-    masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
-    // The core exports no runtime list of every processor; its realtime insert
-    // names plus the fake's own catalog entries stand in for it.
-    masteringProcessorNames: () => [
-      ...new Set<string>([...MASTERING_INSERT_NAMES, ...Object.keys(FAKE_INSERT_PARAMS)]),
-    ],
-    masteringProcessorCatalog: () =>
-      Object.keys(FAKE_INSERT_PARAMS).map((id) => ({
+    masteringInsertNames: () => [...insertNames],
+    // The core exports no runtime list of every processor; the fake's offline
+    // rows are kept out of the realtime insert-name family.
+    masteringProcessorNames: () => [...processorNames],
+    masteringProcessorCatalog: () => [
+      ...Object.keys(FAKE_INSERT_PARAMS).map((id) => ({
         id,
         kind: 'realtime',
+        forms: ['realtime'],
         realtimeInsertable: true,
-        stereoOnly: id === 'modulation.rotary' || id === 'stereo.imager',
+        stereoOnly: id === 'effects.modulation.rotary' || id === 'stereo.imager',
         latencySamples: 0,
         tailSamples: 0,
         channelPolicy: 'multichannel',
@@ -2276,23 +2588,60 @@ export function createFakeWasmModule(): typeof import('@libraz/libsonare') {
         params: FAKE_INSERT_PARAM_INFO[id] ?? [],
         slots: [],
       })),
+      ...Object.entries(FAKE_OFFLINE_PROCESSOR_PARAMS).map(([id, names]) => ({
+        id,
+        kind: 'offline',
+        forms: ['offline'],
+        realtimeInsertable: false,
+        stereoOnly: false,
+        latencySamples: 0,
+        tailSamples: 0,
+        channelPolicy: 'multichannel',
+        category: 'repair',
+        causal: false,
+        params: names.map((name) => ({ name, rtSafe: false, type: 'number' })),
+        slots: [],
+      })),
+    ],
     // A lookahead is the only build-time latency the fake inserts report.
     masteringInsertTiming: (request: {
       insert: string;
-      params?: Record<string, number | boolean>;
+      params?: Record<string, number | boolean | string | ReadonlyArray<number>>;
       sampleRate: number;
-    }) => ({
-      latencySamples:
-        typeof request.params?.lookaheadMs === 'number'
-          ? Math.round((request.params.lookaheadMs * request.sampleRate) / 1000)
-          : 0,
-      tailSamples: 0,
-    }),
-    masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
-    masteringInsertParamInfo: (request: { insert: string; sampleRate?: number }) =>
-      request.insert === 'saturation.ampSim'
+    }) => {
+      assertInsertName(request.insert);
+      const accepted = FAKE_INSERT_PARAMS[request.insert] ?? [];
+      for (const [key, value] of Object.entries(request.params ?? {})) {
+        if (!accepted.includes(key)) {
+          throw new TypeError(
+            `masteringInsertTiming: unknown key params.${key} (expected ${[...accepted].sort().join(', ')})`,
+          );
+        }
+        if (typeof value === 'number' && !Number.isFinite(value)) {
+          throw new RangeError(`masteringInsertTiming: params.${key} must be finite`);
+        }
+        if (Array.isArray(value) && value.some((item) => !Number.isFinite(item))) {
+          throw new RangeError(`masteringInsertTiming: params.${key}[] must be finite`);
+        }
+      }
+      return {
+        latencySamples:
+          typeof request.params?.lookaheadMs === 'number'
+            ? Math.round((request.params.lookaheadMs * request.sampleRate) / 1000)
+            : 0,
+        tailSamples: 0,
+      };
+    },
+    masteringInsertParamNames: (name: string) => {
+      assertInsertName(name);
+      return FAKE_INSERT_PARAMS[name] ?? [];
+    },
+    masteringInsertParamInfo: (request: { insert: string; sampleRate?: number }) => {
+      assertInsertName(request.insert);
+      return request.insert === 'saturation.ampSim'
         ? [...FAKE_AMP_PARAM_DEFAULTS]
-        : (FAKE_INSERT_PARAM_INFO[request.insert] ?? []),
+        : (FAKE_INSERT_PARAM_INFO[request.insert] ?? []);
+    },
     masteringAmpPresetCatalog: () =>
       FAKE_AMP_PRESET_CATALOG.map((entry) => ({
         index: entry.index,

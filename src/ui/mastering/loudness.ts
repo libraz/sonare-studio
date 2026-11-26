@@ -27,7 +27,7 @@ export interface LoudnessRow {
 
 /**
  * Maps a dB value onto a 0..1 bar fraction over [minDb, maxDb].
- * Non-finite values (silence) map to 0.
+ * Negative infinity (silence) maps to 0; positive infinity saturates at 1.
  *
  * @param valueDb The level in dB (or LUFS).
  * @param minDb Bottom of the scale (default {@link LOUDNESS_BAR_MIN_DB}).
@@ -39,7 +39,7 @@ export function loudnessBarFraction(
   minDb: number = LOUDNESS_BAR_MIN_DB,
   maxDb = 0,
 ): number {
-  if (valueDb === undefined || !Number.isFinite(valueDb) || maxDb <= minDb) return 0;
+  if (valueDb === undefined || Number.isNaN(valueDb) || maxDb <= minDb) return 0;
   return clamp((valueDb - minDb) / (maxDb - minDb), 0, 1);
 }
 
@@ -49,7 +49,7 @@ export function loudnessBarFraction(
  * level meter made every positive reading appear full scale.
  */
 export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_DB): number {
-  if (value === undefined || !Number.isFinite(value) || max <= 0) return 0;
+  if (value === undefined || Number.isNaN(value) || max <= 0) return 0;
   return clamp(value / max, 0, 1);
 }
 
@@ -64,6 +64,7 @@ export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_
 export function formatLevel(value: number | undefined, digits = 1): string {
   if (value === undefined || Number.isNaN(value)) return '—';
   if (value === Number.NEGATIVE_INFINITY) return SILENCE_TEXT;
+  if (value === Number.POSITIVE_INFINITY) return '∞';
   if (!Number.isFinite(value)) return '—';
   return value.toFixed(digits);
 }
@@ -75,7 +76,5 @@ export function formatLevel(value: number | undefined, digits = 1): string {
  * @returns True for readings above {@link CLIP_WARN_TRUE_PEAK_DB}.
  */
 export function isClippingRisk(truePeakDb: number | undefined): boolean {
-  return truePeakDb !== undefined && Number.isFinite(truePeakDb)
-    ? truePeakDb > CLIP_WARN_TRUE_PEAK_DB
-    : false;
+  return truePeakDb !== undefined && truePeakDb > CLIP_WARN_TRUE_PEAK_DB;
 }

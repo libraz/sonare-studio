@@ -15,19 +15,16 @@ function makeSnapshot(overrides: Partial<WorkletMeterSnapshot> = {}): WorkletMet
     type: 'meter',
     targetId: 0,
     frame: 128,
-    peakDbL: -6,
-    peakDbR: -7,
-    rmsDbL: -12,
-    rmsDbR: -13,
+    numChannels: 2,
+    peakDb: [-6, -7],
+    rmsDb: [-12, -13],
+    truePeakDbtp: [-5.5, -6.5],
+    inputPeakDb: [-6, -7],
     correlation: 0.5,
-    truePeakDbtpL: -5.5,
-    truePeakDbtpR: -6.5,
     momentaryLufs: -14,
     shortTermLufs: -15,
     integratedLufs: -16,
     gainReductionDb: 0,
-    inputPeakDbL: -6,
-    inputPeakDbR: -7,
     ...overrides,
   };
 }
@@ -73,7 +70,6 @@ describe('createMeterBridge', () => {
       peakDbR: SILENCE_DB,
       rmsDbL: SILENCE_DB,
       rmsDbR: SILENCE_DB,
-      correlation: 0,
     };
     expect(bridge.latest).toEqual(silent);
     expect(bridge.forTarget(3).latest).toEqual(silent);
@@ -86,7 +82,7 @@ describe('createMeterBridge', () => {
     const listener = vi.fn();
     bridge.subscribe(listener);
 
-    emit(makeSnapshot({ frame: 256, peakDbL: -3 }));
+    emit(makeSnapshot({ frame: 256, peakDb: [-3, -7] }));
     expect(bridge.latest.frame).toBe(256);
     expect(bridge.latest.peakDbL).toBe(-3);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -114,7 +110,7 @@ describe('createMeterBridge', () => {
     const laneListener = vi.fn();
     lane.subscribe(laneListener);
 
-    emit(makeSnapshot({ targetId: 3, frame: 100, peakDbL: -9 }));
+    emit(makeSnapshot({ targetId: 3, frame: 100, peakDb: [-9, -7] }));
     expect(lane.latest.frame).toBe(100);
     expect(lane.latest.peakDbL).toBe(-9);
     expect(laneListener).toHaveBeenCalledTimes(1);
@@ -126,11 +122,17 @@ describe('createMeterBridge', () => {
     bridge.dispose();
   });
 
-  it('passes finite full-record fields through and omits non-finite ones', () => {
+  it('preserves measured levels and silence while dropping an invalid gain reduction', () => {
     const { handle, emit } = makeHandle();
     const bridge = createMeterBridge(handle);
 
-    emit(makeSnapshot({ truePeakDbtpL: -4.2, momentaryLufs: -14.5, gainReductionDb: -3.5 }));
+    emit(
+      makeSnapshot({
+        truePeakDbtp: [-4.2, -6.5],
+        momentaryLufs: -14.5,
+        gainReductionDb: -3.5,
+      }),
+    );
     expect(bridge.latest.truePeakDbtpL).toBe(-4.2);
     expect(bridge.latest.truePeakDbtpR).toBe(-6.5);
     expect(bridge.latest.momentaryLufs).toBe(-14.5);
@@ -140,19 +142,18 @@ describe('createMeterBridge', () => {
 
     emit(
       makeSnapshot({
-        truePeakDbtpL: Number.NEGATIVE_INFINITY,
-        truePeakDbtpR: Number.NEGATIVE_INFINITY,
+        truePeakDbtp: [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY],
         momentaryLufs: Number.NEGATIVE_INFINITY,
         shortTermLufs: Number.NEGATIVE_INFINITY,
         integratedLufs: Number.NEGATIVE_INFINITY,
         gainReductionDb: Number.NaN,
       }),
     );
-    expect(bridge.latest).not.toHaveProperty('truePeakDbtpL');
-    expect(bridge.latest).not.toHaveProperty('truePeakDbtpR');
-    expect(bridge.latest).not.toHaveProperty('momentaryLufs');
-    expect(bridge.latest).not.toHaveProperty('shortTermLufs');
-    expect(bridge.latest).not.toHaveProperty('integratedLufs');
+    expect(bridge.latest.truePeakDbtpL).toBe(-Infinity);
+    expect(bridge.latest.truePeakDbtpR).toBe(-Infinity);
+    expect(bridge.latest.momentaryLufs).toBe(-Infinity);
+    expect(bridge.latest.shortTermLufs).toBe(-Infinity);
+    expect(bridge.latest.integratedLufs).toBe(-Infinity);
     expect(bridge.latest).not.toHaveProperty('gainReductionDb');
     bridge.dispose();
   });
@@ -163,12 +164,45 @@ describe('createMeterBridge', () => {
 
     emit(
       makeSnapshot({
-        peakDbL: Number.NEGATIVE_INFINITY,
-        rmsDbR: Number.NaN,
+        peakDb: [Number.NEGATIVE_INFINITY, -7],
+        rmsDb: [-12, Number.NaN],
       }),
     );
     expect(bridge.latest.peakDbL).toBe(SILENCE_DB);
     expect(bridge.latest.rmsDbR).toBe(SILENCE_DB);
+    bridge.dispose();
+  });
+
+  it('uses the bar floor for a missing meter plane and omits absent measurements', () => {
+    const { handle, emit } = makeHandle();
+    const bridge = createMeterBridge(handle);
+
+    emit(
+      makeSnapshot({
+        numChannels: 1,
+        peakDb: [-3],
+        rmsDb: [-9],
+        truePeakDbtp: [-2.5],
+        inputPeakDb: [-3],
+        correlation: undefined,
+        momentaryLufs: undefined,
+        shortTermLufs: undefined,
+        integratedLufs: undefined,
+      }),
+    );
+
+    expect(bridge.latest.peakDbL).toBe(-3);
+    expect(bridge.latest.peakDbR).toBe(SILENCE_DB);
+    expect(bridge.latest.rmsDbL).toBe(-9);
+    expect(bridge.latest.rmsDbR).toBe(SILENCE_DB);
+    expect(bridge.latest.truePeakDbtpL).toBe(-2.5);
+    expect(bridge.latest).not.toHaveProperty('truePeakDbtpR');
+    expect(bridge.latest).not.toHaveProperty('correlation');
+    expect(bridge.latest).not.toHaveProperty('momentaryLufs');
+    expect(bridge.latest).not.toHaveProperty('shortTermLufs');
+    expect(bridge.latest).not.toHaveProperty('integratedLufs');
+    emit(makeSnapshot({ correlation: 0 }));
+    expect(bridge.latest.correlation).toBe(0);
     bridge.dispose();
   });
 
@@ -221,9 +255,9 @@ describe('createMeterBridge', () => {
     bridge.subscribe(masterListener);
     lane.subscribe(laneListener);
 
-    emit(makeSnapshot({ targetId: 0, frame: 100, peakDbL: -3 }));
-    emit(makeSnapshot({ targetId: 3, frame: 100, peakDbL: -20 }));
-    emit(makeSnapshot({ targetId: 3, frame: 228, peakDbL: -18 }));
+    emit(makeSnapshot({ targetId: 0, frame: 100, peakDb: [-3, -7] }));
+    emit(makeSnapshot({ targetId: 3, frame: 100, peakDb: [-20, -7] }));
+    emit(makeSnapshot({ targetId: 3, frame: 228, peakDb: [-18, -7] }));
 
     expect(masterListener).toHaveBeenCalledTimes(1);
     expect(bridge.latest.frame).toBe(100);

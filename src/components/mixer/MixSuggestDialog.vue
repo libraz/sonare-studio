@@ -67,6 +67,7 @@ async function analyze(): Promise<void> {
   error.value = null;
   result.value = null;
   try {
+    const tempoBpm = store.tempoBpm;
     const source = serializeProject();
     measuredProject = JSON.stringify(source);
     const doc = neutralMixDocument(source);
@@ -101,7 +102,7 @@ async function analyze(): Promise<void> {
     }
     const wasm = await ensureWasm();
     if (current !== generation) return;
-    result.value = suggestMixFromStems(stems, rendered.sampleRate, store.tempoBpm, (request) =>
+    result.value = suggestMixFromStems(stems, rendered.sampleRate, tempoBpm, (request) =>
       wasm.mixingAssistantSuggest(request),
     );
     measuredTracks.value = new Map(
@@ -193,7 +194,7 @@ function onApply(): void {
               <td>{{ measuredTracks.get(profile.stripId)?.name ?? profile.name }}</td>
               <td>
                 {{ classLabel(profile.source) }}
-                <span v-if="!profile.usable" class="suggest-mix-excluded">
+                <span v-if="!profile.usable && profile.exclusionReason" class="suggest-mix-excluded">
                   {{ formatMessage(s.excluded, { reason: profile.exclusionReason }) }}
                 </span>
               </td>

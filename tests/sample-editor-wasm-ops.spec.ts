@@ -410,6 +410,29 @@ describe('analyzeMatchEqToReference', () => {
     expect(masteringAnalyzePair).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps measured silent loudness when the normalization gain is unavailable', () => {
+    const loudness = analyzeMatchEqToReference(
+      {
+        masteringAnalyzePair: analyzePairFn(
+          pairAnalysisResults({
+            'match.referenceLoudness': {
+              sourceLufs: Number.NEGATIVE_INFINITY,
+              referenceLufs: Number.NEGATIVE_INFINITY,
+            },
+          }),
+        ),
+      },
+      ch([0, 0]),
+      48000,
+      new Float32Array([0, 0]),
+    ).loudness;
+
+    expect(loudness).toEqual({
+      sourceLufs: Number.NEGATIVE_INFINITY,
+      referenceLufs: Number.NEGATIVE_INFINITY,
+    });
+  });
+
   it('hands the reference and its rate to every pair analysis unresampled', () => {
     const reference = Float32Array.from({ length: 480 }, (_, index) => index);
     const masteringAnalyzePair = vi.fn<(request: MasteringAnalyzePairRequest) => void>();

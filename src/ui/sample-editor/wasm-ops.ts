@@ -330,7 +330,7 @@ export function estimateSourceMidi(
     throw new Error('Pitch correction is unavailable in this libsonare build');
   }
   const medianF0 = detect(mono, sampleRate).medianF0;
-  if (!(medianF0 > 0)) {
+  if (medianF0 === undefined || !(medianF0 > 0)) {
     throw new Error('Could not detect a pitch to correct in the selection');
   }
   // 12-TET step index is the MIDI number the engine's pitch ops expect.
@@ -1282,10 +1282,11 @@ export function analyzeMatchEqToReference(
   return {
     curve: fn({ analysis: MATCH_EQ_CURVE, ...pair }),
     tonalBalance: fn({ analysis: MATCH_TONAL_BALANCE, ...pair }).bands,
-    loudness:
-      sourceLufs === undefined || referenceLufs === undefined || gainToMatchDb === undefined
-        ? null
-        : { sourceLufs, referenceLufs, gainToMatchDb },
+    loudness: {
+      sourceLufs,
+      referenceLufs,
+      ...(gainToMatchDb === undefined ? {} : { gainToMatchDb }),
+    },
   };
 }
 

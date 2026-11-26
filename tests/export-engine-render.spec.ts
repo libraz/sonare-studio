@@ -12,6 +12,7 @@ import { buildMidiSchedules } from '@/export/engine-render-context';
 import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
 import { MixdownCancelledError } from '@/export/mixdown';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
+import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   insertAutomationParam,
@@ -24,6 +25,7 @@ import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
 import { coreWasmBinary } from './core-package';
+import { createFakeWasmModule } from './fake-wasm';
 import {
   ENGINE_MIXER_LANE_MASTER,
   ENGINE_MIXER_PARAM_FADER_DB,
@@ -65,7 +67,7 @@ vi.mock('@libraz/libsonare', async (importOriginal) => {
 });
 
 vi.mock('@/lib/wasm', () => ({
-  ensureWasm: async () => ({ resample }),
+  ensureWasm: vi.fn(async () => ({ ...createFakeWasmModule(), resample })),
 }));
 
 beforeEach(() => {
@@ -704,6 +706,47 @@ function defaultAudioLevel(
 }
 
 describe('renderProjectWithEngine', () => {
+  it('sends a validated full-width strip and enum insert to the offline engine', async () => {
+    vi.mocked(ensureWasm).mockResolvedValueOnce(createFakeWasmModule());
+    const doc = makeDoc();
+    doc.schemaVersion = 5;
+    const strip = trackMixer(doc, 1);
+    strip.width = 2;
+    strip.inserts = [
+      { processor: 'dynamics.compressor', params: { detector: 'rms' }, enabled: true },
+    ];
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, { ...renderOptions(engine), deps: undefined });
+
+    expect(trackStrips(engine)).toContainEqual([
+      'setStrip',
+      expect.any(Number),
+      expect.objectContaining({
+        width: 2,
+        inserts: [{ slot: 'pre', processor: 'dynamics.compressor', params: { detector: 'rms' } }],
+      }),
+    ]);
+  });
+
+  it('refuses an unread insert parameter before configuring the offline engine', async () => {
+    vi.mocked(ensureWasm).mockResolvedValueOnce(createFakeWasmModule());
+    const doc = makeDoc();
+    doc.schemaVersion = 5;
+    trackMixer(doc, 1).inserts = [
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+      { processor: 'dynamics.compressor', params: { unknownParam: 0 }, enabled: true },
+    ];
+    const engine = new FakeEngine();
+    const render = renderProjectWithEngine(doc, renderOptions(engine));
+
+    await expect(render).rejects.toBeInstanceOf(TypeError);
+    await expect(render).rejects.toThrow(
+      /tracks\[1\]\.mixer\.inserts\[1\]: masteringInsertTiming: unknown key params\.unknownParam/,
+    );
+    expect(engine.named('setStrip')).toEqual([]);
+  });
+
   it('rejects a surround master layout before producing a misleading stereo export', async () => {
     const doc = makeDoc();
     doc.mixer!.masterLayout = '5.1';
@@ -3236,7 +3279,7 @@ describe('renderProjectWithEngine', () => {
         presetOverrides: { loudness: { targetLufs: -14 } },
         processors: [
           { processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true },
-          { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+          { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
         ],
       },
@@ -4302,6 +4345,42 @@ describe('renderProjectWithEngine loudness metering', () => {
     });
   });
 
+  it('preserves a measured infinite dynamic range and omits an absent one', async () => {
+    const infinite = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: null, metering: { dynamicRangeDb: () => Number.POSITIVE_INFINITY } },
+    });
+    expect(infinite.report.dynamicRangeDb).toBe(Number.POSITIVE_INFINITY);
+
+    const absent = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: null, metering: { dynamicRangeDb: () => undefined } },
+    });
+    expect(absent.report).not.toHaveProperty('dynamicRangeDb');
+  });
+
+  it('keeps measured silent loudness windows distinct from absent windows', async () => {
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: {
+        mastering: null,
+        metering: {
+          multichannelLufs: () =>
+            lufsResult(Number.NEGATIVE_INFINITY, {
+              momentaryLufs: Number.NEGATIVE_INFINITY,
+              shortTermLufs: undefined,
+              loudnessRangeLu: undefined,
+            }),
+        },
+      },
+    });
+
+    expect(result.report.lufs).toBe(Number.NEGATIVE_INFINITY);
+    expect(result.report.momentaryLufs).toBe(Number.NEGATIVE_INFINITY);
+    expect(result.report).not.toHaveProperty('shortTermLufs');
+    expect(result.report).not.toHaveProperty('loudnessRangeLu');
+  });
+
   it('meters exported stems separately from the final mastered mix', async () => {
     const doc = makeDoc();
     doc.mixer = {
@@ -4750,7 +4829,7 @@ function makeGroupDoc(): ProjectDocument {
       sends: [],
       inserts: [
         { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+        { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
       ],
     },
   });
@@ -5215,7 +5294,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       role: 'submix',
       inserts: [
         { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { driveDb: 0.4 } },
       ],
     });
 
@@ -5634,7 +5713,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       sends: [],
       inserts: [
         { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+        { processor: 'saturation.tape', params: { driveDb: 0.4 }, enabled: false },
       ],
     };
 
@@ -5647,7 +5726,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       role: 'submix',
       inserts: [
         { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { driveDb: 0.4 } },
       ],
     });
   });

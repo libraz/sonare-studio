@@ -1,3 +1,4 @@
+import type { ProjectBounceOptions } from '@libraz/libsonare';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearPrerenderCache,
@@ -86,7 +87,7 @@ describe('instrumentDedupeKey', () => {
 });
 
 const wasmMock = vi.hoisted(() => {
-  const bounce = vi.fn((request?: { sf2Instruments?: ReadonlyArray<unknown> }) => ({
+  const bounce = vi.fn((request?: ProjectBounceOptions) => ({
     channels:
       request?.sf2Instruments !== undefined
         ? [new Float32Array([0.2, 0.4]), new Float32Array([-0.2, -0.4])]
@@ -95,12 +96,13 @@ const wasmMock = vi.hoisted(() => {
   }));
   const loadSoundFont = vi.fn();
   const setMidiEvents = vi.fn();
+  const setSampleRate = vi.fn<(sampleRate: number) => void>();
   const synthPresetNames = vi.fn(() => ['sine', 'sawLead', 'ePiano', 'acousticPiano', 'drumKit']);
 
   class MockProject
     implements Partial<InstanceType<typeof import('@libraz/libsonare')['Project']>>
   {
-    setSampleRate = vi.fn();
+    setSampleRate = setSampleRate;
     setTempoSegments = vi.fn();
     addMidiClip = vi.fn(() => ({ trackId: 1, clipId: 2 }));
     setMidiEvents = setMidiEvents;
@@ -139,7 +141,15 @@ const wasmMock = vi.hoisted(() => {
     ),
   };
 
-  return { bounce, loadSoundFont, setMidiEvents, synthPresetNames, midi, MockProject };
+  return {
+    bounce,
+    loadSoundFont,
+    setMidiEvents,
+    setSampleRate,
+    synthPresetNames,
+    midi,
+    MockProject,
+  };
 });
 
 vi.mock('@/lib/wasm', () => ({
@@ -162,6 +172,7 @@ beforeEach(() => {
   wasmMock.bounce.mockClear();
   wasmMock.loadSoundFont.mockClear();
   wasmMock.setMidiEvents.mockClear();
+  wasmMock.setSampleRate.mockClear();
 });
 
 describe('instrumentCacheSegment', () => {
@@ -608,18 +619,14 @@ describe('instrument helpers', () => {
 
 /** The synth patch of the single bounce binding the last prerender requested. */
 function bouncedSynthPatch(): unknown {
-  const request = wasmMock.bounce.mock.calls[0][0] as {
-    synthInstruments?: Array<{ instrument: unknown }>;
-  };
-  return request.synthInstruments?.[0].instrument;
+  const [request] = wasmMock.bounce.mock.calls[0];
+  return request?.synthInstruments?.[0].instrument;
 }
 
 /** The SF2 config of the single bounce binding the last prerender requested. */
 function bouncedSf2Config(): unknown {
-  const request = wasmMock.bounce.mock.calls[0][0] as {
-    sf2Instruments?: Array<{ instrument: unknown }>;
-  };
-  return request.sf2Instruments?.[0].instrument;
+  const [request] = wasmMock.bounce.mock.calls[0];
+  return request?.sf2Instruments?.[0].instrument;
 }
 
 describe('prerenderMidiClip per instrument kind', () => {
@@ -678,11 +685,15 @@ describe('prerenderMidiClip per instrument kind', () => {
     expect(loadFont).toHaveBeenCalledWith('my-font');
     expect(wasmMock.loadSoundFont).toHaveBeenCalledWith(fontBytes);
     expect(wasmMock.bounce).toHaveBeenCalledTimes(1);
-    // No explicit gain/polyphony => empty config keeps the engine defaults.
-    expect(bouncedSf2Config()).toEqual({});
-    expect(
-      (wasmMock.bounce.mock.calls[0][0] as { synthInstruments?: unknown }).synthInstruments,
-    ).toBeUndefined();
+    // The default SoundFont slot and default destination need no identifiers.
+    expect(wasmMock.bounce).toHaveBeenCalledWith({
+      numChannels: 2,
+      sf2Instruments: [{ instrument: {} }],
+    });
+    expect(wasmMock.setSampleRate).toHaveBeenCalledWith(OPTS.sampleRate);
+    expect(wasmMock.setSampleRate.mock.invocationCallOrder[0]).toBeLessThan(
+      wasmMock.bounce.mock.invocationCallOrder[0],
+    );
   });
 
   it('forwards the SF2 master gain and voice cap to the bounce', async () => {
