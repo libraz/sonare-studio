@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately by email to `libraz@libraz.net`, not through the public issue tracker.
+Use **Report a vulnerability** on the repository’s [Security tab](https://github.com/libraz/sonare-studio/security) to report privately. Keep vulnerability details out of public issues.
 
 Include the project or file that triggers it, the steps, what happened, the commit or deployed version, the browser, and a minimal reproduction if you have one. Expect an acknowledgement within a few days.
 

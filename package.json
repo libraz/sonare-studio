@@ -13,6 +13,9 @@
   },
   "type": "module",
   "packageManager": "yarn@4.19.0",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "yarn build:worklet && vite",
     "build": "yarn build:worklet && yarn typecheck && vite build && node scripts/check-bundle.mjs",
